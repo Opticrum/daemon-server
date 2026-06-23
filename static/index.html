@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Opticrum Admin Console</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>⚡ Opticrum Admin Console</h1>
+  <span id="signer-badge" class="badge">signer: —</span>
+</header>
+
+<nav>
+  <button class="tab active" data-tab="dashboard">Dashboard</button>
+  <button class="tab" data-tab="wallets">Wallets</button>
+  <button class="tab" data-tab="orders">On-Chain Orders</button>
+  <button class="tab" data-tab="channels">Fiber Channels</button>
+  <button class="tab" data-tab="matches">Matches</button>
+  <button class="tab" data-tab="automatch">Auto-Match</button>
+  <button class="tab" data-tab="signing">External Signing</button>
+</nav>
+
+<main>
+  <!-- Dashboard -->
+  <section id="tab-dashboard" class="tab-content active">
+    <h2>Dashboard</h2>
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card"><h3>Orders</h3><div id="stat-orders">—</div></div>
+      <div class="stat-card"><h3>Live Matches</h3><div id="stat-matches">—</div></div>
+      <div class="stat-card"><h3>Total Extracted</h3><div id="stat-extracted">—</div></div>
+    </div>
+    <button onclick="refreshStats()">Refresh</button>
+  </section>
+
+  <!-- Wallets -->
+  <section id="tab-wallets" class="tab-content">
+    <h2>Wallet Management</h2>
+    <form id="wallet-form">
+      <input name="label" placeholder="Wallet label" required>
+      <input name="private_key_hex" placeholder="Private key (64 hex chars)" required minlength="64">
+      <button type="submit">Import Wallet</button>
+    </form>
+    <table id="wallets-table"><thead><tr><th>ID</th><th>Label</th><th>Address</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <!-- Orders -->
+  <section id="tab-orders" class="tab-content">
+    <h2>On-Chain Order Browser</h2>
+    <button onclick="scanOrders()">Scan Chain</button>
+    <div id="orders-result"></div>
+  </section>
+
+  <!-- Fiber Channels -->
+  <section id="tab-channels" class="tab-content">
+    <h2>Fiber Channel Browser</h2>
+    <input id="channel-owner" placeholder="Owner lock hash (hex, 64 chars)">
+    <button onclick="scanChannels()">Scan Channels</button>
+    <div id="channels-result"></div>
+  </section>
+
+  <!-- Matches -->
+  <section id="tab-matches" class="tab-content">
+    <h2>Tracked Matches</h2>
+    <button onclick="listMatches()">Refresh</button>
+    <div id="matches-result"></div>
+  </section>
+
+  <!-- Auto-Match Config -->
+  <section id="tab-automatch" class="tab-content">
+    <h2>Auto-Match Configuration</h2>
+    <button onclick="loadAutoMatchConfig()">Load Config</button>
+    <pre id="automatch-config"></pre>
+    <form id="automatch-form" style="display:none">
+      <label>Enabled <input type="checkbox" name="enabled"></label>
+      <label>Min Capacity (shannons) <input type="number" name="min_capacity_shannons"></label>
+      <label>Max Escrow Blocks <input type="number" name="max_escrow_blocks"></label>
+      <label>Interval (secs) <input type="number" name="interval_secs"></label>
+      <button type="submit">Save</button>
+    </form>
+  </section>
+
+  <!-- External Signing -->
+  <section id="tab-signing" class="tab-content">
+    <h2>External Signing Queue</h2>
+    <button onclick="listUnsignedTxs()">Refresh</button>
+    <div id="unsigned-result"></div>
+  </section>
+</main>
+
+<footer>Opticrum Server v0.1.0</footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+# Opticrum Server Configuration
+#
+# This file is read on startup. CLI flags and environment variables
+# (OPTICRUM_*) override values in this file.
+#
+# Priority: CLI flags > env vars > this file > built-in defaults
+#
+# Signing is always external by default (JoyID, UTXOGlobal, etc.).
+# Use the admin panel (http://localhost:8080/admin) to submit a raw
+# private key and switch to automated signing mode — no config needed.
+
+# ---- Network ----
+port = 8080
+bind_address = "0.0.0.0"
+database_url = "data/opticrum.db"
+
+# ---- CKB Chain ----
+# The network (testnet/mainnet) is auto-detected from the RPC URL.
+# Use a URL containing "testnet" or "mainnet" to disambiguate.
+# Standard ports: testnet 28114, mainnet 8114.
+ckb_rpc_url = "https://testnet.ckb.dev"
+ckb_indexer_url = "https://testnet.ckb.dev/indexer"
+
+# ---- Fiber Network ----
+fiber_rpc_url = "http://localhost:8227"
+
+# ---- Fees ----
+fee_rate = 1000                              # shannons per KB
+
+# ---- Rent Extraction ----
+scheduler_interval_secs = 60
+min_extraction_amount_shannons = 100000000   # 1 CKB
+
+# ---- Auto-Match ----
+auto_match_enabled = false
+auto_match_min_capacity = 10000000000        # 100 CKB
+auto_match_max_escrow_blocks = 432000        # ~30 days
+auto_match_interval_secs = 120
