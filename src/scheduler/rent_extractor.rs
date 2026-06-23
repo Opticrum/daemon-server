@@ -3,10 +3,9 @@
 //! Runs periodically, scanning the chain for matches owned by managed
 //! wallets and extracting rent when above the dust threshold.
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-
 use tracing::{debug, info};
+
+use crate::db::DbPool;
 
 use crate::db::{matches as match_db, wallets as wallet_db};
 use crate::error::AppError;
@@ -16,14 +15,14 @@ use crate::services::chain_provider::ChainProvider;
 ///
 /// Returns the total amount of shannons extracted in this cycle.
 pub async fn run_extraction_cycle(
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     min_extraction_amount_shannons: u64,
     provider: &(dyn ChainProvider + Send + Sync),
 ) -> Result<u64, AppError> {
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
 
     // Get all managed wallet lock hashes
-    let wallets = wallet_db::list_wallets(&conn)?;
+    let wallets = wallet_db::list_wallets(&mut conn)?;
     if wallets.is_empty() {
         debug!("Rent extraction: no managed wallets — skipping cycle");
         return Ok(0);
@@ -35,7 +34,7 @@ pub async fn run_extraction_cycle(
     let tip_block = provider.get_tip_block_number().await?;
 
     // Get all live matches
-    let live_matches = match_db::list_matches(&conn, Some("live"))?;
+    let live_matches = match_db::list_matches(&mut conn, Some("live"))?;
     if live_matches.is_empty() {
         debug!("Rent extraction: no live matches — skipping cycle");
         return Ok(0);
@@ -56,9 +55,9 @@ pub async fn run_extraction_cycle(
                 m.tx_hash, m.output_index, extractable
             );
 
-            match_db::update_match_extraction(&conn, m.id, tip_block)?;
+            match_db::update_match_extraction(&mut conn, m.id, tip_block)?;
             match_db::insert_extraction(
-                &conn,
+                &mut conn,
                 &m.tx_hash,
                 m.output_index,
                 extractable,
@@ -71,10 +70,7 @@ pub async fn run_extraction_cycle(
 
             info!(
                 match_id = m.id,
-                extractable,
-                tip_block,
-                elapsed,
-                "Rent extracted"
+                extractable, tip_block, elapsed, "Rent extracted"
             );
         }
     }
@@ -88,7 +84,11 @@ pub async fn run_extraction_cycle(
             "Rent extraction cycle complete"
         );
     } else {
-        debug!(tip_block, live_matches = live_matches.len(), "Rent extraction: nothing above threshold");
+        debug!(
+            tip_block,
+            live_matches = live_matches.len(),
+            "Rent extraction: nothing above threshold"
+        );
     }
 
     Ok(total_extracted)
@@ -116,12 +116,12 @@ mod tests {
     #[actix_rt::test]
     async fn extracts_above_threshold() {
         let pool = db::init_test_db();
-        let conn = pool.get().unwrap();
+        let mut conn = pool.get().unwrap();
         let provider = test_provider();
 
         // Add a managed wallet
         wallet_db::insert_wallet(
-            &conn,
+            &mut conn,
             "test-wallet",
             b"encrypted_key_placeholder",
             &[1u8; 32],
@@ -131,7 +131,7 @@ mod tests {
 
         // Add a live match with high rent_per_block
         match_db::insert_match(
-            &conn,
+            &mut conn,
             "match_tx_001",
             0,
             "order_tx_001",
@@ -143,7 +143,9 @@ mod tests {
         )
         .unwrap();
 
-        let extracted = run_extraction_cycle(&pool, 100_000, &provider).await.unwrap();
+        let extracted = run_extraction_cycle(&pool, 100_000, &provider)
+            .await
+            .unwrap();
         // 1000 * 1000 = 1_000_000 > 100_000 threshold
         assert!(extracted > 0);
     }
@@ -151,14 +153,15 @@ mod tests {
     #[actix_rt::test]
     async fn skips_below_threshold() {
         let pool = db::init_test_db();
-        let conn = pool.get().unwrap();
+        let mut conn = pool.get().unwrap();
         let provider = test_provider();
 
-        wallet_db::insert_wallet(&conn, "test", b"encrypted", &[2u8; 32], "ckt1q...test2").unwrap();
+        wallet_db::insert_wallet(&mut conn, "test", b"encrypted", &[2u8; 32], "ckt1q...test2")
+            .unwrap();
 
         // Low rent_per_block — won't meet threshold
         match_db::insert_match(
-            &conn,
+            &mut conn,
             "match_tx_002",
             0,
             "order_tx_002",
@@ -181,13 +184,14 @@ mod tests {
     #[actix_rt::test]
     async fn respects_min_extraction_amount() {
         let pool = db::init_test_db();
-        let conn = pool.get().unwrap();
+        let mut conn = pool.get().unwrap();
         let provider = test_provider();
 
-        wallet_db::insert_wallet(&conn, "low-wallet", b"enc", &[3u8; 32], "ckt1q...low").unwrap();
+        wallet_db::insert_wallet(&mut conn, "low-wallet", b"enc", &[3u8; 32], "ckt1q...low")
+            .unwrap();
 
         match_db::insert_match(
-            &conn,
+            &mut conn,
             "match_tx_003",
             0,
             "order_tx_003",

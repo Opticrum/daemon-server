@@ -65,15 +65,15 @@ impl ResponseError for AppError {
 
 // Allow converting common error types into AppError
 
-impl From<rusqlite::Error> for AppError {
-    fn from(e: rusqlite::Error) -> Self {
-        Self::Internal(format!("Database error: {}", e))
+impl From<diesel::result::Error> for AppError {
+    fn from(e: diesel::result::Error) -> Self {
+        Self::Internal(format!("Database error: {e}"))
     }
 }
 
-impl From<r2d2::Error> for AppError {
-    fn from(e: r2d2::Error) -> Self {
-        Self::Internal(format!("Connection pool error: {}", e))
+impl From<diesel::r2d2::PoolError> for AppError {
+    fn from(e: diesel::r2d2::PoolError) -> Self {
+        Self::Internal(format!("Connection pool error: {e}"))
     }
 }
 

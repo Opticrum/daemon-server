@@ -3,9 +3,9 @@
 //! Uses the linear rent formula: `extractable = rent_per_block × elapsed_blocks`.
 //! When accumulated rent >= remaining capacity, the match is exhausted.
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use tracing::info;
+
+use crate::db::DbPool;
 
 use crate::db::matches as match_db;
 use crate::error::AppError;
@@ -26,11 +26,11 @@ pub struct ExtractRentResult {
 /// treated as exhausted and destroyed.
 pub async fn extract_rent<P: ChainProvider + ?Sized>(
     provider: &P,
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     match_id: i64,
 ) -> Result<ExtractRentResult, AppError> {
-    let conn = pool.get()?;
-    let m = match_db::get_match_by_id(&conn, match_id)?;
+    let mut conn = pool.get()?;
+    let m = match_db::get_match_by_id(&mut conn, match_id)?;
 
     if m.status != "live" {
         return Err(AppError::BadRequest(format!(
@@ -69,14 +69,14 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
     let tx_hash = provider.send_transaction(&tx_hex).await?;
 
     if is_exhausted {
-        match_db::update_match_status(&conn, match_id, "exhausted")?;
+        match_db::update_match_status(&mut conn, match_id, "exhausted")?;
     } else {
-        match_db::update_match_extraction(&conn, match_id, tip_block)?;
+        match_db::update_match_extraction(&mut conn, match_id, tip_block)?;
     }
 
     // Record extraction in history
     match_db::insert_extraction(
-        &conn,
+        &mut conn,
         &m.tx_hash,
         m.output_index,
         extractable,
@@ -103,11 +103,11 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
 /// Destroy an exhausted match, sweeping remaining funds.
 pub async fn destroy_match<P: ChainProvider + ?Sized>(
     provider: &P,
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     match_id: i64,
 ) -> Result<String, AppError> {
-    let conn = pool.get()?;
-    let m = match_db::get_match_by_id(&conn, match_id)?;
+    let mut conn = pool.get()?;
+    let m = match_db::get_match_by_id(&mut conn, match_id)?;
 
     if m.status == "destroyed" {
         return Err(AppError::BadRequest("Match already destroyed".into()));
@@ -136,7 +136,7 @@ pub async fn destroy_match<P: ChainProvider + ?Sized>(
     );
     let tx_hash = provider.send_transaction(&tx_hex).await?;
 
-    match_db::update_match_status(&conn, match_id, "destroyed")?;
+    match_db::update_match_status(&mut conn, match_id, "destroyed")?;
 
     info!(
         match_id = match_id,
@@ -154,10 +154,10 @@ mod tests {
     use crate::db;
     use crate::services::MockChainProvider;
 
-    fn setup_match(pool: &Pool<SqliteConnectionManager>) -> i64 {
-        let conn = pool.get().unwrap();
+    fn setup_match(pool: &DbPool) -> i64 {
+        let mut conn = pool.get().unwrap();
         match_db::insert_match(
-            &conn,
+            &mut conn,
             "match_tx_hash_001",
             0,
             "order_tx_hash_001",
@@ -179,8 +179,8 @@ mod tests {
         let match_id = setup_match(&pool);
 
         // Set last_extraction_block to 1000
-        let conn = pool.get().unwrap();
-        match_db::update_match_extraction(&conn, match_id, 1000).unwrap();
+        let mut conn = pool.get().unwrap();
+        match_db::update_match_extraction(&mut conn, match_id, 1000).unwrap();
 
         let result = extract_rent(&provider, &pool, match_id)
             .await
@@ -201,9 +201,9 @@ mod tests {
         // last_extraction_block = 0, so start_block ~= escrow_blocks before tip
         // This should yield 0 or near-zero elapsed
 
-        let conn = pool.get().unwrap();
+        let mut conn = pool.get().unwrap();
         // Force last_extraction_block to tip so elapsed = 0
-        match_db::update_match_extraction(&conn, match_id, 1000).unwrap();
+        match_db::update_match_extraction(&mut conn, match_id, 1000).unwrap();
 
         let result = extract_rent(&provider, &pool, match_id).await;
         assert!(result.is_err(), "should fail with zero extractable");
@@ -223,7 +223,8 @@ mod tests {
 
         assert!(!tx_hash.is_empty());
 
-        let m = match_db::get_match_by_id(&pool.get().unwrap(), match_id).unwrap();
+        let mut conn = pool.get().unwrap();
+        let m = match_db::get_match_by_id(&mut conn, match_id).unwrap();
         assert_eq!(m.status, "destroyed");
     }
 
@@ -247,13 +248,13 @@ mod tests {
         provider.set_tip_block(2000);
 
         let match_id = setup_match(&pool);
-        let conn = pool.get().unwrap();
-        match_db::update_match_extraction(&conn, match_id, 1000).unwrap();
+        let mut conn = pool.get().unwrap();
+        match_db::update_match_extraction(&mut conn, match_id, 1000).unwrap();
 
         extract_rent(&provider, &pool, match_id).await.unwrap();
 
         // Check extraction history
-        let history = match_db::get_extractions_for_match(&conn, "match_tx_hash_001", 0).unwrap();
+        let history = match_db::get_extractions_for_match(&mut conn, "match_tx_hash_001", 0).unwrap();
         assert!(!history.is_empty());
         assert!(history[0].extracted_amount > 0);
     }

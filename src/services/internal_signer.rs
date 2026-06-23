@@ -115,15 +115,15 @@ mod tests {
     #[actix_rt::test]
     async fn internal_signer_signs_and_returns_key_info() {
         let pool = db::init_test_db();
-        let conn = pool.get().unwrap();
+        let mut conn = pool.get().unwrap();
 
         // Import a test wallet with a valid secp256k1 key
         let test_key = test_secret_key_bytes();
         let encrypted = crypto::encrypt(&test_key, "test-pw").unwrap();
         let lock_hash = [0x42u8; 32];
-        wallets::insert_wallet(&conn, "test", &encrypted, &lock_hash, "addr")
+        wallets::insert_wallet(&mut conn, "test", &encrypted, &lock_hash, "addr")
             .unwrap();
-        let wallet = wallets::get_wallet_by_id(&conn, 1).unwrap();
+        let wallet = wallets::get_wallet_by_id(&mut conn, 1).unwrap();
 
         let signer = InternalSigner::new(wallet, "test-pw").expect("should create signer");
 

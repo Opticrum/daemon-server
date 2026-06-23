@@ -8,17 +8,16 @@
 pub mod auto_matcher;
 pub mod rent_extractor;
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::signer::Signer;
 
 /// Spawn all background tasks: rent extractor and auto-matcher.
 pub fn spawn_schedulers(
-    pool: Pool<SqliteConnectionManager>,
+    pool: DbPool,
     config: Config,
     chain_provider: Arc<dyn ChainProvider>,
     signer: Arc<dyn Signer>,

@@ -3,9 +3,9 @@
 //! Builds transactions via opticrum-calculator (in production) or
 //! records them via MockChainProvider (in tests).
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use tracing::{debug, info};
+
+use crate::db::DbPool;
 
 use crate::db::orders as order_db;
 use crate::error::AppError;
@@ -26,7 +26,7 @@ pub struct CreateOrderResult {
 /// order in the local database.
 pub async fn create_order<P: ChainProvider + ?Sized>(
     provider: &P,
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     buyer_address: &str,
     channel_capacity: u64,
     escrow_blocks: u64,
@@ -46,9 +46,9 @@ pub async fn create_order<P: ChainProvider + ?Sized>(
     let output_index = 0; // Order Cell is always output[0]
 
     // Persist the tracked order
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
     let order_id = order_db::insert_order(
-        &conn,
+        &mut conn,
         &tx_hash,
         output_index,
         buyer_address,
@@ -77,11 +77,11 @@ pub async fn create_order<P: ChainProvider + ?Sized>(
 /// Cancel an unmatched order, returning funds to the buyer.
 pub async fn cancel_order<P: ChainProvider + ?Sized>(
     provider: &P,
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     order_id: i64,
 ) -> Result<String, AppError> {
-    let conn = pool.get()?;
-    let order = order_db::get_order_by_id(&conn, order_id)?;
+    let mut conn = pool.get()?;
+    let order = order_db::get_order_by_id(&mut conn, order_id)?;
 
     if order.status != "live" {
         return Err(AppError::BadRequest(format!(
@@ -95,7 +95,7 @@ pub async fn cancel_order<P: ChainProvider + ?Sized>(
     let tx_hash = provider.send_transaction(&tx_hex).await?;
 
     // Update status
-    order_db::update_order_status(&conn, order_id, "cancelled")?;
+    order_db::update_order_status(&mut conn, order_id, "cancelled")?;
 
     info!(
         order_id = order_id,
@@ -108,11 +108,11 @@ pub async fn cancel_order<P: ChainProvider + ?Sized>(
 
 /// List tracked orders, optionally filtered by status.
 pub fn list_orders(
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     status_filter: Option<&str>,
 ) -> Result<Vec<order_db::TrackedOrder>, AppError> {
-    let conn = pool.get()?;
-    let orders = order_db::list_orders(&conn, status_filter)?;
+    let mut conn = pool.get()?;
+    let orders = order_db::list_orders(&mut conn, status_filter)?;
     debug!(
         count = orders.len(),
         filter = status_filter.unwrap_or("all"),
@@ -123,11 +123,11 @@ pub fn list_orders(
 
 /// Get a single tracked order by ID.
 pub fn get_order(
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     order_id: i64,
 ) -> Result<order_db::TrackedOrder, AppError> {
-    let conn = pool.get()?;
-    order_db::get_order_by_id(&conn, order_id)
+    let mut conn = pool.get()?;
+    order_db::get_order_by_id(&mut conn, order_id)
 }
 
 #[cfg(test)]
@@ -207,8 +207,8 @@ mod tests {
         .unwrap();
 
         // Manually set status to 'matched'
-        let conn = pool.get().unwrap();
-        order_db::update_order_status(&conn, created.order_id, "matched").unwrap();
+        let mut conn = pool.get().unwrap();
+        order_db::update_order_status(&mut conn, created.order_id, "matched").unwrap();
 
         // Cancel should fail
         let result = cancel_order(&provider, &pool, created.order_id).await;

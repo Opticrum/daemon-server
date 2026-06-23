@@ -15,8 +15,8 @@ use crate::error::AppError;
 
 /// GET /api/transactions/unsigned — list pending unsigned transactions.
 pub async fn list_unsigned(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let conn = state.db.get()?;
-    let txs = unsigned_txs::list_unsigned_txs(&conn)?;
+    let mut conn = state.db.get()?;
+    let txs = unsigned_txs::list_unsigned_txs(&mut conn)?;
     Ok(HttpResponse::Ok().json(txs))
 }
 
@@ -26,8 +26,8 @@ pub async fn get_unsigned(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let id = path.into_inner();
-    let conn = state.db.get()?;
-    let tx = unsigned_txs::get_unsigned_tx(&conn, &id)?;
+    let mut conn = state.db.get()?;
+    let tx = unsigned_txs::get_unsigned_tx(&mut conn, &id)?;
     Ok(HttpResponse::Ok().json(tx))
 }
 
@@ -45,10 +45,10 @@ pub async fn submit_witnesses(
     body: web::Json<SubmitWitnessesRequest>,
 ) -> Result<HttpResponse, AppError> {
     let id = path.into_inner();
-    let conn = state.db.get()?;
+    let mut conn = state.db.get()?;
 
     // Verify the unsigned tx exists
-    let tx = unsigned_txs::get_unsigned_tx(&conn, &id)?;
+    let tx = unsigned_txs::get_unsigned_tx(&mut conn, &id)?;
     if tx.status != "pending" {
         return Err(AppError::BadRequest(format!(
             "Transaction {} is already {}",
@@ -57,7 +57,7 @@ pub async fn submit_witnesses(
     }
 
     let witnesses_json = serde_json::to_string(&body.witnesses)?;
-    unsigned_txs::set_witnesses(&conn, &id, &witnesses_json)?;
+    unsigned_txs::set_witnesses(&mut conn, &id, &witnesses_json)?;
 
     info!(tx_id = %id, "Witnesses submitted for unsigned transaction");
 
@@ -73,8 +73,8 @@ pub async fn submit_to_chain(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let id = path.into_inner();
-    let conn = state.db.get()?;
-    let tx = unsigned_txs::get_unsigned_tx(&conn, &id)?;
+    let mut conn = state.db.get()?;
+    let tx = unsigned_txs::get_unsigned_tx(&mut conn, &id)?;
 
     if tx.status != "signed" {
         return Err(AppError::BadRequest(format!(
@@ -94,7 +94,7 @@ pub async fn submit_to_chain(
 
     let tx_hash = state.chain_provider.send_transaction(&tx_hex).await?;
 
-    unsigned_txs::mark_broadcast(&conn, &id, &tx_hash)?;
+    unsigned_txs::mark_broadcast(&mut conn, &id, &tx_hash)?;
 
     info!(tx_id = %id, tx_hash = %tx_hash, "Signed transaction broadcast to chain");
 

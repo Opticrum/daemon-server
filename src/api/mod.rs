@@ -7,13 +7,12 @@ use actix_web::{
     dev::{ServiceRequest, ServiceResponse},
     web,
 };
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
+use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::signer::Signer;
 use crate::services::transaction_assembler::TransactionAssembler;
@@ -28,8 +27,8 @@ mod wallet;
 
 /// Application state shared across all handlers.
 pub struct AppState {
-    /// SQLite connection pool.
-    pub db: Pool<SqliteConnectionManager>,
+    /// SQLite connection pool (Diesel-backed).
+    pub db: DbPool,
     /// Server configuration.
     pub config: Config,
     /// Chain provider for CKB RPC and indexer access.

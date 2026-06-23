@@ -6,13 +6,12 @@
 //! - Encrypting/decrypting keys for DB storage
 //! - Signing transactions
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::db::wallets::{self, WalletRecord};
+use crate::db::DbPool;
 use crate::error::AppError;
 use crate::services::crypto;
 
@@ -58,7 +57,7 @@ fn derive_address(_pubkey: &[u8; 33], lock_hash: &[u8; 32]) -> String {
 /// at rest. If `None`, the key is stored as plaintext (suitable for dev).
 /// Returns the new wallet record.
 pub fn import_wallet(
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     label: &str,
     private_key_hex: &str,
     encryption_password: Option<&str>,
@@ -89,8 +88,8 @@ pub fn import_wallet(
     };
 
     // Store in DB
-    let conn = pool.get()?;
-    let id = wallets::insert_wallet(&conn, label, &encrypted_key, &lock_hash, &address)?;
+    let mut conn = pool.get()?;
+    let id = wallets::insert_wallet(&mut conn, label, &encrypted_key, &lock_hash, &address)?;
 
     info!(
         wallet_id = id,
@@ -100,25 +99,25 @@ pub fn import_wallet(
         "Wallet imported"
     );
 
-    wallets::get_wallet_by_id(&conn, id)
+    wallets::get_wallet_by_id(&mut conn, id)
 }
 
 /// Get a wallet by its database ID.
-pub fn get_wallet(pool: &Pool<SqliteConnectionManager>, id: i64) -> Result<WalletRecord, AppError> {
-    let conn = pool.get()?;
-    wallets::get_wallet_by_id(&conn, id)
+pub fn get_wallet(pool: &DbPool, id: i64) -> Result<WalletRecord, AppError> {
+    let mut conn = pool.get()?;
+    wallets::get_wallet_by_id(&mut conn, id)
 }
 
 /// List all managed wallets.
-pub fn list_wallets(pool: &Pool<SqliteConnectionManager>) -> Result<Vec<WalletRecord>, AppError> {
-    let conn = pool.get()?;
-    wallets::list_wallets(&conn)
+pub fn list_wallets(pool: &DbPool) -> Result<Vec<WalletRecord>, AppError> {
+    let mut conn = pool.get()?;
+    wallets::list_wallets(&mut conn)
 }
 
 /// Delete a wallet by ID.
-pub fn delete_wallet(pool: &Pool<SqliteConnectionManager>, id: i64) -> Result<bool, AppError> {
-    let conn = pool.get()?;
-    let deleted = wallets::delete_wallet(&conn, id)?;
+pub fn delete_wallet(pool: &DbPool, id: i64) -> Result<bool, AppError> {
+    let mut conn = pool.get()?;
+    let deleted = wallets::delete_wallet(&mut conn, id)?;
     if deleted {
         info!(wallet_id = id, "Wallet deleted");
     } else {

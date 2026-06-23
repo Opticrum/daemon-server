@@ -3,9 +3,9 @@
 //! Consumes an Order Cell and produces a Match Cell, referencing a
 //! pre-existing Fiber channel as a CellDep.
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use tracing::{debug, info};
+
+use crate::db::DbPool;
 
 use crate::db::{matches as match_db, orders as order_db};
 use crate::error::AppError;
@@ -26,14 +26,14 @@ pub struct MatchOrderResult {
 /// with pre-computed `rent_per_block`.
 pub async fn match_order<P: ChainProvider + ?Sized>(
     provider: &P,
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     order_id: i64,
     seller_address: &str,
     channel_outpoint_tx_hash: &str,
     channel_outpoint_index: u32,
 ) -> Result<MatchOrderResult, AppError> {
-    let conn = pool.get()?;
-    let order = order_db::get_order_by_id(&conn, order_id)?;
+    let mut conn = pool.get()?;
+    let order = order_db::get_order_by_id(&mut conn, order_id)?;
 
     if order.status != "live" {
         return Err(AppError::BadRequest(format!(
@@ -63,7 +63,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
 
     // Persist tracked match
     let match_id = match_db::insert_match(
-        &conn,
+        &mut conn,
         &tx_hash,
         output_index,
         &order.tx_hash,
@@ -75,7 +75,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     )?;
 
     // Update order status
-    order_db::update_order_status(&conn, order_id, "matched")?;
+    order_db::update_order_status(&mut conn, order_id, "matched")?;
 
     info!(
         order_id = order_id,
@@ -96,11 +96,11 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
 
 /// List tracked matches.
 pub fn list_matches(
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     status_filter: Option<&str>,
 ) -> Result<Vec<match_db::TrackedMatch>, AppError> {
-    let conn = pool.get()?;
-    let matches = match_db::list_matches(&conn, status_filter)?;
+    let mut conn = pool.get()?;
+    let matches = match_db::list_matches(&mut conn, status_filter)?;
     debug!(
         count = matches.len(),
         filter = status_filter.unwrap_or("all"),
@@ -111,11 +111,11 @@ pub fn list_matches(
 
 /// Get a single tracked match by ID.
 pub fn get_match(
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     match_id: i64,
 ) -> Result<match_db::TrackedMatch, AppError> {
-    let conn = pool.get()?;
-    match_db::get_match_by_id(&conn, match_id)
+    let mut conn = pool.get()?;
+    match_db::get_match_by_id(&mut conn, match_id)
 }
 
 #[cfg(test)]

@@ -23,15 +23,15 @@ async fn no_wallets_produces_zero_extraction() {
 #[actix_rt::test]
 async fn extracts_when_above_threshold() {
     let pool = test_db();
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
     // Add a wallet
-    wallet_db::insert_wallet(&conn, "w", b"enc", &[10u8; 32], "addr10").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w", b"enc", &[10u8; 32], "addr10").unwrap();
 
     // Add a match with high rent_per_block (1000 shannons/block)
     match_db::insert_match(
-        &conn,
+        &mut conn,
         "match_high",
         0,
         "order_high",
@@ -53,14 +53,14 @@ async fn extracts_when_above_threshold() {
 #[actix_rt::test]
 async fn skips_when_below_threshold() {
     let pool = test_db();
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&conn, "w2", b"enc2", &[11u8; 32], "addr11").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w2", b"enc2", &[11u8; 32], "addr11").unwrap();
 
     // Low rent_per_block: 1 shannon/block
     match_db::insert_match(
-        &conn,
+        &mut conn,
         "match_low",
         0,
         "order_low",
@@ -82,13 +82,13 @@ async fn skips_when_below_threshold() {
 #[actix_rt::test]
 async fn respects_min_extraction_different_levels() {
     let pool = test_db();
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&conn, "w3", b"enc3", &[12u8; 32], "addr12").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w3", b"enc3", &[12u8; 32], "addr12").unwrap();
 
     match_db::insert_match(
-        &conn,
+        &mut conn,
         "match_mid",
         0,
         "order_mid",
@@ -117,14 +117,14 @@ async fn respects_min_extraction_different_levels() {
 #[actix_rt::test]
 async fn only_processes_live_matches() {
     let pool = test_db();
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&conn, "w4", b"enc4", &[13u8; 32], "addr13").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w4", b"enc4", &[13u8; 32], "addr13").unwrap();
 
     // Insert a destroyed match
     match_db::insert_match(
-        &conn,
+        &mut conn,
         "dead_match",
         0,
         "dead_order",
@@ -135,7 +135,7 @@ async fn only_processes_live_matches() {
         None::<&str>,
     )
     .unwrap();
-    match_db::update_match_status(&conn, 1, "destroyed").unwrap();
+    match_db::update_match_status(&mut conn, 1, "destroyed").unwrap();
 
     // Should skip destroyed matches
     let extracted = run_extraction_cycle(&pool, 0, &provider).await.unwrap();
@@ -145,14 +145,14 @@ async fn only_processes_live_matches() {
 #[actix_rt::test]
 async fn multiple_matches_all_processed() {
     let pool = test_db();
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&conn, "multi", b"enc", &[14u8; 32], "addr14").unwrap();
+    wallet_db::insert_wallet(&mut conn, "multi", b"enc", &[14u8; 32], "addr14").unwrap();
 
     for i in 0..5 {
         match_db::insert_match(
-            &conn,
+            &mut conn,
             &format!("multi_match_{i}"),
             0,
             &format!("multi_order_{i}"),

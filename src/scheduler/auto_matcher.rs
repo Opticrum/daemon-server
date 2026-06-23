@@ -4,9 +4,9 @@
 //! Runs on a configurable interval, applies filters from `Config`, and
 //! matches each eligible order using the configured signer and wallet.
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use tracing::{debug, info};
+
+use crate::db::DbPool;
 
 use crate::config::Config;
 use crate::db::matches as match_db;
@@ -20,7 +20,7 @@ use crate::services::signer::{SignRequest, Signer};
 /// and attempts to match each eligible order. Returns the number
 /// of orders matched in this cycle.
 pub async fn run_auto_match_cycle(
-    pool: &Pool<SqliteConnectionManager>,
+    pool: &DbPool,
     chain_provider: &(dyn ChainProvider + Send + Sync),
     signer: &(dyn Signer + Send + Sync),
     config: &Config,
@@ -29,14 +29,14 @@ pub async fn run_auto_match_cycle(
         return Ok(0);
     }
 
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
 
     // Scan all live orders on chain
     let orders = chain_provider.scan_orders().await?;
     debug!(on_chain_orders = orders.len(), "Auto-match: scanned chain");
 
     // Get already-matched order outpoints from local DB to skip them
-    let existing_matches = match_db::list_matches(&conn, None)?;
+    let existing_matches = match_db::list_matches(&mut conn, None)?;
     let matched_outpoints: Vec<(String, i32)> = existing_matches
         .iter()
         .map(|m| (m.order_tx_hash.clone(), m.order_output_index))
@@ -138,7 +138,7 @@ pub async fn run_auto_match_cycle(
         // Record in local DB
         let rent_per_block = order.ckb_capacity as f64 / order.order_data.escrow_blocks as f64;
         match_db::insert_match(
-            &conn,
+            &mut conn,
             &tx_hash,
             0,
             &hex::encode(order.order_outpoint.tx_hash),

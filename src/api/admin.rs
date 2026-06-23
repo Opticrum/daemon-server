@@ -25,8 +25,8 @@ pub async fn stats(state: web::Data<AppState>) -> Result<HttpResponse, AppError>
     let exhausted_matches = matches.iter().filter(|m| m.status == "exhausted").count();
     let destroyed_matches = matches.iter().filter(|m| m.status == "destroyed").count();
 
-    let conn = state.db.get()?;
-    let total_extracted = crate::db::matches::total_extracted(&conn)?;
+    let mut conn = state.db.get()?;
+    let total_extracted = crate::db::matches::total_extracted(&mut conn)?;
 
     debug!(
         total_orders = orders.len(),

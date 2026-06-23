@@ -1,91 +1,94 @@
-//! Database schema and migrations.
+//! Database schema — Diesel table definitions and migration runner.
 //!
-//! All CREATE TABLE statements are defined here. `run_migrations` is
-//! idempotent — it uses `IF NOT EXISTS` so it's safe to run on every
-//! server startup.
+//! The actual migration SQL lives in `migrations/`. At compile time,
+//! `embed_migrations!()` bundles it. At startup, `run_migrations`
+//! runs any pending migrations via Diesel's versioned migration system.
 
-use rusqlite::Connection;
+use diesel::sqlite::SqliteConnection;
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use tracing::info;
 
 use crate::error::AppError;
 
-/// Run all schema migrations. Idempotent (uses IF NOT EXISTS).
-pub fn run_migrations(conn: &Connection) -> Result<(), AppError> {
-    info!("Running database migrations");
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS wallets (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            label           TEXT NOT NULL,
-            encrypted_key   BLOB NOT NULL,
-            lock_hash       BLOB NOT NULL UNIQUE,
-            ckb_address     TEXT NOT NULL,
-            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS tracked_orders (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            tx_hash          TEXT NOT NULL,
-            output_index     INTEGER NOT NULL,
-            buyer_address    TEXT NOT NULL,
-            channel_capacity INTEGER NOT NULL,
-            escrow_blocks    INTEGER NOT NULL,
-            xudt_amount      TEXT,
-            status           TEXT NOT NULL DEFAULT 'live',
-            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(tx_hash, output_index)
-        );
-
-        CREATE TABLE IF NOT EXISTS tracked_matches (
-            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-            tx_hash                 TEXT NOT NULL,
-            output_index            INTEGER NOT NULL,
-            order_tx_hash           TEXT NOT NULL,
-            order_output_index      INTEGER NOT NULL,
-            seller_address          TEXT NOT NULL,
-            rent_per_block          REAL NOT NULL,
-            escrow_blocks           INTEGER NOT NULL,
-            last_extraction_block   INTEGER NOT NULL DEFAULT 0,
-            xudt_amount             TEXT,
-            status                  TEXT NOT NULL DEFAULT 'live',
-            created_at              TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(tx_hash, output_index)
-        );
-
-        CREATE TABLE IF NOT EXISTS unsigned_transactions (
-            id              TEXT PRIMARY KEY,
-            operation       TEXT NOT NULL,
-            tx_data_json    TEXT NOT NULL,
-            status          TEXT NOT NULL DEFAULT 'pending',
-            signed_witnesses_json TEXT,
-            tx_hash         TEXT,
-            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS extraction_history (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            match_tx_hash       TEXT NOT NULL,
-            match_output_index  INTEGER NOT NULL,
-            extracted_amount    INTEGER NOT NULL,
-            tip_block           INTEGER NOT NULL,
-            tx_hash             TEXT NOT NULL,
-            timestamp           TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        ",
-    )
-    .map_err(|e| AppError::Internal(format!("Migration failed: {}", e)))?;
-
-    let table_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| {
-            r.get(0)
-        })
-        .unwrap_or(0);
-
-    info!(
-        tables = table_count,
-        "Database migrations complete"
-    );
-
+/// Run pending schema migrations. Uses Diesel's versioned migration
+/// tracking table (`__diesel_schema_migrations`) to know which have
+/// already been applied.
+pub fn run_migrations(conn: &mut SqliteConnection) -> Result<(), AppError> {
+    info!("Running pending database migrations");
+    conn.run_pending_migrations(MIGRATIONS)
+        .map_err(|e| AppError::Internal(format!("Migration failed: {e}")))?;
+    info!("Database migrations complete");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Diesel table! definitions
+// ---------------------------------------------------------------------------
+
+diesel::table! {
+    wallets (id) {
+        id -> BigInt,
+        label -> Text,
+        encrypted_key -> Binary,
+        lock_hash -> Binary,
+        ckb_address -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    tracked_orders (id) {
+        id -> BigInt,
+        tx_hash -> Text,
+        output_index -> Integer,
+        buyer_address -> Text,
+        channel_capacity -> BigInt,
+        escrow_blocks -> BigInt,
+        xudt_amount -> Nullable<Text>,
+        status -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    tracked_matches (id) {
+        id -> BigInt,
+        tx_hash -> Text,
+        output_index -> Integer,
+        order_tx_hash -> Text,
+        order_output_index -> Integer,
+        seller_address -> Text,
+        rent_per_block -> Double,
+        escrow_blocks -> BigInt,
+        last_extraction_block -> BigInt,
+        xudt_amount -> Nullable<Text>,
+        status -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    unsigned_transactions (id) {
+        id -> Text,
+        operation -> Text,
+        tx_data_json -> Text,
+        status -> Text,
+        signed_witnesses_json -> Nullable<Text>,
+        tx_hash -> Nullable<Text>,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    extraction_history (id) {
+        id -> BigInt,
+        match_tx_hash -> Text,
+        match_output_index -> Integer,
+        extracted_amount -> BigInt,
+        tip_block -> BigInt,
+        tx_hash -> Text,
+        timestamp -> Text,
+    }
 }

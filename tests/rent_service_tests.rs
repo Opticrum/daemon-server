@@ -14,9 +14,9 @@ async fn extract_and_destroy_flow() {
     let provider = MockChainProvider::new();
     provider.set_tip_block(2000);
 
-    let conn = pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
     let match_id = match_db::insert_match(
-        &conn,
+        &mut conn,
         "m_extract_flow",
         0,
         "o_extract_flow",
@@ -27,7 +27,7 @@ async fn extract_and_destroy_flow() {
         None::<&str>,
     )
     .unwrap();
-    match_db::update_match_extraction(&conn, match_id, 1000).unwrap();
+    match_db::update_match_extraction(&mut conn, match_id, 1000).unwrap();
 
     // Extract rent
     let result = rent_service::extract_rent(&provider, &pool, match_id)

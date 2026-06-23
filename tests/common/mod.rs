@@ -1,8 +1,5 @@
 //! Shared test utilities — in-memory DB setup, test keys, mock chain data.
 
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-
 use opticrum_calculator::types::{MatchInfo, OrderInfo};
 use opticrum_protocol::{MatchArgs, MatchData, OrderArgs, OrderData, OutPoint};
 
@@ -10,7 +7,7 @@ use rust_server::db;
 use rust_server::services::chain_provider::{CellOutput, MockChainProvider};
 
 /// Create an in-memory SQLite database with all migrations applied.
-pub fn test_db() -> Pool<SqliteConnectionManager> {
+pub fn test_db() -> rust_server::db::DbPool {
     db::init_test_db()
 }
 
