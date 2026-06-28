@@ -11,7 +11,7 @@ use opticrum_calculator::types::{MatchInfo, OrderInfo};
 use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
-use crate::services::chain_provider::{CellOutput, ChainProvider, FiberChannelInfo};
+use crate::services::chain_provider::{CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo};
 
 /// Production chain provider backed by a real CKB RPC node and indexer.
 pub struct RealChainProvider {
@@ -161,6 +161,55 @@ impl ChainProvider for RealChainProvider {
         tracing::debug!("get_cell({tx_hash}, {index}) — RPC query deferred to Phase 6");
         Err(AppError::ChainError("Cell query not yet wired for RPC (Phase 6). \
              Use MockChainProvider::add_cell() for test setups.".to_string()))
+    }
+
+    async fn get_fiber_node_info(&self) -> Result<Option<FiberNodeInfo>, AppError> {
+        let url = &self.fiber_rpc_url;
+        tracing::debug!("Fetching Fiber node_info from {}", url);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|e| AppError::ChainError(format!("reqwest client: {e}")))?;
+
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "node_info",
+            "params": [],
+            "id": 1,
+        });
+
+        let resp = client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AppError::ChainError(format!("Fiber RPC node_info: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(AppError::ChainError(format!(
+                "Fiber RPC node_info returned HTTP {}",
+                resp.status()
+            )));
+        }
+
+        #[derive(serde::Deserialize)]
+        struct JsonRpcResponse {
+            result: Option<FiberNodeInfo>,
+            error: Option<serde_json::Value>,
+        }
+
+        let raw: JsonRpcResponse = resp
+            .json()
+            .await
+            .map_err(|e| AppError::ChainError(format!("Fiber RPC node_info parse: {e}")))?;
+
+        if let Some(rpc_err) = raw.error {
+            tracing::warn!("Fiber node_info RPC error: {}", rpc_err);
+            return Ok(None);
+        }
+
+        Ok(raw.result)
     }
 
     async fn scan_fiber_channels(

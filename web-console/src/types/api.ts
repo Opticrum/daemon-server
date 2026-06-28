@@ -133,6 +133,27 @@ export interface FiberChannelInfo {
   counterparty_lock_hash?: string
 }
 
+// ── Fiber Node Info (matches backend proxy response) ──
+export interface FiberNodeInfoResponse {
+  rpc_url: string
+  node_info: FiberNodeInfo | null
+}
+
+export interface FiberNodeInfo {
+  version: string
+  commit_hash: string
+  pubkey: string
+  node_name?: string
+  addresses: string[]
+  chain_hash: string
+  channel_count: string    // hex
+  pending_channel_count: string  // hex
+  peers_count: string      // hex
+  tlc_expiry_delta: string // hex
+  tlc_min_value: string    // hex
+  udt_cfg_infos: Record<string, unknown>[]
+}
+
 // ── Unsigned Transactions ──
 export interface UnsignedTx {
   id: string

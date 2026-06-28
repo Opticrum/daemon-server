@@ -310,6 +310,16 @@ impl GatewayService {
     // ═══════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════
+    // Fiber node info
+    // ═══════════════════════════════════════════════════════
+
+    pub async fn get_fiber_node_info(
+        provider: &dyn ChainProvider,
+    ) -> Result<Option<crate::services::chain_provider::FiberNodeInfo>, AppError> {
+        provider.get_fiber_node_info().await
+    }
+
+    // ═══════════════════════════════════════════════════════
     // Signing
     // ═══════════════════════════════════════════════════════
 

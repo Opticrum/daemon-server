@@ -30,6 +30,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/matches/{id}/destroy", web::post().to(destroy_match))
             // Channels
             .route("/channels", web::get().to(scan_channels))
+            // Fiber node info
+            .route("/fiber-node-info", web::get().to(fiber_node_info))
             // Signing
             .route("/signing", web::get().to(list_unsigned))
             .route("/signing/{id}", web::get().to(get_unsigned))
@@ -235,6 +237,18 @@ pub async fn scan_channels(
         _ => state.chain_provider.scan_fiber_channels(&[]).await?,
     };
     Ok(HttpResponse::Ok().json(channels))
+}
+
+// ═══════════════════════════════════════════════════════
+// Fiber node info
+// ═══════════════════════════════════════════════════════
+
+pub async fn fiber_node_info(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let node_info = GatewayService::get_fiber_node_info(state.chain_provider.as_ref()).await?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "rpc_url": state.config.fiber_rpc_url,
+        "node_info": node_info,
+    })))
 }
 
 // ═══════════════════════════════════════════════════════

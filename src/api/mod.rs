@@ -85,6 +85,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/console/scheduler/status", web::get().to(console::scheduler_status))
             .route("/console/signer-info", web::get().to(console::signer_info))
             .route("/console/server-info", web::get().to(console::server_info))
+            .route("/console/fiber-node-info", web::get().to(console::fiber_node_info))
     );
 }
 

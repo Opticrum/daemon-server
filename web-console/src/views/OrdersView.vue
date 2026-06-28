@@ -2,7 +2,8 @@
 import { ref, onMounted, inject } from "vue";
 import { useApi } from "@/composables/useApi";
 import { useI18n } from "@/composables/useI18n";
-import { truncateAddress, formatCKB, formatAPY } from "@/utils/format";
+import { truncateAddress, formatCKB, formatAPY, explorerTxUrl } from "@/utils/format";
+import type { ServerInfo } from "@/types/api";
 import MatchOrderForm from "@/components/ui/MatchOrderForm.vue";
 import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
@@ -17,6 +18,7 @@ const orders = ref<OrderScanItem[]>([]);
 const loading = ref(false);
 const scanned = ref(false);
 const error = ref<string | null>(null);
+const network = ref("testnet");
 const matchForm = ref<MatchOrderRequest & { tx_hash: string }>({
   tx_hash: "",
   order_output_index: 0,
@@ -105,7 +107,10 @@ function showMatchModal(order: OrderScanItem) {
   });
 }
 
-onMounted(scanOrders);
+onMounted(async () => {
+  api.getServerInfo().then((info) => { network.value = info.network; }).catch(() => {});
+  await scanOrders();
+});
 </script>
 
 <template>
@@ -138,9 +143,13 @@ onMounted(scanOrders);
       :loading="loading"
     >
       <template #cell-tx_hash="{ value }">
-        <code class="font-mono tx-hash" :title="String(value)">{{
-          truncateAddress(String(value), 20, 16)
-        }}</code>
+        <a
+          :href="explorerTxUrl(String(value), network)"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="tx-link font-mono"
+          :title="String(value)"
+        >{{ truncateAddress(String(value), 20, 16) }}</a>
       </template>
       <template #cell-channel_capacity="{ value }">{{
         formatCKB(Number(value))
@@ -188,12 +197,17 @@ onMounted(scanOrders);
 .page-orders :deep(.data-table td) {
   text-align: center;
 }
-.page-orders :deep(.tx-hash) {
+.page-orders :deep(.tx-link) {
   display: inline-block;
   max-width: 100%;
   white-space: nowrap;
   vertical-align: middle;
-  cursor: default;
+  color: var(--primary-500);
+  text-decoration: none;
+}
+.page-orders :deep(.tx-link:hover) {
+  color: var(--primary-400);
+  text-decoration: underline;
 }
 .page-header {
   display: flex;

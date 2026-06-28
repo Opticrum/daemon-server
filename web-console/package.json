@@ -11,6 +11,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@ckb-ccc/fiber": "^0.0.0-canary-20260330023358",
     "chart.js": "^4.4.0",
     "vue": "^3.4.0",
     "vue-router": "^4.3.0"

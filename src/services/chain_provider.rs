@@ -38,6 +38,13 @@ pub trait ChainProvider: Send + Sync {
         "testnet"
     }
 
+    /// Query the Fiber node for its metadata (version, pubkey, peers, etc.).
+    /// Calls the `node_info` JSON-RPC method on the Fiber RPC endpoint.
+    async fn get_fiber_node_info(&self) -> Result<Option<FiberNodeInfo>, AppError> {
+        // Default: no-op. RealChainProvider overrides this.
+        Ok(None)
+    }
+
     /// Scan Fiber network for channels owned by the given lock hash.
     /// Returns channel outpoints with capacities for the admin panel's
     /// channel browser and auto-match engine.
@@ -79,6 +86,26 @@ pub struct FiberChannelInfo {
     pub counterparty_lock_hash: String,
 }
 
+/// Fiber node metadata returned by the `node_info` JSON-RPC method.
+/// Fields mirror the Fiber node's snake_case response.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct FiberNodeInfo {
+    pub version: String,
+    pub commit_hash: String,
+    pub pubkey: String,
+    #[serde(default)]
+    pub node_name: Option<String>,
+    pub addresses: Vec<String>,
+    pub chain_hash: String,
+    pub channel_count: String,
+    pub pending_channel_count: String,
+    pub peers_count: String,
+    pub tlc_expiry_delta: String,
+    pub tlc_min_value: String,
+    #[serde(default)]
+    pub udt_cfg_infos: Vec<serde_json::Value>,
+}
+
 // OrderInfo and MatchInfo are imported from opticrum_calculator —
 // the contract kernel is the single source of truth for protocol types.
 
@@ -97,6 +124,7 @@ pub struct MockChainProvider {
     pub submitted_txs: Mutex<Vec<String>>,
     pub cells: Mutex<std::collections::HashMap<(String, u32), CellOutput>>,
     pub fiber_channels: Mutex<Vec<FiberChannelInfo>>,
+    pub fiber_node_info: Mutex<Option<FiberNodeInfo>>,
 }
 
 impl Default for MockChainProvider {
@@ -114,6 +142,7 @@ impl MockChainProvider {
             submitted_txs: Mutex::new(Vec::new()),
             cells: Mutex::new(std::collections::HashMap::new()),
             fiber_channels: Mutex::new(Vec::new()),
+            fiber_node_info: Mutex::new(None),
         }
     }
 
@@ -185,6 +214,10 @@ impl ChainProvider for MockChainProvider {
             .get(&(tx_hash.to_string(), index))
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("Cell {tx_hash}:{index} not found")))
+    }
+
+    async fn get_fiber_node_info(&self) -> Result<Option<FiberNodeInfo>, AppError> {
+        Ok(self.fiber_node_info.lock().unwrap().clone())
     }
 
     async fn scan_fiber_channels(

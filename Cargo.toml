@@ -39,6 +39,9 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# HTTP client (Fiber RPC proxy, also transitive via ckb-cinnabar)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Async
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"

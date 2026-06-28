@@ -49,6 +49,19 @@ export function truncateAddress(addr: string, prefix = 6, suffix = 6): string {
 }
 
 /**
+ * Build a blockchain explorer URL for a transaction hash.
+ * Hardcoded base URLs for CKB mainnet and testnet explorers.
+ */
+export function explorerTxUrl(txHash: string, network: string): string {
+  const base =
+    network === 'mainnet'
+      ? 'https://explorer.nervos.org/transaction/'
+      : 'https://testnet.explorer.nervos.org/transaction/'
+  const prefixed = txHash.startsWith('0x') ? txHash : '0x' + txHash
+  return base + prefixed
+}
+
+/**
  * Map status string to i18n key (for StatusTag component).
  */
 export function statusLabelKey(status: string): string {

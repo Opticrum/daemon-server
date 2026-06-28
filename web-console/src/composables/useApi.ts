@@ -1,4 +1,4 @@
-import { ApiError, type StatsResponse, type AutoMatchConfig, type WalletResponse, type ImportWalletRequest, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type TrackedMatch, type MatchScanItem, type ExtractRentResult, type FiberChannelInfo, type UnsignedTx, type TrendDataPoint, type DistributionItem, type MonthlyDataPoint, type RankingItem, type ServerInfo } from '@/types/api'
+import { ApiError, type StatsResponse, type AutoMatchConfig, type WalletResponse, type ImportWalletRequest, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type TrackedMatch, type MatchScanItem, type ExtractRentResult, type FiberChannelInfo, type FiberNodeInfoResponse, type UnsignedTx, type TrendDataPoint, type DistributionItem, type MonthlyDataPoint, type RankingItem, type ServerInfo } from '@/types/api'
 
 // ═══════════════════════════════════════════
 // Fetch wrapper
@@ -64,6 +64,10 @@ export function useApi() {
     // ── Channels ──
     scanChannels: (owner?: string): Promise<FiberChannelInfo[]> =>
       request('/console/channels' + (owner ? `?owner=${encodeURIComponent(owner)}` : '')),
+
+    // ── Fiber Node Info ──
+    getFiberNodeInfo: (): Promise<FiberNodeInfoResponse> =>
+      request('/console/fiber-node-info'),
 
     // ── Signing ──
     listUnsignedTxs: (): Promise<UnsignedTx[]> =>
