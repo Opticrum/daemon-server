@@ -4,7 +4,6 @@
 
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
-use tracing::debug;
 
 use crate::api::AppState;
 use crate::error::AppError;
@@ -48,12 +47,6 @@ pub async fn list_channels(
         .chain_provider
         .scan_fiber_channels(&owner_lock_hash)
         .await?;
-
-    debug!(
-        count = channels.len(),
-        owner_filter = query.owner.is_some(),
-        "Fiber channels scanned"
-    );
 
     Ok(HttpResponse::Ok().json(channels))
 }

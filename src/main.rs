@@ -31,27 +31,12 @@ async fn main() -> std::io::Result<()> {
         .with_target(false)
         .init();
 
-    info!("Opticrum Server v{} starting up", env!("CARGO_PKG_VERSION"));
-
     // Parse configuration
     let config = Config::load();
-    info!(
-        config = ?config.config_file,
-        port = config.port,
-        db = %config.database_url,
-        ckb_rpc = %config.ckb_rpc_url,
-        idx = %config.ckb_indexer_url,
-        fiber = %config.fiber_rpc_url,
-        fee_rate = config.fee_rate,
-        auto_match = config.auto_match_enabled,
-        log_level = %config.log_level,
-        "Configuration loaded"
-    );
 
     // Initialize database
     let pool = match db::init_db(&config.database_url) {
         Ok(p) => {
-            info!(path = %config.database_url, "Database initialized");
             p
         }
         Err(e) => {
@@ -68,17 +53,22 @@ async fn main() -> std::io::Result<()> {
     );
 
     // Verify chain connectivity
-    match real_provider.get_tip_block_number().await {
-        Ok(tip) => info!(tip_block = tip, network = real_provider.network(), "CKB chain connection verified"),
-        Err(e) => warn!(error = %e, "CKB chain connectivity check failed — server will start anyway"),
-    }
+    let tip_block = match real_provider.get_tip_block_number().await {
+        Ok(tip) => {
+            info!(tip, network = real_provider.network(), "Chain connected");
+            tip
+        }
+        Err(e) => {
+            warn!(error = %e, "Chain connectivity check failed — starting anyway");
+            0
+        }
+    };
 
-    // Build transaction assembler
+    // Build transaction assembler (not logged — chain + signer cover the infra)
     let tx_assembler = Some(TransactionAssembler::new(
         real_provider.rpc_client().clone(),
         config.fee_rate,
     ));
-    info!("Transaction assembler initialized (fee_rate={})", config.fee_rate);
 
     let chain_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
 
@@ -86,7 +76,18 @@ async fn main() -> std::io::Result<()> {
     let signer: Arc<dyn Signer> = Arc::new(ExternalSigner::new(
         chain_provider.network(),
     ));
-    info!(network = chain_provider.network(), "Signer initialized: mode=external");
+
+    // Consolidated startup summary
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        port = config.port,
+        network = chain_provider.network(),
+        db = %config.database_url,
+        fiber = %config.fiber_rpc_url,
+        auto_match = config.auto_match_enabled,
+        tip_block,
+        "Opticrum Server starting"
+    );
 
     let signer_bg = signer.clone();
 
@@ -106,12 +107,9 @@ async fn main() -> std::io::Result<()> {
 
     // Spawn background tasks
     scheduler::spawn_schedulers(pool, config.clone(), chain_provider, signer_bg, scheduler_state);
-    info!("Background schedulers spawned");
 
     // Start HTTP server
     let bind_addr = (config.bind_address.as_str(), config.port);
-    let admin_url = format!("http://{}:{}/admin", config.bind_address, config.port);
-    info!(address = %config.bind_address, port = config.port, admin_url = %admin_url, "HTTP server starting");
 
     match HttpServer::new(move || {
         App::new()
@@ -123,7 +121,10 @@ async fn main() -> std::io::Result<()> {
     .bind(bind_addr)
     {
         Ok(server) => {
-            info!("Server listening — ready for requests");
+            info!(
+                address = %format!("http://{}:{}/admin", config.bind_address, config.port),
+                "Server ready"
+            );
             server.run().await
         }
         Err(e) => {

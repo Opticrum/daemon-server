@@ -76,6 +76,11 @@ pub async fn run_auto_match_cycle(
 
         // Apply config filters
         if order.ckb_capacity < config.auto_match_min_capacity {
+            debug!(
+                capacity = order.ckb_capacity,
+                min = config.auto_match_min_capacity,
+                "Auto-match: skipped — capacity below minimum"
+            );
             continue;
         }
         // Derive effective escrow blocks from capacity / rent rate.
@@ -86,6 +91,11 @@ pub async fn run_auto_match_cycle(
             effective_capacity.checked_div(order.order_data.shannons_per_block)
         {
             if effective_escrow > config.auto_match_max_escrow_blocks {
+                debug!(
+                    effective_escrow,
+                    max = config.auto_match_max_escrow_blocks,
+                    "Auto-match: skipped — escrow blocks above maximum"
+                );
                 continue;
             }
         }

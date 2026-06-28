@@ -7,7 +7,6 @@
 
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
-use tracing::debug;
 
 use crate::api::AppState;
 use crate::error::AppError;
@@ -46,7 +45,6 @@ struct OrderScanItem {
 /// GET /api/orders/scan — scan the chain for live orders (seller-side).
 pub async fn scan_chain(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let orders = state.chain_provider.scan_orders().await?;
-    debug!(on_chain = orders.len(), "Orders scanned from chain");
     let items: Vec<OrderScanItem> = orders
         .into_iter()
         .map(|o| OrderScanItem {

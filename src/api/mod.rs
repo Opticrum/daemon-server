@@ -9,7 +9,7 @@ use actix_web::{
 };
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{error, info, warn};
+use tracing::{debug, error, warn};
 
 use crate::config::Config;
 use crate::db::DbPool;
@@ -146,7 +146,7 @@ where
                     let elapsed = started.elapsed();
                     let status = res.status().as_u16();
                     match status {
-                        200..=299 => info!(
+                        200..=299 => debug!(
                             method = %method, path = %path,
                             status = status, duration_ms = elapsed.as_millis() as u64,
                             "OK"

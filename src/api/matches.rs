@@ -7,7 +7,6 @@
 
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
-use tracing::debug;
 
 use crate::api::AppState;
 use crate::error::AppError;
@@ -54,7 +53,6 @@ struct MatchScanItem {
 /// GET /api/matches/scan — scan the chain for live matches.
 pub async fn scan_chain(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let matches = state.chain_provider.scan_matches().await?;
-    debug!(on_chain = matches.len(), "Matches scanned from chain");
     let items: Vec<MatchScanItem> = matches
         .into_iter()
         .map(|m| MatchScanItem {

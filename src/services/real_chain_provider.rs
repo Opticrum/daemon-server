@@ -135,8 +135,8 @@ impl ChainProvider for RealChainProvider {
             || tx_hex.starts_with("destroy_match:")
             || tx_hex.starts_with("auto_extract:")
         {
-            tracing::warn!(
-                "send_transaction called with placeholder tx (Phase 6 will wire real assembly): {}",
+            tracing::debug!(
+                "Placeholder tx (Phase 6): {}",
                 &tx_hex[..tx_hex.len().min(80)]
             );
             return Ok(hex::encode(Self::hash_bytes(tx_hex.as_bytes())));

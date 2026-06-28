@@ -6,7 +6,6 @@
 
 use actix_web::{HttpResponse, ResponseError};
 use std::fmt;
-use tracing::error;
 
 /// Unified application error.
 #[derive(Debug)]
@@ -47,14 +46,6 @@ impl ResponseError for AppError {
                 "internal_error",
             ),
         };
-
-        // Log every error response for server monitoring
-        error!(
-            status = status.as_u16(),
-            kind = kind,
-            message = %self,
-            "Request failed"
-        );
 
         HttpResponse::build(status).json(serde_json::json!({
             "error": kind,

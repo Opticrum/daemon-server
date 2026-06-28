@@ -55,7 +55,7 @@ pub fn spawn_schedulers(
                     let elapsed = started.elapsed();
                     record_success(&state_ext, |s| &mut s.extractor, elapsed, extracted);
                     if extracted > 0 {
-                        tracing::info!("Extracted {} shannons this cycle", extracted);
+                        tracing::debug!(extracted, "Extraction cycle");
                     }
                     // Update tip block from chain (best effort)
                     if let Ok(tip) = cp_ext.get_tip_block_number().await {
@@ -65,7 +65,7 @@ pub fn spawn_schedulers(
                 Err(e) => {
                     let _elapsed = started.elapsed();
                     record_error(&state_ext, |s| &mut s.extractor, &e.to_string());
-                    tracing::error!("Extraction cycle error: {}", e);
+                    tracing::error!(error = %e, "Extraction cycle failed");
                 }
             }
 
@@ -113,13 +113,13 @@ pub fn spawn_schedulers(
                     let elapsed = started.elapsed();
                     record_success(&state_am, |s| &mut s.matcher, elapsed, n);
                     if n > 0 {
-                        tracing::info!("Auto-matched {} orders this cycle", n);
+                        tracing::debug!(matched = n, "Auto-match cycle");
                     }
                 }
                 Err(e) => {
                     let _elapsed = started.elapsed();
                     record_error(&state_am, |s| &mut s.matcher, &e.to_string());
-                    tracing::error!("Auto-match cycle error: {}", e);
+                    tracing::error!(error = %e, "Auto-match cycle failed");
                 }
             }
 

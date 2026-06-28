@@ -6,7 +6,6 @@
 
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
-use tracing::{debug, info};
 
 use crate::api::AppState;
 use crate::error::AppError;
@@ -63,7 +62,6 @@ pub async fn import_key(
 /// GET /api/wallets — list all managed wallets.
 pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let wallets = wallet_service::list_wallets(&state.db)?;
-    debug!(count = wallets.len(), "Wallets listed");
     let resp: Vec<WalletResponse> = wallets.into_iter().map(Into::into).collect();
     Ok(HttpResponse::Ok().json(resp))
 }
@@ -76,7 +74,6 @@ pub async fn delete(
     let id = path.into_inner();
     let deleted = wallet_service::delete_wallet(&state.db, id)?;
     if deleted {
-        info!(wallet_id = id, "Wallet delete request");
         Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
     } else {
         Err(AppError::NotFound(format!("Wallet id={}", id)))

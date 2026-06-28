@@ -6,7 +6,7 @@
 
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::api::AppState;
 use crate::error::AppError;
@@ -22,12 +22,6 @@ pub async fn stats(state: web::Data<AppState>) -> Result<HttpResponse, AppError>
 
     let mut conn = state.db.get()?;
     let total_extracted = crate::db::matches::total_extracted(&mut conn)?;
-
-    debug!(
-        total_matches = matches.len(),
-        total_extracted,
-        "Admin stats requested"
-    );
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "matches": {

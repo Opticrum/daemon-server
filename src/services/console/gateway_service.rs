@@ -11,6 +11,8 @@
 
 use serde::Serialize;
 use std::collections::HashMap;
+use std::time::Instant;
+use tracing::{debug, warn};
 
 use crate::config::Config;
 use crate::db::matches as match_db;
@@ -150,6 +152,7 @@ impl GatewayService {
         provider: &dyn ChainProvider,
         state: &SchedulerState,
     ) -> Result<DashboardResponse, AppError> {
+        let started = Instant::now();
         let mut conn = pool.get()?;
 
         let matches = match_db::list_matches(&mut conn, None)?;
@@ -159,11 +162,25 @@ impl GatewayService {
         let total_extracted = match_db::total_extracted(&mut conn)? as u64;
         let wallets = wallet_db::list_wallets(&mut conn)?;
 
-        let orders = provider.scan_orders().await.unwrap_or_default();
-        let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
+        let (orders, orders_err) = match provider.scan_orders().await {
+            Ok(o) => (o, false),
+            Err(e) => { warn!(error = %e, "Dashboard: scan_orders failed"); (vec![], true) }
+        };
+        let (tip_block, _) = match provider.get_tip_block_number().await {
+            Ok(t) => (t, false),
+            Err(e) => { warn!(error = %e, "Dashboard: get_tip_block failed"); (0u64, true) }
+        };
+        let (channels, _) = match provider.scan_fiber_channels(&[]).await {
+            Ok(c) => (c, false),
+            Err(e) => { warn!(error = %e, "Dashboard: scan_fiber_channels failed"); (vec![], true) }
+        };
 
-        // Channels: try scanning with empty owner
-        let channels = provider.scan_fiber_channels(&[]).await.unwrap_or_default();
+        debug!(
+            matches = matches.len(), orders = orders.len(), channels = channels.len(),
+            wallets = wallets.len(), tip_block, chain_errors = orders_err,
+            duration_ms = started.elapsed().as_millis() as u64,
+            "Dashboard aggregated"
+        );
 
         // Distribution
         let distribution = vec![
