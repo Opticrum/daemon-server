@@ -10,7 +10,7 @@ use crate::db::schema::wallets;
 use crate::error::AppError;
 
 /// A managed wallet record as stored in the database.
-#[derive(Clone, Debug, Queryable, Identifiable, Selectable)]
+#[derive(Clone, Debug, serde::Serialize, Queryable, Identifiable, Selectable)]
 #[diesel(table_name = wallets)]
 pub struct WalletRecord {
     pub id: i64,

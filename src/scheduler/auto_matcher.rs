@@ -6,6 +6,8 @@
 
 use tracing::{debug, info};
 
+use opticrum_calculator::config::ORDER_TO_MATCH_CAPACITY_RESERVE;
+
 use crate::db::DbPool;
 
 use crate::config::Config;
@@ -60,7 +62,7 @@ pub async fn run_auto_match_cycle(
         }
 
         let _order_outpoint = (
-            hex::encode(order.order_args.fiber_pubkey),
+            hex::encode(order.order_args.fiber_pubkey.to_bytes()),
             order.order_outpoint.index as i32,
         );
 
@@ -76,8 +78,16 @@ pub async fn run_auto_match_cycle(
         if order.ckb_capacity < config.auto_match_min_capacity {
             continue;
         }
-        if order.order_data.escrow_blocks > config.auto_match_max_escrow_blocks {
-            continue;
+        // Derive effective escrow blocks from capacity / rent rate.
+        // A low shannons_per_block means longer effective escrow duration.
+        let effective_capacity =
+            order.ckb_capacity.saturating_sub(ORDER_TO_MATCH_CAPACITY_RESERVE);
+        if let Some(effective_escrow) =
+            effective_capacity.checked_div(order.order_data.shannons_per_block)
+        {
+            if effective_escrow > config.auto_match_max_escrow_blocks {
+                continue;
+            }
         }
 
         // Find a compatible channel (capacity >= order capacity)
@@ -136,7 +146,7 @@ pub async fn run_auto_match_cycle(
         let tx_hash = chain_provider.send_transaction(&signed_tx_hex).await?;
 
         // Record in local DB
-        let rent_per_block = order.ckb_capacity as f64 / order.order_data.escrow_blocks as f64;
+        let shannons_per_block = order.order_data.shannons_per_block;
         match_db::insert_match(
             &mut conn,
             &tx_hash,
@@ -144,8 +154,7 @@ pub async fn run_auto_match_cycle(
             &hex::encode(order.order_outpoint.tx_hash),
             order.order_outpoint.index as i32,
             seller_address,
-            rent_per_block,
-            order.order_data.escrow_blocks,
+            shannons_per_block,
             None::<&str>,
         )?;
 

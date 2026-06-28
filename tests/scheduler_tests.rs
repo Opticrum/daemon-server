@@ -29,7 +29,7 @@ async fn extracts_when_above_threshold() {
     // Add a wallet
     wallet_db::insert_wallet(&mut conn, "w", b"enc", &[10u8; 32], "addr10").unwrap();
 
-    // Add a match with high rent_per_block (1000 shannons/block)
+    // Add a match with high shannons_per_block (1000 shannons/block)
     match_db::insert_match(
         &mut conn,
         "match_high",
@@ -37,8 +37,7 @@ async fn extracts_when_above_threshold() {
         "order_high",
         0,
         "seller_high",
-        1000.0,
-        300_000,
+        1000,
         None::<&str>,
     )
     .unwrap();
@@ -58,7 +57,7 @@ async fn skips_when_below_threshold() {
 
     wallet_db::insert_wallet(&mut conn, "w2", b"enc2", &[11u8; 32], "addr11").unwrap();
 
-    // Low rent_per_block: 1 shannon/block
+    // Low shannons_per_block: 1 shannon/block
     match_db::insert_match(
         &mut conn,
         "match_low",
@@ -66,8 +65,7 @@ async fn skips_when_below_threshold() {
         "order_low",
         0,
         "seller_low",
-        1.0, // 1 shannon/block
-        300_000,
+        1, // 1 shannon/block
         None::<&str>,
     )
     .unwrap();
@@ -94,8 +92,7 @@ async fn respects_min_extraction_different_levels() {
         "order_mid",
         0,
         "seller_mid",
-        50.0, // 50 shannons/block
-        300_000,
+        50, // 50 shannons/block
         None::<&str>,
     )
     .unwrap();
@@ -130,8 +127,7 @@ async fn only_processes_live_matches() {
         "dead_order",
         0,
         "dead_seller",
-        1000.0,
-        300_000,
+        1000,
         None::<&str>,
     )
     .unwrap();
@@ -158,8 +154,7 @@ async fn multiple_matches_all_processed() {
             &format!("multi_order_{i}"),
             0,
             &format!("seller_{i}"),
-            200.0,
-            300_000,
+            200,
             None::<&str>,
         )
         .unwrap();

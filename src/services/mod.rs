@@ -4,11 +4,11 @@
 //! a `MockChainProvider` without a real CKB node.
 
 pub mod chain_provider;
+pub mod console;
 pub mod crypto;
 pub mod external_signer;
 pub mod internal_signer;
 pub mod match_service;
-pub mod order_service;
 pub mod real_chain_provider;
 pub mod rent_service;
 pub mod signer;

@@ -157,12 +157,6 @@ pub fn decrypt_private_key(
 mod tests {
     use super::*;
 
-    /// A deterministic test private key (32 bytes, from a known seed).
-    /// This is the SHA-256 of "opticrum-test-key-0001".
-    fn test_private_key_hex() -> String {
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string()
-    }
-
     fn test_private_key_bytes() -> [u8; 32] {
         [
             0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,

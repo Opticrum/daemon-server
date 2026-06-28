@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 
 use rust_server::config::Config;
 use rust_server::services::chain_provider::ChainProvider;
+use rust_server::services::console::scheduler_state::{SchedulerState, SharedSchedulerState};
 use rust_server::services::external_signer::ExternalSigner;
 use rust_server::services::signer::Signer;
 use rust_server::services::transaction_assembler::TransactionAssembler;
@@ -81,11 +82,16 @@ async fn main() -> std::io::Result<()> {
 
     let chain_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
 
-    // Signing: external by default
-    let signer: Arc<dyn Signer> = Arc::new(ExternalSigner::new());
-    info!("Signer initialized: mode=external");
+    // Signing: external by default, network-aware
+    let signer: Arc<dyn Signer> = Arc::new(ExternalSigner::new(
+        chain_provider.network(),
+    ));
+    info!(network = chain_provider.network(), "Signer initialized: mode=external");
 
     let signer_bg = signer.clone();
+
+    // Shared scheduler state for console observability
+    let scheduler_state: SharedSchedulerState = Arc::new(std::sync::RwLock::new(SchedulerState::new()));
 
     // Build application state
     let state = api::AppState {
@@ -94,11 +100,12 @@ async fn main() -> std::io::Result<()> {
         chain_provider: chain_provider.clone(),
         signer,
         tx_assembler,
+        scheduler_state: scheduler_state.clone(),
     };
     let state = web::Data::new(state);
 
     // Spawn background tasks
-    scheduler::spawn_schedulers(pool, config.clone(), chain_provider, signer_bg);
+    scheduler::spawn_schedulers(pool, config.clone(), chain_provider, signer_bg, scheduler_state);
     info!("Background schedulers spawned");
 
     // Start HTTP server

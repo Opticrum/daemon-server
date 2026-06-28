@@ -1,7 +1,9 @@
 //! Shared test utilities — in-memory DB setup, test keys, mock chain data.
 
-use opticrum_calculator::types::{MatchInfo, OrderInfo};
-use opticrum_protocol::{MatchArgs, MatchData, OrderArgs, OrderData, OutPoint};
+#![allow(dead_code)]
+
+use opticrum_calculator::types::MatchInfo;
+use opticrum_protocol::{CompressedPubkey, MatchArgs, MatchData, OrderArgs, OutPoint};
 
 use rust_server::db;
 use rust_server::services::chain_provider::{CellOutput, MockChainProvider};
@@ -25,30 +27,18 @@ fn mock_outpoint(seed: &[u8], index: u32) -> OutPoint {
     OutPoint::new(hash, index)
 }
 
-/// Create a mock chain provider pre-loaded with one order.
-pub fn mock_with_order() -> MockChainProvider {
-    MockChainProvider::with_orders(vec![OrderInfo {
-        order_args: OrderArgs::new([0u8; 32], [0xabu8; 32]),
-        order_data: OrderData::new(0, 100_000_000_000, 300_000),
-        xudt: None,
-        ckb_capacity: 50_000_000_000,
-        order_outpoint: mock_outpoint(b"order_tx_001_____________________", 0),
-    }])
-}
-
 /// Create a mock chain provider pre-loaded with one match.
 pub fn mock_with_match() -> MockChainProvider {
     MockChainProvider::with_matches(vec![MatchInfo {
         match_args: MatchArgs::new(
-            OrderArgs::new([0u8; 32], [0xabu8; 32]),
+            OrderArgs::new(CompressedPubkey::new([0u8; 33]), [0xabu8; 32]),
             mock_outpoint(b"channel_001______________________", 0),
             [0xcdu8; 32],
         ),
-        match_data: MatchData {
-            xudt_amount: 0,
-            rent_per_block: 100.0,
-            escrow_blocks: 300_000,
-            last_extraction_block: 500,
+        match_data: {
+            let mut md = MatchData::new(0, 100);
+            md.last_extraction_block = 500;
+            md
         },
         xudt: None,
         ckb_capacity: 50_000_000_000,
@@ -87,15 +77,16 @@ pub fn test_app_state() -> rust_server::api::AppState {
         auto_match_interval_secs: 120,
     };
 
+    let scheduler_state = std::sync::Arc::new(
+        std::sync::RwLock::new(rust_server::services::console::scheduler_state::SchedulerState::new()),
+    );
+
     rust_server::api::AppState {
         db: test_db(),
         config,
-        chain_provider: std::sync::Arc::new(
-            rust_server::services::MockChainProvider::new(),
-        ),
-        signer: std::sync::Arc::new(
-            rust_server::services::external_signer::ExternalSigner::new(),
-        ),
+        chain_provider: std::sync::Arc::new(rust_server::services::MockChainProvider::new()),
+        signer: std::sync::Arc::new(rust_server::services::external_signer::ExternalSigner::new("testnet")),
         tx_assembler: None,
+        scheduler_state,
     }
 }

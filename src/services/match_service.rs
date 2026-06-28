@@ -1,4 +1,8 @@
-//! Match service — match orders with pre-created Fiber channels.
+//! Match service — match on-chain orders with pre-created Fiber channels.
+//!
+//! Seller-side only. Orders are created externally by buyers through the
+//! frontend application. The seller discovers orders via chain scanning
+//! and matches them against available Fiber channels.
 //!
 //! Consumes an Order Cell and produces a Match Cell, referencing a
 //! pre-existing Fiber channel as a CellDep.
@@ -7,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::db::DbPool;
 
-use crate::db::{matches as match_db, orders as order_db};
+use crate::db::matches as match_db;
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
 
@@ -19,71 +23,54 @@ pub struct MatchOrderResult {
     pub match_id: i64,
 }
 
-/// Match an order with a pre-created Fiber channel.
+/// Match an on-chain order with a pre-created Fiber channel.
 ///
-/// The channel must already exist on-chain. The channel cell is
-/// referenced as a CellDep (not consumed). Produces a Match Cell
-/// with pre-computed `rent_per_block`.
+/// The order is identified by its on-chain outpoint (tx_hash + output_index).
+/// The channel must already exist on-chain. The channel cell is referenced
+/// as a CellDep (not consumed). Produces a Match Cell.
 pub async fn match_order<P: ChainProvider + ?Sized>(
     provider: &P,
     pool: &DbPool,
-    order_id: i64,
+    order_tx_hash: &str,
+    order_output_index: u32,
     seller_address: &str,
     channel_outpoint_tx_hash: &str,
     channel_outpoint_index: u32,
 ) -> Result<MatchOrderResult, AppError> {
-    let mut conn = pool.get()?;
-    let order = order_db::get_order_by_id(&mut conn, order_id)?;
-
-    if order.status != "live" {
-        return Err(AppError::BadRequest(format!(
-            "Order {} is already {}",
-            order_id, order.status
-        )));
-    }
-
-    // Verify the channel cell exists
+    // Verify the channel cell exists on-chain
     provider
         .get_cell(channel_outpoint_tx_hash, channel_outpoint_index)
         .await
         .map_err(|_| AppError::BadRequest("Channel cell not found on chain".into()))?;
 
-    // Compute rent_per_block from order data
-    let ckb_capacity = order.channel_capacity as u64;
-    let escrow_blocks = order.escrow_blocks as u64;
-    let rent_per_block = ckb_capacity as f64 / escrow_blocks as f64;
-
     // Build + sign + submit match transaction
     let tx_hex = format!(
         "match_order:{}:{}:{}:{}",
-        order.tx_hash, order.output_index, channel_outpoint_tx_hash, channel_outpoint_index
+        order_tx_hash, order_output_index, channel_outpoint_tx_hash, channel_outpoint_index
     );
     let tx_hash = provider.send_transaction(&tx_hex).await?;
     let output_index = 0; // Match Cell is always output[0]
 
     // Persist tracked match
+    let mut conn = pool.get()?;
     let match_id = match_db::insert_match(
         &mut conn,
         &tx_hash,
         output_index,
-        &order.tx_hash,
-        order.output_index,
+        order_tx_hash,
+        order_output_index as i32,
         seller_address,
-        rent_per_block,
-        escrow_blocks,
-        order.xudt_amount.as_deref(),
+        0, // shannons_per_block — will be populated from chain scan in production
+        None::<&str>,
     )?;
 
-    // Update order status
-    order_db::update_order_status(&mut conn, order_id, "matched")?;
-
     info!(
-        order_id = order_id,
         match_id = match_id,
         tx_hash = %tx_hash,
         seller = %seller_address,
         channel = %channel_outpoint_tx_hash,
-        rent_per_block = rent_per_block,
+        order_tx = %order_tx_hash,
+        order_index = order_output_index,
         "Order matched"
     );
 
@@ -122,14 +109,14 @@ pub fn get_match(
 mod tests {
     use super::*;
     use crate::db;
-    use crate::services::{order_service, MockChainProvider};
+    use crate::services::MockChainProvider;
 
     #[actix_rt::test]
     async fn match_order_succeeds() {
         let pool = db::init_test_db();
         let provider = MockChainProvider::new();
 
-        // Add a fake channel cell
+        // Add a fake channel cell so get_cell succeeds
         provider.add_cell(
             "channel_tx_hash_001",
             0,
@@ -141,23 +128,12 @@ mod tests {
             },
         );
 
-        // Create an order first
-        let order = order_service::create_order(
-            &provider,
-            &pool,
-            "ckt1q...buyer",
-            100_000_000_000,
-            300_000,
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Match it
+        // Match an on-chain order (identified by tx_hash + output_index)
         let result = match_order(
             &provider,
             &pool,
-            order.order_id,
+            "order_tx_001_on_chain",
+            0,
             "ckt1q...seller",
             "channel_tx_hash_001",
             0,
@@ -171,11 +147,6 @@ mod tests {
         let m = get_match(&pool, result.match_id).unwrap();
         assert_eq!(m.status, "live");
         assert_eq!(m.seller_address, "ckt1q...seller");
-        assert!(m.rent_per_block > 0.0);
-
-        // Order status should be 'matched'
-        let o = order_service::get_order(&pool, order.order_id).unwrap();
-        assert_eq!(o.status, "matched");
     }
 
     #[actix_rt::test]
@@ -183,59 +154,18 @@ mod tests {
         let pool = db::init_test_db();
         let provider = MockChainProvider::new();
 
-        let order = order_service::create_order(
-            &provider,
-            &pool,
-            "ckt1q...buyer",
-            100_000_000_000,
-            100_000,
-            None,
-        )
-        .await
-        .unwrap();
-
-        // Channel doesn't exist in mock
+        // Channel doesn't exist in mock — match should fail
         let result = match_order(
             &provider,
             &pool,
-            order.order_id,
+            "order_tx_002",
+            0,
             "ckt1q...seller",
             "nonexistent_channel",
             0,
         )
         .await;
 
-        assert!(result.is_err());
-    }
-
-    #[actix_rt::test]
-    async fn match_already_matched_order_fails() {
-        let pool = db::init_test_db();
-        let provider = MockChainProvider::new();
-
-        provider.add_cell(
-            "ch001",
-            0,
-            crate::services::chain_provider::CellOutput {
-                capacity: 500_000_000_000,
-                lock_hash: [0u8; 32],
-                type_hash: None,
-                data: vec![],
-            },
-        );
-
-        let order =
-            order_service::create_order(&provider, &pool, "buyer", 100_000_000_000, 100_000, None)
-                .await
-                .unwrap();
-
-        // First match
-        match_order(&provider, &pool, order.order_id, "seller1", "ch001", 0)
-            .await
-            .unwrap();
-
-        // Second match should fail
-        let result = match_order(&provider, &pool, order.order_id, "seller2", "ch001", 0).await;
         assert!(result.is_err());
     }
 }

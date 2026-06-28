@@ -1,18 +1,16 @@
-//! Match service integration tests.
-//!
-//! The match service has inline #[cfg(test)] tests in src/services/match_service.rs.
+//! Match service integration tests (seller-side only).
 
 mod common;
 
 use common::test_db;
-use rust_server::services::{match_service, order_service, MockChainProvider};
+use rust_server::services::{match_service, MockChainProvider};
 
 #[actix_rt::test]
 async fn full_match_flow() {
     let pool = test_db();
     let provider = MockChainProvider::new();
 
-    // Add a channel cell
+    // Add a channel cell so get_cell succeeds
     provider.add_cell(
         "channel_abc",
         0,
@@ -24,26 +22,36 @@ async fn full_match_flow() {
         },
     );
 
-    // Create order
-    let order =
-        order_service::create_order(&provider, &pool, "buyer", 100_000_000_000, 300_000, None)
-            .await
-            .unwrap();
-
-    // Match it
-    let m =
-        match_service::match_order(&provider, &pool, order.order_id, "seller", "channel_abc", 0)
-            .await
-            .expect("match should succeed");
+    // Match an on-chain order (identified by tx_hash + output_index)
+    let m = match_service::match_order(
+        &provider,
+        &pool,
+        "order_tx_onchain",
+        0,
+        "seller",
+        "channel_abc",
+        0,
+    )
+    .await
+    .expect("match should succeed");
 
     assert!(m.match_id > 0);
 }
 
 #[actix_rt::test]
-async fn match_nonexistent_order_fails() {
+async fn match_nonexistent_channel_fails() {
     let pool = test_db();
     let provider = MockChainProvider::new();
 
-    let result = match_service::match_order(&provider, &pool, 9999, "seller", "channel", 0).await;
+    let result = match_service::match_order(
+        &provider,
+        &pool,
+        "some_order_tx",
+        0,
+        "seller",
+        "nonexistent_channel",
+        0,
+    )
+    .await;
     assert!(result.is_err());
 }

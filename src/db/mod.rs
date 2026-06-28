@@ -11,7 +11,6 @@ use std::path::Path;
 use crate::error::AppError;
 
 pub mod matches;
-pub mod orders;
 pub mod schema;
 pub mod unsigned_txs;
 pub mod wallets;

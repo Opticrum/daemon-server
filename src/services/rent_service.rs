@@ -43,14 +43,14 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
 
     // Compute extractable rent
     let start_block = if m.last_extraction_block == 0 {
-        // Never extracted — derive start from the match creation block.
-        // In a real implementation, we'd query the chain for this.
-        tip_block.saturating_sub(m.escrow_blocks as u64 / 2) // approximation
+        // Never extracted — no prior extraction block, use 0 as the baseline.
+        // The actual match creation block would come from chain query in production.
+        0u64
     } else {
         m.last_extraction_block as u64
     };
     let elapsed = tip_block.saturating_sub(start_block);
-    let extractable = (m.rent_per_block * elapsed as f64) as u64;
+    let extractable = (m.shannons_per_block as u64) * elapsed;
 
     if extractable == 0 {
         return Err(AppError::BadRequest(
@@ -117,12 +117,12 @@ pub async fn destroy_match<P: ChainProvider + ?Sized>(
 
     // Verify match is exhausted
     let start_block = if m.last_extraction_block == 0 {
-        tip_block.saturating_sub(m.escrow_blocks as u64 / 2)
+        0u64
     } else {
         m.last_extraction_block as u64
     };
     let elapsed = tip_block.saturating_sub(start_block);
-    let accumulated = (m.rent_per_block * elapsed as f64) as u64;
+    let accumulated = (m.shannons_per_block as u64) * elapsed;
 
     if accumulated == 0 && m.status != "exhausted" {
         return Err(AppError::BadRequest(
@@ -163,8 +163,7 @@ mod tests {
             "order_tx_hash_001",
             0,
             "ckt1q...seller",
-            100.0, // rent_per_block: 100 shannons/block
-            300_000,
+            100, // shannons_per_block: 100 shannons/block
             None::<&str>,
         )
         .unwrap()

@@ -1,0 +1,82 @@
+<script setup lang="ts">
+import { ref, provide } from 'vue'
+import AppHeader from '@/components/layout/AppHeader.vue'
+import AppSidebar from '@/components/layout/AppSidebar.vue'
+import ToastContainer from '@/components/ui/ToastContainer.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
+import { useToast } from '@/composables/useToast'
+import { useModal } from '@/composables/useModal'
+import { provideI18n } from '@/composables/useI18n'
+
+const i18n = provideI18n()
+
+const sidebarCollapsed = ref(false)
+const sidebarMobileOpen = ref(false)
+
+function toggleSidebar() {
+  if (window.innerWidth <= 991) {
+    sidebarMobileOpen.value = !sidebarMobileOpen.value
+  } else {
+    sidebarCollapsed.value = !sidebarCollapsed.value
+  }
+}
+
+// Global toast & modal state
+const toast = useToast()
+const modal = useModal()
+provide('toast', toast)
+provide('modal', modal)
+</script>
+
+<template>
+  <div class="app-shell">
+    <AppHeader :sidebar-collapsed="sidebarCollapsed" @toggle-sidebar="toggleSidebar" />
+    <div class="app-body">
+      <AppSidebar :collapsed="sidebarCollapsed" :mobile-open="sidebarMobileOpen" @toggle-collapse="toggleSidebar" />
+      <main class="app-content" :class="{ 'content-expanded': sidebarCollapsed }">
+        <router-view />
+      </main>
+    </div>
+    <ToastContainer :messages="toast.messages.value" @remove="toast.remove" />
+    <BaseModal
+      :visible="modal.visible.value"
+      :title="modal.title.value"
+      :confirm-text="modal.confirmText.value"
+      :cancel-text="modal.cancelText.value"
+      :danger="modal.danger.value"
+      :loading="modal.loading.value"
+      @confirm="modal.onConfirm"
+      @cancel="modal.onCancel"
+    >
+      <component v-if="modal.content.value" :is="modal.content.value" v-bind="modal.contentProps?.value || {}" />
+      <p v-else>{{ modal.message.value }}</p>
+    </BaseModal>
+  </div>
+</template>
+
+<style scoped>
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  padding-top: var(--header-height);
+}
+
+.app-content {
+  flex: 1;
+  margin-left: var(--sidebar-expanded);
+  padding: var(--space-xl);
+  min-height: calc(100vh - var(--header-height));
+  background: var(--bg-page);
+  transition: margin-left var(--transition-slow);
+}
+
+.app-content.content-expanded {
+  margin-left: var(--sidebar-collapsed);
+}
+</style>

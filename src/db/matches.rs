@@ -16,8 +16,7 @@ pub struct TrackedMatch {
     pub order_tx_hash: String,
     pub order_output_index: i32,
     pub seller_address: String,
-    pub rent_per_block: f64,
-    pub escrow_blocks: i64,
+    pub shannons_per_block: i64,
     pub last_extraction_block: i64,
     pub xudt_amount: Option<String>,
     pub status: String,
@@ -33,12 +32,12 @@ pub struct NewTrackedMatch<'a> {
     pub order_tx_hash: &'a str,
     pub order_output_index: i32,
     pub seller_address: &'a str,
-    pub rent_per_block: f64,
-    pub escrow_blocks: i64,
+    pub shannons_per_block: i64,
     pub xudt_amount: Option<&'a str>,
 }
 
 /// Insert a tracked match. Returns the new row ID.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_match(
     conn: &mut SqliteConnection,
     tx_hash: &str,
@@ -46,8 +45,7 @@ pub fn insert_match(
     order_tx_hash: &str,
     order_output_index: i32,
     seller_address: &str,
-    rent_per_block: f64,
-    escrow_blocks: u64,
+    shannons_per_block: u64,
     xudt_amount: Option<&str>,
 ) -> Result<i64, AppError> {
     let new = NewTrackedMatch {
@@ -56,8 +54,7 @@ pub fn insert_match(
         order_tx_hash,
         order_output_index,
         seller_address,
-        rent_per_block,
-        escrow_blocks: escrow_blocks as i64,
+        shannons_per_block: shannons_per_block as i64,
         xudt_amount,
     };
 

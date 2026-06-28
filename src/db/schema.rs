@@ -39,20 +39,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    tracked_orders (id) {
-        id -> BigInt,
-        tx_hash -> Text,
-        output_index -> Integer,
-        buyer_address -> Text,
-        channel_capacity -> BigInt,
-        escrow_blocks -> BigInt,
-        xudt_amount -> Nullable<Text>,
-        status -> Text,
-        created_at -> Text,
-    }
-}
-
-diesel::table! {
     tracked_matches (id) {
         id -> BigInt,
         tx_hash -> Text,
@@ -60,8 +46,7 @@ diesel::table! {
         order_tx_hash -> Text,
         order_output_index -> Integer,
         seller_address -> Text,
-        rent_per_block -> Double,
-        escrow_blocks -> BigInt,
+        shannons_per_block -> BigInt,
         last_extraction_block -> BigInt,
         xudt_amount -> Nullable<Text>,
         status -> Text,

@@ -3,7 +3,7 @@
 mod common;
 
 use common::test_db;
-use rust_server::db::{matches as match_db, orders as order_db, schema, wallets as wallet_db};
+use rust_server::db::{matches as match_db, schema, wallets as wallet_db};
 
 #[test]
 fn migration_idempotent() {
@@ -90,68 +90,6 @@ fn wallet_get_by_lock_hash() {
 }
 
 #[test]
-fn order_create_and_get() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    let id = order_db::insert_order(
-        &mut conn,
-        "tx_001",
-        0,
-        "ckt1q...buyer",
-        100_000_000_000,
-        300_000,
-        None,
-    )
-    .unwrap();
-    assert!(id > 0);
-
-    let order = order_db::get_order_by_id(&mut conn, id).unwrap();
-    assert_eq!(order.tx_hash, "tx_001");
-    assert_eq!(order.buyer_address, "ckt1q...buyer");
-    assert_eq!(order.status, "live");
-}
-
-#[test]
-fn order_list_by_status() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    order_db::insert_order(&mut conn, "tx1", 0, "a", 100, 10, None).unwrap();
-    order_db::insert_order(&mut conn, "tx2", 0, "b", 200, 20, None).unwrap();
-    order_db::insert_order(&mut conn, "tx3", 0, "c", 300, 30, None).unwrap();
-
-    // Cancel tx2
-    order_db::update_order_status(&mut conn, 2, "cancelled").unwrap();
-
-    let live = order_db::list_orders(&mut conn, Some("live")).unwrap();
-    assert_eq!(live.len(), 2);
-
-    let cancelled = order_db::list_orders(&mut conn, Some("cancelled")).unwrap();
-    assert_eq!(cancelled.len(), 1);
-}
-
-#[test]
-fn order_update_status() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    let id = order_db::insert_order(&mut conn, "tx_upd", 0, "buyer", 500, 50, None).unwrap();
-    order_db::update_order_status(&mut conn, id, "matched").unwrap();
-
-    let order = order_db::get_order_by_id(&mut conn, id).unwrap();
-    assert_eq!(order.status, "matched");
-}
-
-#[test]
-fn order_update_status_nonexistent() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-    let result = order_db::update_order_status(&mut conn, 9999, "cancelled");
-    assert!(result.is_err());
-}
-
-#[test]
 fn match_create_and_get() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
@@ -163,8 +101,7 @@ fn match_create_and_get() {
         "order_tx",
         0,
         "ckt1q...seller",
-        150.5,
-        200_000,
+        150,
         None::<&str>,
     )
     .unwrap();
@@ -172,7 +109,7 @@ fn match_create_and_get() {
     let m = match_db::get_match_by_id(&mut conn, id).unwrap();
     assert_eq!(m.tx_hash, "match_tx");
     assert_eq!(m.seller_address, "ckt1q...seller");
-    assert_eq!(m.rent_per_block, 150.5);
+    assert_eq!(m.shannons_per_block, 150);
     assert_eq!(m.status, "live");
     assert_eq!(m.last_extraction_block, 0);
 }
@@ -189,8 +126,7 @@ fn match_update_extraction() {
         "o_tx",
         0,
         "seller",
-        50.0,
-        100_000,
+        50,
         None::<&str>,
     )
     .unwrap();
@@ -206,7 +142,7 @@ fn match_update_status() {
     let mut conn = pool.get().unwrap();
 
     let id =
-        match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 10.0, 500, None::<&str>).unwrap();
+        match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 10, None::<&str>).unwrap();
 
     match_db::update_match_status(&mut conn, id, "exhausted").unwrap();
     let m = match_db::get_match_by_id(&mut conn, id).unwrap();
@@ -218,8 +154,8 @@ fn match_list_by_status() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    match_db::insert_match(&mut conn, "m1", 0, "o1", 0, "s1", 1.0, 100, None::<&str>).unwrap();
-    match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 2.0, 200, None::<&str>).unwrap();
+    match_db::insert_match(&mut conn, "m1", 0, "o1", 0, "s1", 1, None::<&str>).unwrap();
+    match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 2, None::<&str>).unwrap();
     match_db::update_match_status(&mut conn, 1, "destroyed").unwrap();
 
     let live = match_db::list_matches(&mut conn, Some("live")).unwrap();
@@ -256,12 +192,3 @@ fn total_extracted_aggregates() {
     assert_eq!(total, 6000);
 }
 
-#[test]
-fn order_unique_outpoint() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    order_db::insert_order(&mut conn, "dup_tx", 0, "a", 100, 10, None).unwrap();
-    let result = order_db::insert_order(&mut conn, "dup_tx", 0, "b", 200, 20, None);
-    assert!(result.is_err());
-}

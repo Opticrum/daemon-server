@@ -44,10 +44,10 @@ pub async fn run_extraction_cycle(
     let mut extractions = 0u32;
 
     for m in &live_matches {
-        let rent_per_block = m.rent_per_block;
+        let shannons_per_block = m.shannons_per_block as u64;
         let last_extraction = m.last_extraction_block as u64;
         let elapsed = tip_block.saturating_sub(last_extraction);
-        let extractable = (rent_per_block * elapsed as f64) as u64;
+        let extractable = shannons_per_block * elapsed;
 
         if extractable >= min_extraction_amount_shannons {
             let tx_hash = format!(
@@ -129,7 +129,7 @@ mod tests {
         )
         .unwrap();
 
-        // Add a live match with high rent_per_block
+        // Add a live match with high shannons_per_block
         match_db::insert_match(
             &mut conn,
             "match_tx_001",
@@ -137,8 +137,7 @@ mod tests {
             "order_tx_001",
             0,
             "ckt1q...seller",
-            1000.0, // 1000 shannons/block
-            300_000,
+            1000,
             None::<&str>,
         )
         .unwrap();
@@ -159,7 +158,7 @@ mod tests {
         wallet_db::insert_wallet(&mut conn, "test", b"encrypted", &[2u8; 32], "ckt1q...test2")
             .unwrap();
 
-        // Low rent_per_block — won't meet threshold
+        // Low shannons_per_block — won't meet threshold
         match_db::insert_match(
             &mut conn,
             "match_tx_002",
@@ -167,8 +166,7 @@ mod tests {
             "order_tx_002",
             0,
             "ckt1q...seller",
-            1.0, // 1 shannon/block
-            300_000,
+            1,
             None::<&str>,
         )
         .unwrap();
@@ -197,8 +195,7 @@ mod tests {
             "order_tx_003",
             0,
             "low_seller",
-            10.0, // 10 shannons/block
-            300_000,
+            10,
             None::<&str>,
         )
         .unwrap();

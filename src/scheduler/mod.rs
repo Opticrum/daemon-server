@@ -9,10 +9,14 @@ pub mod auto_matcher;
 pub mod rent_extractor;
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::config::Config;
 use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
+use crate::services::console::scheduler_state::{
+    record_error, record_success, set_tip_block, SharedSchedulerState,
+};
 use crate::services::signer::Signer;
 
 /// Spawn all background tasks: rent extractor and auto-matcher.
@@ -21,6 +25,7 @@ pub fn spawn_schedulers(
     config: Config,
     chain_provider: Arc<dyn ChainProvider>,
     signer: Arc<dyn Signer>,
+    scheduler_state: SharedSchedulerState,
 ) {
     // Rent extractor
     let pool_ext = pool.clone();
@@ -28,6 +33,7 @@ pub fn spawn_schedulers(
     let cp_ext = chain_provider.clone();
     let interval_secs = config.scheduler_interval_secs;
     let min_extraction = config.min_extraction_amount_shannons;
+    let state_ext = scheduler_state.clone();
 
     actix_rt::spawn(async move {
         tracing::info!(
@@ -37,6 +43,7 @@ pub fn spawn_schedulers(
         );
 
         loop {
+            let started = Instant::now();
             match rent_extractor::run_extraction_cycle(
                 &pool_ext,
                 min_extraction,
@@ -45,11 +52,19 @@ pub fn spawn_schedulers(
             .await
             {
                 Ok(extracted) => {
+                    let elapsed = started.elapsed();
+                    record_success(&state_ext, |s| &mut s.extractor, elapsed, extracted);
                     if extracted > 0 {
                         tracing::info!("Extracted {} shannons this cycle", extracted);
                     }
+                    // Update tip block from chain (best effort)
+                    if let Ok(tip) = cp_ext.get_tip_block_number().await {
+                        set_tip_block(&state_ext, tip);
+                    }
                 }
                 Err(e) => {
+                    let _elapsed = started.elapsed();
+                    record_error(&state_ext, |s| &mut s.extractor, &e.to_string());
                     tracing::error!("Extraction cycle error: {}", e);
                 }
             }
@@ -59,12 +74,13 @@ pub fn spawn_schedulers(
     });
 
     // Auto-matcher (spawned regardless; checks auto_match_enabled inside loop)
-    let pool_am = pool.clone();
-    let config_am = config.clone();
-    let cp_am = chain_provider.clone();
-    let signer_am = signer.clone();
-    let am_interval = config.auto_match_interval_secs;
-    let am_enabled = config.auto_match_enabled;
+    let pool_am = pool;
+    let config_am = config;
+    let cp_am = chain_provider;
+    let signer_am = signer;
+    let am_interval = config_am.auto_match_interval_secs;
+    let am_enabled = config_am.auto_match_enabled;
+    let state_am = scheduler_state;
 
     actix_rt::spawn(async move {
         if !am_enabled {
@@ -84,6 +100,7 @@ pub fn spawn_schedulers(
                 continue;
             }
 
+            let started = Instant::now();
             match auto_matcher::run_auto_match_cycle(
                 &pool_am,
                 cp_am.as_ref(),
@@ -92,11 +109,16 @@ pub fn spawn_schedulers(
             )
             .await
             {
-                Ok(n) if n > 0 => {
-                    tracing::info!("Auto-matched {} orders this cycle", n);
+                Ok(n) => {
+                    let elapsed = started.elapsed();
+                    record_success(&state_am, |s| &mut s.matcher, elapsed, n);
+                    if n > 0 {
+                        tracing::info!("Auto-matched {} orders this cycle", n);
+                    }
                 }
-                Ok(_) => {} // zero matches, silent
                 Err(e) => {
+                    let _elapsed = started.elapsed();
+                    record_error(&state_am, |s| &mut s.matcher, &e.to_string());
                     tracing::error!("Auto-match cycle error: {}", e);
                 }
             }

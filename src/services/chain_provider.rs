@@ -32,6 +32,12 @@ pub trait ChainProvider: Send + Sync {
     /// Get a live cell's output by outpoint.
     async fn get_cell(&self, tx_hash: &str, index: u32) -> Result<CellOutput, AppError>;
 
+    /// Get the CKB network this provider is connected to ("testnet" or "mainnet").
+    /// Defaults to "testnet" — production implementations should override this.
+    fn network(&self) -> &str {
+        "testnet"
+    }
+
     /// Scan Fiber network for channels owned by the given lock hash.
     /// Returns channel outpoints with capacities for the admin panel's
     /// channel browser and auto-match engine.

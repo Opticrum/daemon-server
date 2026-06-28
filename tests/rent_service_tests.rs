@@ -22,8 +22,7 @@ async fn extract_and_destroy_flow() {
         "o_extract_flow",
         0,
         "seller_flow",
-        100.0, // 100 shannons/block
-        300_000,
+        100,
         None::<&str>,
     )
     .unwrap();

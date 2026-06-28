@@ -105,11 +105,15 @@ fn map_err(e: impl std::fmt::Display) -> AppError {
 
 #[async_trait]
 impl ChainProvider for RealChainProvider {
+    fn network(&self) -> &str {
+        &self.network
+    }
+
     async fn get_tip_block_number(&self) -> Result<u64, AppError> {
         self.rpc
             .get_tip_block_number()
             .await
-            .map(|n| u64::from(n))
+            .map(u64::from)
             .map_err(Self::map_err)
     }
 
@@ -155,10 +159,8 @@ impl ChainProvider for RealChainProvider {
         // For now, return a not-found error — the match_service currently
         // uses MockChainProvider-based cell verification in tests.
         tracing::debug!("get_cell({tx_hash}, {index}) — RPC query deferred to Phase 6");
-        Err(AppError::ChainError(format!(
-            "Cell query not yet wired for RPC (Phase 6). \
-             Use MockChainProvider::add_cell() for test setups."
-        )))
+        Err(AppError::ChainError("Cell query not yet wired for RPC (Phase 6). \
+             Use MockChainProvider::add_cell() for test setups.".to_string()))
     }
 
     async fn scan_fiber_channels(

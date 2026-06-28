@@ -34,7 +34,7 @@ async fn import_wallet_returns_created() {
 
     let req = test::TestRequest::post()
         .uri("/api/wallets")
-        .set_json(&serde_json::json!({
+        .set_json(serde_json::json!({
             "label": "test-wallet",
             "private_key_hex": test_private_key_hex(),
         }))
@@ -56,7 +56,7 @@ async fn list_wallets() {
     // First import a wallet
     let req = test::TestRequest::post()
         .uri("/api/wallets")
-        .set_json(&serde_json::json!({
+        .set_json(serde_json::json!({
             "label": "w1",
             "private_key_hex": test_private_key_hex(),
         }))
@@ -82,7 +82,7 @@ async fn delete_wallet() {
     // Import
     let req = test::TestRequest::post()
         .uri("/api/wallets")
-        .set_json(&serde_json::json!({
+        .set_json(serde_json::json!({
             "label": "to-delete",
             "private_key_hex": test_private_key_hex(),
         }))
@@ -93,87 +93,6 @@ async fn delete_wallet() {
     // Delete (id=1)
     let req = test::TestRequest::delete()
         .uri("/api/wallets/1")
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
-}
-
-#[actix_rt::test]
-async fn create_order() {
-    let state = test_app_state();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(state))
-            .configure(api::configure_routes),
-    )
-    .await;
-
-    let req = test::TestRequest::post()
-        .uri("/api/orders")
-        .set_json(&serde_json::json!({
-            "buyer_address": "ckt1q...testbuyer",
-            "channel_capacity": 100000000000u64,
-            "escrow_blocks": 300000u64,
-            "xudt_amount": null
-        }))
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 201);
-}
-
-#[actix_rt::test]
-async fn list_orders() {
-    let state = test_app_state();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(state))
-            .configure(api::configure_routes),
-    )
-    .await;
-
-    // Create an order first
-    let req = test::TestRequest::post()
-        .uri("/api/orders")
-        .set_json(&serde_json::json!({
-            "buyer_address": "ckt1q...b",
-            "channel_capacity": 50000000000u64,
-            "escrow_blocks": 150000u64,
-            "xudt_amount": null
-        }))
-        .to_request();
-    test::call_service(&app, req).await;
-
-    // List
-    let req = test::TestRequest::get().uri("/api/orders").to_request();
-    let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
-}
-
-#[actix_rt::test]
-async fn cancel_order() {
-    let state = test_app_state();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(state))
-            .configure(api::configure_routes),
-    )
-    .await;
-
-    // Create
-    let req = test::TestRequest::post()
-        .uri("/api/orders")
-        .set_json(&serde_json::json!({
-            "buyer_address": "ckt1q...c",
-            "channel_capacity": 10000000000u64,
-            "escrow_blocks": 50000u64,
-            "xudt_amount": null
-        }))
-        .to_request();
-    test::call_service(&app, req).await;
-
-    // Cancel
-    let req = test::TestRequest::post()
-        .uri("/api/orders/1/cancel")
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
@@ -255,10 +174,10 @@ async fn invalid_request_body_returns_400() {
     )
     .await;
 
-    // Missing required fields
+    // Missing required fields — test against wallet import
     let req = test::TestRequest::post()
-        .uri("/api/orders")
-        .set_json(&serde_json::json!({
+        .uri("/api/wallets")
+        .set_json(serde_json::json!({
             "invalid": "body"
         }))
         .to_request();

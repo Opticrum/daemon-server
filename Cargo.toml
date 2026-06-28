@@ -15,7 +15,7 @@ serde_json = "1"
 opticrum-calculator = { path = "../opticrum/calculator/opticrum" }
 opticrum-protocol = { path = "../opticrum/opticrum-protocol" }
 
-# CKB chain interaction (git dep — not in opticrum workspace)
+# CKB chain interaction (local path — matches opticrum workspace)
 ckb-cinnabar-calculator = { git = "https://github.com/ashuralyk/ckb-cinnabar.git", branch = "master" }
 
 # Database (Diesel ORM — no raw SQL)
@@ -56,10 +56,6 @@ path = "tests/db_tests.rs"
 [[test]]
 name = "wallet_service_tests"
 path = "tests/wallet_service_tests.rs"
-
-[[test]]
-name = "order_service_tests"
-path = "tests/order_service_tests.rs"
 
 [[test]]
 name = "match_service_tests"

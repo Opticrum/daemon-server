@@ -14,10 +14,12 @@ use tracing::{error, info, warn};
 use crate::config::Config;
 use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
+use crate::services::console::scheduler_state::SharedSchedulerState;
 use crate::services::signer::Signer;
 use crate::services::transaction_assembler::TransactionAssembler;
 
 mod admin;
+pub mod console;
 mod fiber;
 mod health;
 mod matches;
@@ -37,6 +39,8 @@ pub struct AppState {
     pub signer: Arc<dyn Signer>,
     /// Real transaction assembler (None for MockChainProvider test mode).
     pub tx_assembler: Option<TransactionAssembler>,
+    /// Shared scheduler state for console observability.
+    pub scheduler_state: SharedSchedulerState,
 }
 
 /// Mount all API routes on the given `ServiceConfig`.
@@ -44,50 +48,43 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
             .route("/health", web::get().to(health::check))
-            // Wallet management
             .route("/wallets", web::get().to(wallet::list))
             .route("/wallets", web::post().to(wallet::import_key))
             .route("/wallets/{id}", web::delete().to(wallet::delete))
-            // Orders
             .route("/orders/scan", web::get().to(orders::scan_chain))
-            .route("/orders", web::get().to(orders::list))
-            .route("/orders", web::post().to(orders::create))
-            .route("/orders/{id}/cancel", web::post().to(orders::cancel))
-            .route("/orders/{id}/match", web::post().to(orders::do_match))
-            // Matches
+            .route("/orders/{tx_hash}/match", web::post().to(orders::do_match))
             .route("/matches/scan", web::get().to(matches::scan_chain))
             .route("/matches", web::get().to(matches::list))
             .route("/matches/{id}/extract", web::post().to(matches::extract))
             .route("/matches/{id}/destroy", web::post().to(matches::destroy))
-            // Fiber channels
             .route("/fiber/channels", web::get().to(fiber::list_channels))
-            // External signing
-            .route(
-                "/transactions/unsigned",
-                web::get().to(transactions::list_unsigned),
-            )
-            .route(
-                "/transactions/unsigned/{id}",
-                web::get().to(transactions::get_unsigned),
-            )
-            .route(
-                "/transactions/unsigned/{id}/witnesses",
-                web::post().to(transactions::submit_witnesses),
-            )
-            .route(
-                "/transactions/unsigned/{id}/submit",
-                web::post().to(transactions::submit_to_chain),
-            )
-            // Admin
+            .route("/transactions/unsigned", web::get().to(transactions::list_unsigned))
+            .route("/transactions/unsigned/{id}", web::get().to(transactions::get_unsigned))
+            .route("/transactions/unsigned/{id}/witnesses", web::post().to(transactions::submit_witnesses))
+            .route("/transactions/unsigned/{id}/submit", web::post().to(transactions::submit_to_chain))
             .route("/admin/stats", web::get().to(admin::stats))
-            .route(
-                "/admin/auto-match/config",
-                web::get().to(admin::get_auto_match_config),
-            )
-            .route(
-                "/admin/auto-match/config",
-                web::put().to(admin::update_auto_match_config),
-            ),
+            .route("/admin/auto-match/config", web::get().to(admin::get_auto_match_config))
+            .route("/admin/auto-match/config", web::put().to(admin::update_auto_match_config))
+            // Console gateway
+            .route("/console/dashboard", web::get().to(console::dashboard))
+            .route("/console/wallets", web::get().to(console::list_wallets))
+            .route("/console/wallets", web::post().to(console::import_wallet))
+            .route("/console/wallets/{id}", web::delete().to(console::delete_wallet))
+            .route("/console/orders", web::get().to(console::scan_orders))
+            .route("/console/orders/{tx_hash}/match", web::post().to(console::match_order))
+            .route("/console/matches", web::get().to(console::list_matches))
+            .route("/console/matches/{id}/extract", web::post().to(console::extract_rent))
+            .route("/console/matches/{id}/destroy", web::post().to(console::destroy_match))
+            .route("/console/channels", web::get().to(console::scan_channels))
+            .route("/console/signing", web::get().to(console::list_unsigned))
+            .route("/console/signing/{id}", web::get().to(console::get_unsigned))
+            .route("/console/signing/{id}/witnesses", web::post().to(console::submit_witnesses))
+            .route("/console/signing/{id}/submit", web::post().to(console::submit_to_chain))
+            .route("/console/config", web::get().to(console::get_config))
+            .route("/console/config", web::put().to(console::update_config))
+            .route("/console/scheduler/status", web::get().to(console::scheduler_status))
+            .route("/console/signer-info", web::get().to(console::signer_info))
+            .route("/console/server-info", web::get().to(console::server_info))
     );
 }
 

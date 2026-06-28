@@ -17,12 +17,15 @@ use crate::services::signer::{SignRequest, SignResult, Signer};
 pub struct ExternalSigner {
     /// Counter for generating unique unsigned tx IDs.
     counter: Mutex<u64>,
+    /// CKB network the server is connected to ("testnet" or "mainnet").
+    network: String,
 }
 
 impl ExternalSigner {
-    pub fn new() -> Self {
+    pub fn new(network: &str) -> Self {
         Self {
             counter: Mutex::new(0),
+            network: network.to_string(),
         }
     }
 
@@ -35,7 +38,7 @@ impl ExternalSigner {
 
 impl Default for ExternalSigner {
     fn default() -> Self {
-        Self::new()
+        Self::new("testnet")
     }
 }
 
@@ -52,7 +55,7 @@ impl Signer for ExternalSigner {
             "tx_hex": request.tx_hex,
             "context": request.context,
             "unsigned_tx_id": unsigned_tx_id,
-            "network": "testnet", // TODO: from config
+            "network": self.network,
         });
 
         tracing::info!(

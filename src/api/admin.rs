@@ -10,16 +10,11 @@ use tracing::{debug, info};
 
 use crate::api::AppState;
 use crate::error::AppError;
-use crate::services::{match_service, order_service};
+use crate::services::match_service;
 
-/// GET /api/admin/stats — dashboard statistics.
+/// GET /api/admin/stats — dashboard statistics (seller-side only).
 pub async fn stats(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let orders = order_service::list_orders(&state.db, None)?;
     let matches = match_service::list_matches(&state.db, None)?;
-
-    let live_orders = orders.iter().filter(|o| o.status == "live").count();
-    let matched_orders = orders.iter().filter(|o| o.status == "matched").count();
-    let cancelled_orders = orders.iter().filter(|o| o.status == "cancelled").count();
 
     let live_matches = matches.iter().filter(|m| m.status == "live").count();
     let exhausted_matches = matches.iter().filter(|m| m.status == "exhausted").count();
@@ -29,19 +24,12 @@ pub async fn stats(state: web::Data<AppState>) -> Result<HttpResponse, AppError>
     let total_extracted = crate::db::matches::total_extracted(&mut conn)?;
 
     debug!(
-        total_orders = orders.len(),
         total_matches = matches.len(),
         total_extracted,
         "Admin stats requested"
     );
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
-        "orders": {
-            "total": orders.len(),
-            "live": live_orders,
-            "matched": matched_orders,
-            "cancelled": cancelled_orders,
-        },
         "matches": {
             "total": matches.len(),
             "live": live_matches,
