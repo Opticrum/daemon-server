@@ -86,10 +86,7 @@ pub async fn submit_to_chain(
     // In Phase 3, we broadcast a composite tx_hex built from the original
     // data + the external witness. Phase 6 will wire real CKB transaction
     // assembly where witnesses are embedded in the transaction structure.
-    let witnesses = tx
-        .signed_witnesses_json
-        .as_deref()
-        .unwrap_or("{}");
+    let witnesses = tx.signed_witnesses_json.as_deref().unwrap_or("{}");
     let tx_hex = format!("ext_tx:{}:witness={}", tx.tx_data_json, witnesses);
 
     let tx_hash = state.chain_provider.send_transaction(&tx_hex).await?;

@@ -12,17 +12,28 @@ withDefaults(defineProps<{
 <template>
   <div class="chart-card card">
     <div class="chart-card-header">
-      <h3 class="chart-card-title">{{ title }}</h3>
+      <h3 class="chart-card-title">
+        {{ title }}
+      </h3>
       <div class="chart-card-actions">
-        <span v-if="period" class="chart-period">{{ period }}</span>
+        <span
+          v-if="period"
+          class="chart-period"
+        >{{ period }}</span>
         <slot name="actions" />
       </div>
     </div>
     <div class="chart-card-body">
-      <div v-if="loading" class="skeleton-chart" />
+      <div
+        v-if="loading"
+        class="skeleton-chart"
+      />
       <slot v-else />
     </div>
-    <div v-if="$slots.legend" class="chart-card-legend">
+    <div
+      v-if="$slots.legend"
+      class="chart-card-legend"
+    >
       <slot name="legend" />
     </div>
   </div>

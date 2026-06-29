@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 
@@ -14,7 +13,7 @@ defineEmits<{
 
 const route = useRoute()
 const router = useRouter()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 interface NavItem {
   hash: string
@@ -45,12 +44,12 @@ const navGroupDefs: NavGroup[] = [
     titleKey: 'nav.fundMgmt',
     items: [
       { hash: 'wallets', labelKey: 'nav.walletMgmt', icon: '💼' },
+      { hash: 'channels', labelKey: 'nav.fiberChannels', icon: '🌐' },
     ],
   },
   {
     titleKey: 'nav.sysSettings',
     items: [
-      { hash: 'channels', labelKey: 'nav.fiberChannels', icon: '🌐' },
       { hash: 'settings', labelKey: 'nav.autoMatchSigning', icon: '⚙️' },
     ],
   },
@@ -66,10 +65,18 @@ function navigate(hash: string) {
 </script>
 
 <template>
-  <aside class="app-sidebar" :class="{ collapsed, 'mobile-open': mobileOpen }">
+  <aside
+    class="app-sidebar"
+    :class="{ collapsed, 'mobile-open': mobileOpen }"
+  >
     <nav class="sidebar-nav">
-      <template v-for="group in navGroupDefs" :key="group.titleKey">
-        <div class="nav-group-title">{{ t(group.titleKey) }}</div>
+      <template
+        v-for="group in navGroupDefs"
+        :key="group.titleKey"
+      >
+        <div class="nav-group-title">
+          {{ t(group.titleKey) }}
+        </div>
         <button
           v-for="item in group.items"
           :key="item.hash"
@@ -83,9 +90,20 @@ function navigate(hash: string) {
         </button>
       </template>
     </nav>
-    <button class="collapse-btn" data-testid="sidebar-collapse-btn" @click="$emit('toggle-collapse')" :title="collapsed ? t('nav.expand') : t('nav.collapse')">
-      <span class="collapse-arrow" :class="{ flipped: collapsed }">◀</span>
-      <span v-if="!collapsed" class="collapse-text">{{ t('nav.collapse') }}</span>
+    <button
+      class="collapse-btn"
+      data-testid="sidebar-collapse-btn"
+      :title="collapsed ? t('nav.expand') : t('nav.collapse')"
+      @click="$emit('toggle-collapse')"
+    >
+      <span
+        class="collapse-arrow"
+        :class="{ flipped: collapsed }"
+      >◀</span>
+      <span
+        v-if="!collapsed"
+        class="collapse-text"
+      >{{ t('nav.collapse') }}</span>
     </button>
   </aside>
 </template>

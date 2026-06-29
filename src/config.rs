@@ -35,6 +35,14 @@ pub struct Config {
     )]
     pub database_url: String,
 
+    /// HD wallet keystore file path
+    #[arg(
+        long,
+        env = "OPTICRUM_KEYSTORE_PATH",
+        default_value = "data/keystore.json"
+    )]
+    pub keystore_path: String,
+
     /// CKB RPC URL
     #[arg(
         long,
@@ -87,7 +95,6 @@ pub struct Config {
     // -----------------------------------------------------------------------
     // Auto-match configuration
     // -----------------------------------------------------------------------
-
     /// Enable automatic order matching (background task)
     #[arg(long, env = "OPTICRUM_AUTO_MATCH_ENABLED", default_value = "false")]
     pub auto_match_enabled: bool,
@@ -109,11 +116,7 @@ pub struct Config {
     pub auto_match_max_escrow_blocks: u64,
 
     /// Auto-match cycle interval in seconds
-    #[arg(
-        long,
-        env = "OPTICRUM_AUTO_MATCH_INTERVAL_SECS",
-        default_value = "120"
-    )]
+    #[arg(long, env = "OPTICRUM_AUTO_MATCH_INTERVAL_SECS", default_value = "120")]
     pub auto_match_interval_secs: u64,
 }
 
@@ -135,6 +138,7 @@ impl Default for Config {
             auto_match_min_capacity: 10_000_000_000,
             auto_match_max_escrow_blocks: 432_000,
             auto_match_interval_secs: 120,
+            keystore_path: "data/keystore.json".into(),
         }
     }
 }
@@ -199,7 +203,11 @@ impl Config {
         let defaults = Self::default();
         Self {
             config_file: cli.config_file,
-            port: if cli.port != defaults.port { cli.port } else { file.port },
+            port: if cli.port != defaults.port {
+                cli.port
+            } else {
+                file.port
+            },
             database_url: if cli.database_url != defaults.database_url {
                 cli.database_url
             } else {
@@ -275,6 +283,7 @@ impl Config {
             } else {
                 file.auto_match_interval_secs
             },
+            keystore_path: cli.keystore_path,
         }
     }
 

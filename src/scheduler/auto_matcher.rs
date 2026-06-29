@@ -50,7 +50,10 @@ pub async fn run_auto_match_cycle(
         debug!("Auto-match: no Fiber channels available, skipping cycle");
         return Ok(0);
     }
-    debug!(available_channels = channels.len(), "Auto-match: channels found");
+    debug!(
+        available_channels = channels.len(),
+        "Auto-match: channels found"
+    );
 
     // Filter and match
     let mut matched_count = 0u64;
@@ -85,8 +88,9 @@ pub async fn run_auto_match_cycle(
         }
         // Derive effective escrow blocks from capacity / rent rate.
         // A low shannons_per_block means longer effective escrow duration.
-        let effective_capacity =
-            order.ckb_capacity.saturating_sub(ORDER_TO_MATCH_CAPACITY_RESERVE);
+        let effective_capacity = order
+            .ckb_capacity
+            .saturating_sub(ORDER_TO_MATCH_CAPACITY_RESERVE);
         if let Some(effective_escrow) =
             effective_capacity.checked_div(order.order_data.shannons_per_block)
         {
@@ -180,7 +184,11 @@ pub async fn run_auto_match_cycle(
     }
 
     if matched_count > 0 {
-        info!(matched = matched_count, total_scanned = orders.len(), "Auto-match cycle complete");
+        info!(
+            matched = matched_count,
+            total_scanned = orders.len(),
+            "Auto-match cycle complete"
+        );
     }
 
     Ok(matched_count)

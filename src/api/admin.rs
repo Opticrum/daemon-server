@@ -35,9 +35,7 @@ pub async fn stats(state: web::Data<AppState>) -> Result<HttpResponse, AppError>
 }
 
 /// GET /api/admin/auto-match/config — return current auto-match configuration.
-pub async fn get_auto_match_config(
-    state: web::Data<AppState>,
-) -> Result<HttpResponse, AppError> {
+pub async fn get_auto_match_config(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "enabled": state.config.auto_match_enabled,
         "min_capacity_shannons": state.config.auto_match_min_capacity,

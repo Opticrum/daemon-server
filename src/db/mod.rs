@@ -35,10 +35,8 @@ pub fn init_db(database_url: &str) -> Result<DbPool, AppError> {
     // tracking table. Since this project is pre-production, we bail out with
     // a clear message rather than attempting silent migration.
     if Path::new(database_url).exists() {
-        let mut test_conn =
-            SqliteConnection::establish(database_url).map_err(|e| {
-                AppError::Internal(format!("Failed to open database for check: {e}"))
-            })?;
+        let mut test_conn = SqliteConnection::establish(database_url)
+            .map_err(|e| AppError::Internal(format!("Failed to open database for check: {e}")))?;
         let has_diesel_migrations: bool = diesel::sql_query(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__diesel_schema_migrations'",
         )

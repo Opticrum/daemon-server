@@ -53,12 +53,71 @@ export interface WalletResponse {
   lock_hash: string
   ckb_address: string
   created_at: string
+  parent_wallet_id: number | null
+  derivation_path: string | null
+  derivation_index: number | null
+  wallet_type: 'imported' | 'hd_child'
 }
 
 export interface ImportWalletRequest {
   label: string
   private_key_hex: string
   password?: string
+}
+
+// ── HD Wallet ──
+export interface CreateHdWalletRequest {
+  label: string
+  password: string
+  address_count?: number
+}
+
+export interface ImportMnemonicRequest {
+  mnemonic: string
+  label: string
+  password: string
+  address_count?: number
+}
+
+export interface CreateHdWalletResponse {
+  keystore: any
+  mnemonic: string
+  children: WalletResponse[]
+  address_count: number
+}
+
+export interface UnlockWalletRequest {
+  password: string
+}
+
+export interface UnlockWalletResponse {
+  keystore: any
+  children: WalletResponse[]
+}
+
+export interface HdStatusResponse {
+  keystore_exists: boolean
+  label: string | null
+  address_count: number
+}
+
+export interface WalletBalanceResponse {
+  total_balance_shannons: number
+}
+
+export interface AddressBalanceItem {
+  wallet: WalletResponse
+  balance_shannons: number
+}
+
+export interface RefreshHdWalletResponse {
+  keystore: {
+    label: string
+    address_count: number
+  }
+  children: WalletResponse[]
+  total_balance_shannons: number
+  address_balances: AddressBalanceItem[]
 }
 
 // ── Orders ──
@@ -126,11 +185,31 @@ export interface ExtractRentResult {
 
 // ── Fiber Channels ──
 export interface FiberChannelInfo {
+  channel_id: string
+  counterparty_fiber_key: string
   tx_hash: string
   output_index: number
   capacity: number
-  status: string
-  counterparty_lock_hash?: string
+  local_balance: number
+  remote_balance: number
+  state_name: string
+  is_public: boolean
+  enabled: boolean
+}
+
+export interface ChannelMatchInfo {
+  match_tx_hash: string
+  match_output_index: number
+  xudt_amount: number
+  shannons_per_block: number
+  last_extraction_block: number
+  ckb_capacity: number
+  seller_lock_hash: string
+}
+
+export interface ChannelWithMatch extends FiberChannelInfo {
+  match_info: ChannelMatchInfo | null
+  match_status: 'matched' | 'not_found'
 }
 
 // ── Fiber Node Info (matches backend proxy response) ──

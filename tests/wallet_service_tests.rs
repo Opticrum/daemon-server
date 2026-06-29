@@ -49,7 +49,8 @@ fn decrypt_wrong_password_fails() {
 #[test]
 fn import_invalid_hex_fails() {
     let pool = test_db();
-    let result = wallet_service::import_wallet(&pool, "bad", "not-a-hex-string!!!", Some("password"));
+    let result =
+        wallet_service::import_wallet(&pool, "bad", "not-a-hex-string!!!", Some("password"));
     assert!(result.is_err());
 }
 
@@ -57,7 +58,8 @@ fn import_invalid_hex_fails() {
 fn import_wrong_length_key_fails() {
     let pool = test_db();
     // Too short (16 bytes = 32 hex chars)
-    let result = wallet_service::import_wallet(&pool, "short", "abcdef0123456789", Some("password"));
+    let result =
+        wallet_service::import_wallet(&pool, "short", "abcdef0123456789", Some("password"));
     assert!(result.is_err());
 }
 
@@ -68,7 +70,7 @@ fn list_wallets_returns_all() {
 
     wallet_service::import_wallet(&pool, "w1", &key_hex, Some("pw")).unwrap();
     wallet_service::import_wallet(&pool, "w2", &key_hex, Some("pw")).unwrap_err(); // duplicate lock_hash
-                                                                             // Different key
+                                                                                   // Different key
     let mut bytes = hex::decode(&key_hex).unwrap();
     bytes[0] = bytes[0].wrapping_add(1);
     let key2_hex = hex::encode(&bytes);

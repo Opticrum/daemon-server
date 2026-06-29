@@ -18,7 +18,9 @@ cargo test --test rent_service_tests
 cargo test --test scheduler_tests
 cargo test --test config_tests
 cargo fmt                            # Format code
-cargo clippy                         # Lint
+cargo clippy --all-features          # Lint (must pass)
+cd web-console && npm run lint       # ESLint (must pass)
+cd web-console && npm run build      # Frontend build
 ```
 
 ## Architecture

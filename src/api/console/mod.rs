@@ -63,17 +63,13 @@ pub async fn server_info(state: web::Data<AppState>) -> Result<HttpResponse, App
 
 pub async fn dashboard(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let s = {
-        let guard = state.scheduler_state.read().map_err(|e| {
-            AppError::Internal(format!("Scheduler state lock: {}", e))
-        })?;
+        let guard = state
+            .scheduler_state
+            .read()
+            .map_err(|e| AppError::Internal(format!("Scheduler state lock: {}", e)))?;
         guard.clone()
     };
-    let dash = GatewayService::get_dashboard(
-        &state.db,
-        state.chain_provider.as_ref(),
-        &s,
-    )
-    .await?;
+    let dash = GatewayService::get_dashboard(&state.db, state.chain_provider.as_ref(), &s).await?;
     Ok(HttpResponse::Ok().json(dash))
 }
 
@@ -117,6 +113,145 @@ pub async fn delete_wallet(
     } else {
         Err(AppError::NotFound(format!("Wallet id={}", id)))
     }
+}
+
+// ═══════════════════════════════════════════════════════
+// HD Wallet
+// ═══════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct CreateHdWalletBody {
+    pub label: String,
+    pub password: String,
+    pub address_count: Option<u32>,
+}
+
+pub async fn create_hd_wallet(
+    state: web::Data<AppState>,
+    body: web::Json<CreateHdWalletBody>,
+) -> Result<HttpResponse, AppError> {
+    let result = GatewayService::create_hd_wallet(
+        &state.db,
+        std::path::Path::new(&state.keystore_path),
+        &body.label,
+        &body.password,
+        body.address_count.unwrap_or(5),
+    )?;
+    Ok(HttpResponse::Created().json(result))
+}
+
+#[derive(Deserialize)]
+pub struct UnlockWalletBody {
+    pub password: String,
+}
+
+pub async fn unlock_keystore(
+    state: web::Data<AppState>,
+    body: web::Json<UnlockWalletBody>,
+) -> Result<HttpResponse, AppError> {
+    let result = GatewayService::unlock_keystore(
+        &state.db,
+        std::path::Path::new(&state.keystore_path),
+        &body.password,
+    )?;
+    Ok(HttpResponse::Ok().json(result))
+}
+
+#[derive(Deserialize)]
+pub struct DeriveMoreBody {
+    pub password: String,
+    pub count: Option<u32>,
+}
+
+pub async fn derive_more_addresses(
+    state: web::Data<AppState>,
+    body: web::Json<DeriveMoreBody>,
+) -> Result<HttpResponse, AppError> {
+    let records = GatewayService::derive_more_addresses(
+        &state.db,
+        std::path::Path::new(&state.keystore_path),
+        &body.password,
+        body.count.unwrap_or(5),
+    )?;
+    Ok(HttpResponse::Ok().json(records))
+}
+
+pub async fn hd_status(
+    state: web::Data<AppState>,
+) -> Result<HttpResponse, AppError> {
+    let status = GatewayService::get_hd_status(std::path::Path::new(&state.keystore_path));
+    Ok(HttpResponse::Ok().json(status))
+}
+
+pub async fn hd_balance(
+    state: web::Data<AppState>,
+) -> Result<HttpResponse, AppError> {
+    let balance = GatewayService::get_hd_balance(
+        &state.db,
+        state.chain_provider.as_ref(),
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "total_balance_shannons": balance,
+    })))
+}
+
+pub async fn hd_address_balances(
+    state: web::Data<AppState>,
+) -> Result<HttpResponse, AppError> {
+    let balances = GatewayService::get_hd_address_balances(
+        &state.db,
+        state.chain_provider.as_ref(),
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(balances))
+}
+
+pub async fn refresh_hd_wallet(
+    state: web::Data<AppState>,
+    body: web::Json<UnlockWalletBody>,
+) -> Result<HttpResponse, AppError> {
+    let result = GatewayService::refresh_hd_wallet(
+        &state.db,
+        std::path::Path::new(&state.keystore_path),
+        &body.password,
+        state.chain_provider.as_ref(),
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(result))
+}
+
+#[derive(Deserialize)]
+pub struct ImportMnemonicBody {
+    pub mnemonic: String,
+    pub label: String,
+    pub password: String,
+    pub address_count: Option<u32>,
+}
+
+pub async fn import_mnemonic(
+    state: web::Data<AppState>,
+    body: web::Json<ImportMnemonicBody>,
+) -> Result<HttpResponse, AppError> {
+    let result = GatewayService::import_mnemonic(
+        &state.db,
+        std::path::Path::new(&state.keystore_path),
+        &body.mnemonic,
+        &body.label,
+        &body.password,
+        body.address_count.unwrap_or(5),
+    )?;
+    Ok(HttpResponse::Created().json(result))
+}
+
+pub async fn delete_hd_wallet(
+    state: web::Data<AppState>,
+) -> Result<HttpResponse, AppError> {
+    GatewayService::delete_hd_wallet(
+        &state.db,
+        std::path::Path::new(&state.keystore_path),
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
 }
 
 // ═══════════════════════════════════════════════════════
@@ -211,7 +346,8 @@ pub async fn destroy_match(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let id = path.into_inner();
-    let tx_hash = GatewayService::destroy_match(&state.db, state.chain_provider.as_ref(), id).await?;
+    let tx_hash =
+        GatewayService::destroy_match(&state.db, state.chain_provider.as_ref(), id).await?;
     Ok(HttpResponse::Ok().json(serde_json::json!({"tx_hash": tx_hash, "status": "destroyed"})))
 }
 
@@ -219,23 +355,8 @@ pub async fn destroy_match(
 // Channels
 // ═══════════════════════════════════════════════════════
 
-#[derive(Deserialize)]
-pub struct ChannelsQuery {
-    owner: Option<String>,
-}
-
-pub async fn scan_channels(
-    state: web::Data<AppState>,
-    query: web::Query<ChannelsQuery>,
-) -> Result<HttpResponse, AppError> {
-    let channels = match &query.owner {
-        Some(hex_str) if !hex_str.is_empty() => {
-            let raw = hex::decode(hex_str)
-                .map_err(|_| AppError::BadRequest("Invalid hex for owner lock hash".into()))?;
-            state.chain_provider.scan_fiber_channels(&raw).await?
-        }
-        _ => state.chain_provider.scan_fiber_channels(&[]).await?,
-    };
+pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let channels = GatewayService::get_channels_with_matches(state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(channels))
 }
 
@@ -335,9 +456,10 @@ pub async fn update_config(
 
 pub async fn scheduler_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let s = {
-        let guard = state.scheduler_state.read().map_err(|e| {
-            AppError::Internal(format!("Scheduler state lock: {}", e))
-        })?;
+        let guard = state
+            .scheduler_state
+            .read()
+            .map_err(|e| AppError::Internal(format!("Scheduler state lock: {}", e)))?;
         guard.clone()
     };
     let status = GatewayService::get_scheduler_status(&s);

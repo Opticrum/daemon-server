@@ -94,7 +94,10 @@ const pageNumbers = computed(() => {
             @click="col.sortable && toggleSort(col.key)"
           >
             <span class="th-label">{{ col.label }}</span>
-            <span v-if="col.sortable && sortKey === col.key" class="sort-arrow">
+            <span
+              v-if="col.sortable && sortKey === col.key"
+              class="sort-arrow"
+            >
               {{ sortDir === 'asc' ? '▲' : '▼' }}
             </span>
           </th>
@@ -102,22 +105,35 @@ const pageNumbers = computed(() => {
       </thead>
       <tbody>
         <tr v-if="loading">
-          <td :colspan="columns.length" class="loading-cell">
+          <td
+            :colspan="columns.length"
+            class="loading-cell"
+          >
             <span class="spinner" /> {{ t('common.loading') }}
           </td>
         </tr>
         <tr v-else-if="!rows.length">
-          <td :colspan="columns.length" class="empty-cell">
+          <td
+            :colspan="columns.length"
+            class="empty-cell"
+          >
             {{ emptyText || t('common.noData') }}
           </td>
         </tr>
-        <tr v-for="(row, i) in paginatedRows" :key="i">
+        <tr
+          v-for="(row, i) in paginatedRows"
+          :key="i"
+        >
           <td
             v-for="col in columns"
             :key="col.key"
             :class="[`align-${col.align || 'left'}`, `cell-${col.key}`]"
           >
-            <slot :name="`cell-${col.key}`" :row="row" :value="row[col.key]">
+            <slot
+              :name="`cell-${col.key}`"
+              :row="row"
+              :value="row[col.key]"
+            >
               {{ row[col.key] }}
             </slot>
           </td>
@@ -125,18 +141,41 @@ const pageNumbers = computed(() => {
       </tbody>
     </table>
 
-    <div v-if="totalPages > 1 && !loading && rows.length" class="pagination">
-      <button class="page-btn" :disabled="currentPage === 1" @click="goPage(currentPage - 1)">‹</button>
-      <template v-for="p in pageNumbers" :key="p">
-        <span v-if="p === '...'" class="page-ellipsis">...</span>
+    <div
+      v-if="totalPages > 1 && !loading && rows.length"
+      class="pagination"
+    >
+      <button
+        class="page-btn"
+        :disabled="currentPage === 1"
+        @click="goPage(currentPage - 1)"
+      >
+        ‹
+      </button>
+      <template
+        v-for="p in pageNumbers"
+        :key="p"
+      >
+        <span
+          v-if="p === '...'"
+          class="page-ellipsis"
+        >...</span>
         <button
           v-else
           class="page-btn"
           :class="{ active: p === currentPage }"
           @click="goPage(p)"
-        >{{ p }}</button>
+        >
+          {{ p }}
+        </button>
       </template>
-      <button class="page-btn" :disabled="currentPage === totalPages" @click="goPage(currentPage + 1)">›</button>
+      <button
+        class="page-btn"
+        :disabled="currentPage === totalPages"
+        @click="goPage(currentPage + 1)"
+      >
+        ›
+      </button>
     </div>
   </div>
 </template>

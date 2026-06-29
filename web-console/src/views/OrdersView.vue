@@ -3,7 +3,6 @@ import { ref, onMounted, inject } from "vue";
 import { useApi } from "@/composables/useApi";
 import { useI18n } from "@/composables/useI18n";
 import { truncateAddress, formatCKB, formatAPY, explorerTxUrl } from "@/utils/format";
-import type { ServerInfo } from "@/types/api";
 import MatchOrderForm from "@/components/ui/MatchOrderForm.vue";
 import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
@@ -116,9 +115,18 @@ onMounted(async () => {
 <template>
   <div class="page-orders">
     <div class="page-header">
-      <h2 class="page-title">{{ t("orders.title") }}</h2>
-      <button class="btn btn-primary" :disabled="loading" @click="scanOrders">
-        <span v-if="loading" class="spinner" />
+      <h2 class="page-title">
+        {{ t("orders.title") }}
+      </h2>
+      <button
+        class="btn btn-primary"
+        :disabled="loading"
+        @click="scanOrders"
+      >
+        <span
+          v-if="loading"
+          class="spinner"
+        />
         {{ loading ? t("orders.scanning") : t("orders.scan") }}
       </button>
     </div>
@@ -151,20 +159,29 @@ onMounted(async () => {
           :title="String(value)"
         >{{ truncateAddress(String(value), 20, 16) }}</a>
       </template>
-      <template #cell-channel_capacity="{ value }">{{
-        formatCKB(Number(value))
-      }}</template>
-      <template #cell-shannons_per_block="{ value }">{{
-        Number(value).toLocaleString()
-      }}</template>
-      <template #cell-annualized_yield="{ row }">{{
-        formatAPY(Number(row.shannons_per_block), Number(row.channel_capacity))
-      }}</template>
-      <template #cell-actions="{ row }"
-        ><button class="btn btn-sm btn-primary" @click="showMatchModal(row)">
+      <template #cell-channel_capacity="{ value }">
+        {{
+          formatCKB(Number(value))
+        }}
+      </template>
+      <template #cell-shannons_per_block="{ value }">
+        {{
+          Number(value).toLocaleString()
+        }}
+      </template>
+      <template #cell-annualized_yield="{ row }">
+        {{
+          formatAPY(Number(row.shannons_per_block), Number(row.channel_capacity))
+        }}
+      </template>
+      <template #cell-actions="{ row }">
+        <button
+          class="btn btn-sm btn-primary"
+          @click="showMatchModal(row)"
+        >
           {{ t("orders.match") }}
-        </button></template
-      >
+        </button>
+      </template>
     </DataTable>
   </div>
 </template>

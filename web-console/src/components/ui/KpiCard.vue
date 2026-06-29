@@ -71,18 +71,33 @@ watch(() => props.sparklineData, () => {
     </div>
     <div class="kpi-value-row">
       <span class="kpi-number">{{ value }}</span>
-      <span v-if="unit" class="kpi-unit">{{ unit }}</span>
+      <span
+        v-if="unit"
+        class="kpi-unit"
+      >{{ unit }}</span>
     </div>
-    <div v-if="trend !== undefined" class="kpi-trend">
-      <span class="trend-arrow" :class="trend >= 0 ? 'trend-up' : 'trend-down'">
+    <div
+      v-if="trend !== undefined"
+      class="kpi-trend"
+    >
+      <span
+        class="trend-arrow"
+        :class="trend >= 0 ? 'trend-up' : 'trend-down'"
+      >
         {{ trend >= 0 ? '↑' : '↓' }}
       </span>
-      <span class="trend-value" :class="trend >= 0 ? 'text-success' : 'text-danger'">
+      <span
+        class="trend-value"
+        :class="trend >= 0 ? 'text-success' : 'text-danger'"
+      >
         {{ Math.abs(trend) }}%
       </span>
       <span class="trend-label">{{ trendLabel || t('dashboard.prevMonth') }}</span>
     </div>
-    <div v-if="sparklineData?.length" class="kpi-sparkline">
+    <div
+      v-if="sparklineData?.length"
+      class="kpi-sparkline"
+    >
       <canvas ref="sparklineCanvas" />
     </div>
   </div>

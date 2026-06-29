@@ -61,23 +61,76 @@ onMounted(loadMatches)
 <template>
   <div class="page-matches">
     <div class="page-header">
-      <h2 class="page-title">{{ t('matches.title') }}</h2>
-      <button class="btn btn-default" @click="loadMatches">{{ t('matches.refresh') }}</button>
+      <h2 class="page-title">
+        {{ t('matches.title') }}
+      </h2>
+      <button
+        class="btn btn-default"
+        @click="loadMatches"
+      >
+        {{ t('matches.refresh') }}
+      </button>
     </div>
     <div class="filter-tabs">
-      <button v-for="f in filters" :key="f.value" class="filter-tab" :class="{ active: filterStatus === f.value }" @click="setFilter(f.value)">{{ t(f.labelKey) }}</button>
+      <button
+        v-for="f in filters"
+        :key="f.value"
+        class="filter-tab"
+        :class="{ active: filterStatus === f.value }"
+        @click="setFilter(f.value)"
+      >
+        {{ t(f.labelKey) }}
+      </button>
     </div>
-    <EmptyState v-if="error" icon="⚠️" :message="error" :action-label="t('common.retry')" @action="loadMatches" />
-    <EmptyState v-else-if="!loading && !matches.length" icon="🔗" :message="filterStatus ? t('matches.noStatusMatches', { status: t(filters.find(f => f.value === filterStatus)?.labelKey || '') }) : t('matches.noMatches')" />
-    <DataTable v-else :columns="columns" :rows="matches" :loading="loading">
-      <template #cell-tx_hash="{ value }"><code class="font-mono">{{ truncateAddress(String(value), 10, 8) }}</code></template>
-      <template #cell-seller_address="{ value }"><code class="font-mono">{{ truncateAddress(String(value), 8, 6) }}</code></template>
-      <template #cell-shannons_per_block="{ value }">{{ value }} {{ t('common.feeRateUnit') }}</template>
-      <template #cell-status="{ value }"><StatusTag :status="String(value)" /></template>
+    <EmptyState
+      v-if="error"
+      icon="⚠️"
+      :message="error"
+      :action-label="t('common.retry')"
+      @action="loadMatches"
+    />
+    <EmptyState
+      v-else-if="!loading && !matches.length"
+      icon="🔗"
+      :message="filterStatus ? t('matches.noStatusMatches', { status: t(filters.find(f => f.value === filterStatus)?.labelKey || '') }) : t('matches.noMatches')"
+    />
+    <DataTable
+      v-else
+      :columns="columns"
+      :rows="matches"
+      :loading="loading"
+    >
+      <template #cell-tx_hash="{ value }">
+        <code class="font-mono">{{ truncateAddress(String(value), 10, 8) }}</code>
+      </template>
+      <template #cell-seller_address="{ value }">
+        <code class="font-mono">{{ truncateAddress(String(value), 8, 6) }}</code>
+      </template>
+      <template #cell-shannons_per_block="{ value }">
+        {{ value }} {{ t('common.feeRateUnit') }}
+      </template>
+      <template #cell-status="{ value }">
+        <StatusTag :status="String(value)" />
+      </template>
       <template #cell-actions="{ row }">
-        <button v-if="row.status === 'live'" class="btn btn-sm btn-primary" @click="extractRent(row)">{{ t('matches.extract') }}</button>
-        <button v-else-if="row.status === 'exhausted'" class="btn btn-sm btn-danger" @click="destroyMatch(row)">{{ t('matches.destroy') }}</button>
-        <span v-else class="text-muted">—</span>
+        <button
+          v-if="row.status === 'live'"
+          class="btn btn-sm btn-primary"
+          @click="extractRent(row)"
+        >
+          {{ t('matches.extract') }}
+        </button>
+        <button
+          v-else-if="row.status === 'exhausted'"
+          class="btn btn-sm btn-danger"
+          @click="destroyMatch(row)"
+        >
+          {{ t('matches.destroy') }}
+        </button>
+        <span
+          v-else
+          class="text-muted"
+        >—</span>
       </template>
     </DataTable>
   </div>

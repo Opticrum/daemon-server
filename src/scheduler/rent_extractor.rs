@@ -126,6 +126,10 @@ mod tests {
             b"encrypted_key_placeholder",
             &[1u8; 32],
             "ckt1q...test",
+            None,
+            None,
+            None,
+            "imported",
         )
         .unwrap();
 
@@ -155,7 +159,7 @@ mod tests {
         let mut conn = pool.get().unwrap();
         let provider = test_provider();
 
-        wallet_db::insert_wallet(&mut conn, "test", b"encrypted", &[2u8; 32], "ckt1q...test2")
+        wallet_db::insert_wallet(&mut conn, "test", b"encrypted", &[2u8; 32], "ckt1q...test2", None, None, None, "imported")
             .unwrap();
 
         // Low shannons_per_block — won't meet threshold
@@ -185,7 +189,7 @@ mod tests {
         let mut conn = pool.get().unwrap();
         let provider = test_provider();
 
-        wallet_db::insert_wallet(&mut conn, "low-wallet", b"enc", &[3u8; 32], "ckt1q...low")
+        wallet_db::insert_wallet(&mut conn, "low-wallet", b"enc", &[3u8; 32], "ckt1q...low", None, None, None, "imported")
             .unwrap();
 
         match_db::insert_match(

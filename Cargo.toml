@@ -31,6 +31,11 @@ hex = "0.4"
 bech32 = "0.9"
 sha2 = "0.10"
 
+# BIP39 mnemonic + BIP32 HD wallet
+bip39 = { version = "2", features = ["rand", "all-languages"] }
+blake2b_simd = "1"
+hmac = "0.12"
+
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
 toml = "0.8"
@@ -41,6 +46,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP client (Fiber RPC proxy, also transitive via ckb-cinnabar)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Fiber JSON-RPC types (from local Fiber repo — no type duplication)
+fiber-json-types = { path = "../../../Cryptape/fiber/lightning-network/fiber/crates/fiber-json-types" }
+
+# Molecule (used for parsing channel outpoint from fiber-json-types)
+molecule = "0.9"
+
+# Error handling (for vendored fiber-cli RPC client)
+anyhow = "1.0"
 
 # Async
 tokio = { version = "1", features = ["full"] }

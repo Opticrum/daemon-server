@@ -41,6 +41,8 @@ pub struct AppState {
     pub tx_assembler: Option<TransactionAssembler>,
     /// Shared scheduler state for console observability.
     pub scheduler_state: SharedSchedulerState,
+    /// HD wallet keystore file path.
+    pub keystore_path: String,
 }
 
 /// Mount all API routes on the given `ServiceConfig`.
@@ -58,34 +60,111 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/matches/{id}/extract", web::post().to(matches::extract))
             .route("/matches/{id}/destroy", web::post().to(matches::destroy))
             .route("/fiber/channels", web::get().to(fiber::list_channels))
-            .route("/transactions/unsigned", web::get().to(transactions::list_unsigned))
-            .route("/transactions/unsigned/{id}", web::get().to(transactions::get_unsigned))
-            .route("/transactions/unsigned/{id}/witnesses", web::post().to(transactions::submit_witnesses))
-            .route("/transactions/unsigned/{id}/submit", web::post().to(transactions::submit_to_chain))
+            .route(
+                "/transactions/unsigned",
+                web::get().to(transactions::list_unsigned),
+            )
+            .route(
+                "/transactions/unsigned/{id}",
+                web::get().to(transactions::get_unsigned),
+            )
+            .route(
+                "/transactions/unsigned/{id}/witnesses",
+                web::post().to(transactions::submit_witnesses),
+            )
+            .route(
+                "/transactions/unsigned/{id}/submit",
+                web::post().to(transactions::submit_to_chain),
+            )
             .route("/admin/stats", web::get().to(admin::stats))
-            .route("/admin/auto-match/config", web::get().to(admin::get_auto_match_config))
-            .route("/admin/auto-match/config", web::put().to(admin::update_auto_match_config))
+            .route(
+                "/admin/auto-match/config",
+                web::get().to(admin::get_auto_match_config),
+            )
+            .route(
+                "/admin/auto-match/config",
+                web::put().to(admin::update_auto_match_config),
+            )
             // Console gateway
             .route("/console/dashboard", web::get().to(console::dashboard))
             .route("/console/wallets", web::get().to(console::list_wallets))
             .route("/console/wallets", web::post().to(console::import_wallet))
-            .route("/console/wallets/{id}", web::delete().to(console::delete_wallet))
+            // Named routes must come BEFORE the catch-all {id} route
+            .route(
+                "/console/wallets/create-hd",
+                web::post().to(console::create_hd_wallet),
+            )
+            .route(
+                "/console/wallets/unlock",
+                web::post().to(console::unlock_keystore),
+            )
+            .route(
+                "/console/wallets/derive-more",
+                web::post().to(console::derive_more_addresses),
+            )
+            .route(
+                "/console/wallets/import-mnemonic",
+                web::post().to(console::import_mnemonic),
+            )
+            .route("/console/wallets/hd-status", web::get().to(console::hd_status))
+            .route("/console/wallets/balance", web::get().to(console::hd_balance))
+            .route(
+                "/console/wallets/balances",
+                web::get().to(console::hd_address_balances),
+            )
+            .route(
+                "/console/wallets/refresh-hd",
+                web::post().to(console::refresh_hd_wallet),
+            )
+            .route(
+                "/console/wallets/delete-hd",
+                web::delete().to(console::delete_hd_wallet),
+            )
+            // Catch-all: delete individual wallet by id
+            .route(
+                "/console/wallets/{id}",
+                web::delete().to(console::delete_wallet),
+            )
             .route("/console/orders", web::get().to(console::scan_orders))
-            .route("/console/orders/{tx_hash}/match", web::post().to(console::match_order))
+            .route(
+                "/console/orders/{tx_hash}/match",
+                web::post().to(console::match_order),
+            )
             .route("/console/matches", web::get().to(console::list_matches))
-            .route("/console/matches/{id}/extract", web::post().to(console::extract_rent))
-            .route("/console/matches/{id}/destroy", web::post().to(console::destroy_match))
+            .route(
+                "/console/matches/{id}/extract",
+                web::post().to(console::extract_rent),
+            )
+            .route(
+                "/console/matches/{id}/destroy",
+                web::post().to(console::destroy_match),
+            )
             .route("/console/channels", web::get().to(console::scan_channels))
             .route("/console/signing", web::get().to(console::list_unsigned))
-            .route("/console/signing/{id}", web::get().to(console::get_unsigned))
-            .route("/console/signing/{id}/witnesses", web::post().to(console::submit_witnesses))
-            .route("/console/signing/{id}/submit", web::post().to(console::submit_to_chain))
+            .route(
+                "/console/signing/{id}",
+                web::get().to(console::get_unsigned),
+            )
+            .route(
+                "/console/signing/{id}/witnesses",
+                web::post().to(console::submit_witnesses),
+            )
+            .route(
+                "/console/signing/{id}/submit",
+                web::post().to(console::submit_to_chain),
+            )
             .route("/console/config", web::get().to(console::get_config))
             .route("/console/config", web::put().to(console::update_config))
-            .route("/console/scheduler/status", web::get().to(console::scheduler_status))
+            .route(
+                "/console/scheduler/status",
+                web::get().to(console::scheduler_status),
+            )
             .route("/console/signer-info", web::get().to(console::signer_info))
             .route("/console/server-info", web::get().to(console::server_info))
-            .route("/console/fiber-node-info", web::get().to(console::fiber_node_info))
+            .route(
+                "/console/fiber-node-info",
+                web::get().to(console::fiber_node_info),
+            ),
     );
 }
 
@@ -146,7 +225,7 @@ where
                     let elapsed = started.elapsed();
                     let status = res.status().as_u16();
                     match status {
-                        200..=299 => debug!(
+                        200..=299 | 304 => debug!(
                             method = %method, path = %path,
                             status = status, duration_ms = elapsed.as_millis() as u64,
                             "OK"

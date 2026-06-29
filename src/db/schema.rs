@@ -35,6 +35,10 @@ diesel::table! {
         lock_hash -> Binary,
         ckb_address -> Text,
         created_at -> Text,
+        parent_wallet_id -> Nullable<BigInt>,
+        derivation_path -> Nullable<Text>,
+        derivation_index -> Nullable<Integer>,
+        wallet_type -> Text,
     }
 }
 

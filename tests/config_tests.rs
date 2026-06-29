@@ -38,12 +38,8 @@ fn test_custom_port() {
 #[test]
 fn test_custom_database_url() {
     clear_opticrum_env();
-    let config = Config::try_parse_from([
-        "opticrum-server",
-        "--database-url",
-        "/tmp/custom.db",
-    ])
-    .expect("should parse custom DB path");
+    let config = Config::try_parse_from(["opticrum-server", "--database-url", "/tmp/custom.db"])
+        .expect("should parse custom DB path");
     assert_eq!(config.database_url, "/tmp/custom.db");
 }
 
@@ -52,16 +48,25 @@ fn test_all_custom_values() {
     clear_opticrum_env();
     let config = Config::try_parse_from([
         "opticrum-server",
-        "--port", "3000",
-        "--database-url", "custom.db",
-        "--ckb-rpc-url", "http://ckb:8114",
-        "--ckb-indexer-url", "http://indexer:8116",
-        "--log-level", "debug",
-        "--scheduler-interval-secs", "120",
-        "--min-extraction-amount-shannons", "500000",
-        "--fee-rate", "5000",
+        "--port",
+        "3000",
+        "--database-url",
+        "custom.db",
+        "--ckb-rpc-url",
+        "http://ckb:8114",
+        "--ckb-indexer-url",
+        "http://indexer:8116",
+        "--log-level",
+        "debug",
+        "--scheduler-interval-secs",
+        "120",
+        "--min-extraction-amount-shannons",
+        "500000",
+        "--fee-rate",
+        "5000",
         "--auto-match-enabled",
-        "--auto-match-min-capacity", "5000000000",
+        "--auto-match-min-capacity",
+        "5000000000",
     ])
     .expect("should parse all custom values");
 

@@ -97,10 +97,7 @@ pub fn list_matches(
 }
 
 /// Get a single tracked match by ID.
-pub fn get_match(
-    pool: &DbPool,
-    match_id: i64,
-) -> Result<match_db::TrackedMatch, AppError> {
+pub fn get_match(pool: &DbPool, match_id: i64) -> Result<match_db::TrackedMatch, AppError> {
     let mut conn = pool.get()?;
     match_db::get_match_by_id(&mut conn, match_id)
 }

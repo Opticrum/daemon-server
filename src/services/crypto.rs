@@ -66,10 +66,7 @@ pub fn decrypt(ciphertext_with_nonce: &[u8], password: &str) -> Result<Vec<u8>, 
 /// Decrypt a stored private key blob and parse it as a secp256k1 SecretKey.
 ///
 /// Convenience wrapper around `decrypt()` for wallet key material.
-pub fn decrypt_secret_key(
-    encrypted_key: &[u8],
-    password: &str,
-) -> Result<SecretKey, AppError> {
+pub fn decrypt_secret_key(encrypted_key: &[u8], password: &str) -> Result<SecretKey, AppError> {
     let key_bytes = decrypt(encrypted_key, password)?;
     SecretKey::from_slice(&key_bytes)
         .map_err(|e| AppError::WalletError(format!("Invalid private key: {e}")))

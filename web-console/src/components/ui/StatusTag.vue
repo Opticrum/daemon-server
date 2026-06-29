@@ -16,7 +16,10 @@ const text = computed(() => props.label || t(statusLabelKey(props.status)))
 </script>
 
 <template>
-  <span class="status-tag" :class="`tag-${color}`">{{ text }}</span>
+  <span
+    class="status-tag"
+    :class="`tag-${color}`"
+  >{{ text }}</span>
 </template>
 
 <style scoped>

@@ -8,7 +8,7 @@ import { useToast } from '@/composables/useToast'
 import { useModal } from '@/composables/useModal'
 import { provideI18n } from '@/composables/useI18n'
 
-const i18n = provideI18n()
+provideI18n()
 
 const sidebarCollapsed = ref(false)
 const sidebarMobileOpen = ref(false)
@@ -30,14 +30,27 @@ provide('modal', modal)
 
 <template>
   <div class="app-shell">
-    <AppHeader :sidebar-collapsed="sidebarCollapsed" @toggle-sidebar="toggleSidebar" />
+    <AppHeader
+      :sidebar-collapsed="sidebarCollapsed"
+      @toggle-sidebar="toggleSidebar"
+    />
     <div class="app-body">
-      <AppSidebar :collapsed="sidebarCollapsed" :mobile-open="sidebarMobileOpen" @toggle-collapse="toggleSidebar" />
-      <main class="app-content" :class="{ 'content-expanded': sidebarCollapsed }">
+      <AppSidebar
+        :collapsed="sidebarCollapsed"
+        :mobile-open="sidebarMobileOpen"
+        @toggle-collapse="toggleSidebar"
+      />
+      <main
+        class="app-content"
+        :class="{ 'content-expanded': sidebarCollapsed }"
+      >
         <router-view />
       </main>
     </div>
-    <ToastContainer :messages="toast.messages.value" @remove="toast.remove" />
+    <ToastContainer
+      :messages="toast.messages.value"
+      @remove="toast.remove"
+    />
     <BaseModal
       :visible="modal.visible.value"
       :title="modal.title.value"
@@ -48,8 +61,14 @@ provide('modal', modal)
       @confirm="modal.onConfirm"
       @cancel="modal.onCancel"
     >
-      <component v-if="modal.content.value" :is="modal.content.value" v-bind="modal.contentProps?.value || {}" />
-      <p v-else>{{ modal.message.value }}</p>
+      <component
+        :is="modal.content.value"
+        v-if="modal.content.value"
+        v-bind="modal.contentProps?.value || {}"
+      />
+      <p v-else>
+        {{ modal.message.value }}
+      </p>
     </BaseModal>
   </div>
 </template>

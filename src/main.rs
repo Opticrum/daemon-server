@@ -25,8 +25,7 @@ async fn main() -> std::io::Result<()> {
     // in the config to document the desired level (logged below for visibility).
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with_target(false)
         .init();
@@ -36,9 +35,7 @@ async fn main() -> std::io::Result<()> {
 
     // Initialize database
     let pool = match db::init_db(&config.database_url) {
-        Ok(p) => {
-            p
-        }
+        Ok(p) => p,
         Err(e) => {
             error!(error = %e, path = %config.database_url, "Failed to initialize database");
             std::process::exit(1);
@@ -73,9 +70,7 @@ async fn main() -> std::io::Result<()> {
     let chain_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
 
     // Signing: external by default, network-aware
-    let signer: Arc<dyn Signer> = Arc::new(ExternalSigner::new(
-        chain_provider.network(),
-    ));
+    let signer: Arc<dyn Signer> = Arc::new(ExternalSigner::new(chain_provider.network()));
 
     // Consolidated startup summary
     info!(
@@ -92,9 +87,11 @@ async fn main() -> std::io::Result<()> {
     let signer_bg = signer.clone();
 
     // Shared scheduler state for console observability
-    let scheduler_state: SharedSchedulerState = Arc::new(std::sync::RwLock::new(SchedulerState::new()));
+    let scheduler_state: SharedSchedulerState =
+        Arc::new(std::sync::RwLock::new(SchedulerState::new()));
 
     // Build application state
+    let keystore_path = config.keystore_path.clone();
     let state = api::AppState {
         db: pool.clone(),
         config: config.clone(),
@@ -102,11 +99,18 @@ async fn main() -> std::io::Result<()> {
         signer,
         tx_assembler,
         scheduler_state: scheduler_state.clone(),
+        keystore_path,
     };
     let state = web::Data::new(state);
 
     // Spawn background tasks
-    scheduler::spawn_schedulers(pool, config.clone(), chain_provider, signer_bg, scheduler_state);
+    scheduler::spawn_schedulers(
+        pool,
+        config.clone(),
+        chain_provider,
+        signer_bg,
+        scheduler_state,
+    );
 
     // Start HTTP server
     let bind_addr = (config.bind_address.as_str(), config.port);

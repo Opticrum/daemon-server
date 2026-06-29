@@ -1,4 +1,4 @@
-import { ApiError, type StatsResponse, type AutoMatchConfig, type WalletResponse, type ImportWalletRequest, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type TrackedMatch, type MatchScanItem, type ExtractRentResult, type FiberChannelInfo, type FiberNodeInfoResponse, type UnsignedTx, type TrendDataPoint, type DistributionItem, type MonthlyDataPoint, type RankingItem, type ServerInfo } from '@/types/api'
+import { ApiError, type AutoMatchConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type TrackedMatch, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type UnsignedTx, type ServerInfo } from '@/types/api'
 
 // ═══════════════════════════════════════════
 // Fetch wrapper
@@ -47,6 +47,26 @@ export function useApi() {
     deleteWallet: (id: number): Promise<{ deleted: boolean }> =>
       request(`/console/wallets/${id}`, { method: 'DELETE' }),
 
+    // ── HD Wallet ──
+    createHdWallet: (body: CreateHdWalletRequest): Promise<CreateHdWalletResponse> =>
+      request('/console/wallets/create-hd', { method: 'POST', body: JSON.stringify(body) }),
+    unlockWallet: (body: UnlockWalletRequest): Promise<UnlockWalletResponse> =>
+      request('/console/wallets/unlock', { method: 'POST', body: JSON.stringify(body) }),
+    deriveMoreAddresses: (body: { password: string; count?: number }): Promise<WalletResponse[]> =>
+      request('/console/wallets/derive-more', { method: 'POST', body: JSON.stringify(body) }),
+    getHdStatus: (): Promise<HdStatusResponse> =>
+      request('/console/wallets/hd-status'),
+    getWalletBalance: (): Promise<WalletBalanceResponse> =>
+      request('/console/wallets/balance'),
+    getAddressBalances: (): Promise<AddressBalanceItem[]> =>
+      request('/console/wallets/balances'),
+    refreshHdWallet: (body: UnlockWalletRequest): Promise<RefreshHdWalletResponse> =>
+      request('/console/wallets/refresh-hd', { method: 'POST', body: JSON.stringify(body) }),
+    importMnemonic: (body: ImportMnemonicRequest): Promise<CreateHdWalletResponse> =>
+      request('/console/wallets/import-mnemonic', { method: 'POST', body: JSON.stringify(body) }),
+    deleteHdWallet: (): Promise<{ deleted: boolean }> =>
+      request('/console/wallets/delete-hd', { method: 'DELETE' }),
+
     // ── Orders ──
     scanOrders: (): Promise<OrderScanItem[]> =>
       request('/console/orders'),
@@ -62,8 +82,8 @@ export function useApi() {
       request(`/console/matches/${id}/destroy`, { method: 'POST' }),
 
     // ── Channels ──
-    scanChannels: (owner?: string): Promise<FiberChannelInfo[]> =>
-      request('/console/channels' + (owner ? `?owner=${encodeURIComponent(owner)}` : '')),
+    scanChannels: (): Promise<ChannelWithMatch[]> =>
+      request('/console/channels'),
 
     // ── Fiber Node Info ──
     getFiberNodeInfo: (): Promise<FiberNodeInfoResponse> =>

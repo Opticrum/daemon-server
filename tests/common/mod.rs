@@ -75,18 +75,22 @@ pub fn test_app_state() -> rust_server::api::AppState {
         auto_match_min_capacity: 10_000_000_000,
         auto_match_max_escrow_blocks: 432_000,
         auto_match_interval_secs: 120,
+        keystore_path: "data/keystore.json".to_string(),
     };
 
-    let scheduler_state = std::sync::Arc::new(
-        std::sync::RwLock::new(rust_server::services::console::scheduler_state::SchedulerState::new()),
-    );
+    let scheduler_state = std::sync::Arc::new(std::sync::RwLock::new(
+        rust_server::services::console::scheduler_state::SchedulerState::new(),
+    ));
 
     rust_server::api::AppState {
         db: test_db(),
         config,
         chain_provider: std::sync::Arc::new(rust_server::services::MockChainProvider::new()),
-        signer: std::sync::Arc::new(rust_server::services::external_signer::ExternalSigner::new("testnet")),
+        signer: std::sync::Arc::new(rust_server::services::external_signer::ExternalSigner::new(
+            "testnet",
+        )),
         tx_assembler: None,
+        keystore_path: "data/keystore.json".to_string(),
         scheduler_state,
     }
 }

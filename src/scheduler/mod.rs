@@ -44,12 +44,8 @@ pub fn spawn_schedulers(
 
         loop {
             let started = Instant::now();
-            match rent_extractor::run_extraction_cycle(
-                &pool_ext,
-                min_extraction,
-                cp_ext.as_ref(),
-            )
-            .await
+            match rent_extractor::run_extraction_cycle(&pool_ext, min_extraction, cp_ext.as_ref())
+                .await
             {
                 Ok(extracted) => {
                     let elapsed = started.elapsed();

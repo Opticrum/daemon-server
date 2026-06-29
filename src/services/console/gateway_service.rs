@@ -20,10 +20,14 @@ use crate::db::unsigned_txs as unsigned_db;
 use crate::db::wallets as wallet_db;
 use crate::db::DbPool;
 use crate::error::AppError;
-use crate::services::chain_provider::ChainProvider;
+use crate::services::chain_provider::{
+    ChainProvider, ChannelMatchInfo, ChannelWithMatch, FiberChannelInfo,
+};
 use crate::services::match_service::{self, MatchOrderResult};
 use crate::services::rent_service;
 use crate::services::signer::Signer;
+use opticrum_calculator::types::MatchInfo;
+use opticrum_protocol::CompressedPubkey;
 
 use super::scheduler_state::SchedulerState;
 
@@ -164,29 +168,54 @@ impl GatewayService {
 
         let (orders, orders_err) = match provider.scan_orders().await {
             Ok(o) => (o, false),
-            Err(e) => { warn!(error = %e, "Dashboard: scan_orders failed"); (vec![], true) }
+            Err(e) => {
+                warn!(error = %e, "Dashboard: scan_orders failed");
+                (vec![], true)
+            }
         };
         let (tip_block, _) = match provider.get_tip_block_number().await {
             Ok(t) => (t, false),
-            Err(e) => { warn!(error = %e, "Dashboard: get_tip_block failed"); (0u64, true) }
+            Err(e) => {
+                warn!(error = %e, "Dashboard: get_tip_block failed");
+                (0u64, true)
+            }
         };
         let (channels, _) = match provider.scan_fiber_channels(&[]).await {
             Ok(c) => (c, false),
-            Err(e) => { warn!(error = %e, "Dashboard: scan_fiber_channels failed"); (vec![], true) }
+            Err(e) => {
+                warn!(error = %e, "Dashboard: scan_fiber_channels failed");
+                (vec![], true)
+            }
         };
 
         debug!(
-            matches = matches.len(), orders = orders.len(), channels = channels.len(),
-            wallets = wallets.len(), tip_block, chain_errors = orders_err,
+            matches = matches.len(),
+            orders = orders.len(),
+            channels = channels.len(),
+            wallets = wallets.len(),
+            tip_block,
+            chain_errors = orders_err,
             duration_ms = started.elapsed().as_millis() as u64,
             "Dashboard aggregated"
         );
 
         // Distribution
         let distribution = vec![
-            DistributionItem { label: "进行中".into(), value: live.len() as u64, color: "#52c41a".into() },
-            DistributionItem { label: "已耗尽".into(), value: exhausted.len() as u64, color: "#1890ff".into() },
-            DistributionItem { label: "已销毁".into(), value: destroyed.len() as u64, color: "#ff4d4f".into() },
+            DistributionItem {
+                label: "进行中".into(),
+                value: live.len() as u64,
+                color: "#52c41a".into(),
+            },
+            DistributionItem {
+                label: "已耗尽".into(),
+                value: exhausted.len() as u64,
+                color: "#1890ff".into(),
+            },
+            DistributionItem {
+                label: "已销毁".into(),
+                value: destroyed.len() as u64,
+                color: "#ff4d4f".into(),
+            },
         ];
 
         // Monthly stats: extract from extraction_history with SQL grouping
@@ -200,11 +229,41 @@ impl GatewayService {
 
         // Trends: placeholder (no previous-period data yet)
         let trends = vec![
-            KpiTrend { key: "matches".into(), current: matches.len() as u64, previous: 0, delta_pct: 12.0, delta_label: "较上月".into() },
-            KpiTrend { key: "revenue".into(), current: total_extracted, previous: 0, delta_pct: 8.0, delta_label: "较上月".into() },
-            KpiTrend { key: "orders".into(), current: orders.len() as u64, previous: 0, delta_pct: -3.0, delta_label: "较上月".into() },
-            KpiTrend { key: "channels".into(), current: channels.len() as u64, previous: 0, delta_pct: 5.0, delta_label: "较上月".into() },
-            KpiTrend { key: "extracted".into(), current: total_extracted, previous: 0, delta_pct: 16.0, delta_label: "较上月".into() },
+            KpiTrend {
+                key: "matches".into(),
+                current: matches.len() as u64,
+                previous: 0,
+                delta_pct: 12.0,
+                delta_label: "较上月".into(),
+            },
+            KpiTrend {
+                key: "revenue".into(),
+                current: total_extracted,
+                previous: 0,
+                delta_pct: 8.0,
+                delta_label: "较上月".into(),
+            },
+            KpiTrend {
+                key: "orders".into(),
+                current: orders.len() as u64,
+                previous: 0,
+                delta_pct: -3.0,
+                delta_label: "较上月".into(),
+            },
+            KpiTrend {
+                key: "channels".into(),
+                current: channels.len() as u64,
+                previous: 0,
+                delta_pct: 5.0,
+                delta_label: "较上月".into(),
+            },
+            KpiTrend {
+                key: "extracted".into(),
+                current: total_extracted,
+                previous: 0,
+                delta_pct: 16.0,
+                delta_label: "较上月".into(),
+            },
         ];
 
         let s = state.extractor.clone();
@@ -234,24 +293,39 @@ impl GatewayService {
         })
     }
 
-    fn build_monthly_stats(_conn: &mut diesel::SqliteConnection) -> Result<Vec<MonthlyPoint>, AppError> {
+    fn build_monthly_stats(
+        _conn: &mut diesel::SqliteConnection,
+    ) -> Result<Vec<MonthlyPoint>, AppError> {
         // Placeholder: real implementation groups extraction_history by month.
         // For now return empty — the frontend will show empty chart until
         // enough extraction data accumulates.
         Ok(vec![])
     }
 
-    fn build_top_sellers(_conn: &mut diesel::SqliteConnection) -> Result<Vec<SellerRanking>, AppError> {
+    fn build_top_sellers(
+        _conn: &mut diesel::SqliteConnection,
+    ) -> Result<Vec<SellerRanking>, AppError> {
         // Placeholder: real implementation joins tracked_matches with extraction_history
         // and groups by seller_address.
         Ok(vec![])
     }
 
-    fn build_sparklines(_conn: &mut diesel::SqliteConnection) -> Result<HashMap<String, Vec<u64>>, AppError> {
+    fn build_sparklines(
+        _conn: &mut diesel::SqliteConnection,
+    ) -> Result<HashMap<String, Vec<u64>>, AppError> {
         let mut map = HashMap::new();
-        map.insert("matches".into(), vec![12, 18, 15, 22, 19, 25, 30, 28, 35, 32, 38, 42]);
-        map.insert("revenue".into(), vec![40, 38, 42, 35, 30, 32, 28, 25, 22, 20, 18, 15]);
-        map.insert("extracted".into(), vec![10, 15, 12, 20, 18, 22, 28, 25, 30, 35, 32, 38]);
+        map.insert(
+            "matches".into(),
+            vec![12, 18, 15, 22, 19, 25, 30, 28, 35, 32, 38, 42],
+        );
+        map.insert(
+            "revenue".into(),
+            vec![40, 38, 42, 35, 30, 32, 28, 25, 22, 20, 18, 15],
+        );
+        map.insert(
+            "extracted".into(),
+            vec![10, 15, 12, 20, 18, 22, 28, 25, 30, 35, 32, 38],
+        );
         Ok(map)
     }
 
@@ -267,6 +341,161 @@ impl GatewayService {
     pub fn delete_wallet(pool: &DbPool, id: i64) -> Result<bool, AppError> {
         let mut conn = pool.get()?;
         wallet_db::delete_wallet(&mut conn, id)
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // HD Wallet
+    // ═══════════════════════════════════════════════════════
+
+    /// Create a new HD wallet. Returns keystore + mnemonic + child records.
+    pub fn create_hd_wallet(
+        pool: &DbPool,
+        keystore_path: &std::path::Path,
+        label: &str,
+        password: &str,
+        address_count: u32,
+    ) -> Result<serde_json::Value, AppError> {
+        let (keystore, mnemonic, children) =
+            crate::services::wallet_service::create_hd_wallet(
+                pool, keystore_path, label, password, address_count,
+            )?;
+        Ok(serde_json::json!({
+            "keystore": keystore,
+            "mnemonic": mnemonic,
+            "children": children,
+            "address_count": keystore.address_count,
+        }))
+    }
+
+    /// Unlock an existing keystore.
+    pub fn unlock_keystore(
+        pool: &DbPool,
+        keystore_path: &std::path::Path,
+        password: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        let (keystore, children) =
+            crate::services::wallet_service::unlock_keystore(pool, keystore_path, password)?;
+        Ok(serde_json::json!({
+            "keystore": keystore,
+            "children": children,
+        }))
+    }
+
+    /// Derive additional addresses for an HD wallet.
+    pub fn derive_more_addresses(
+        pool: &DbPool,
+        keystore_path: &std::path::Path,
+        password: &str,
+        count: u32,
+    ) -> Result<Vec<wallet_db::WalletRecord>, AppError> {
+        crate::services::wallet_service::derive_more_addresses(
+            pool, keystore_path, password, count,
+        )
+    }
+
+    /// Get HD wallet status.
+    pub fn get_hd_status(keystore_path: &std::path::Path) -> serde_json::Value {
+        let exists = crate::services::wallet_service::hd_wallet_exists(keystore_path);
+        let label = if exists {
+            crate::services::keystore::load_keystore(keystore_path)
+                .map(|k| k.label)
+                .ok()
+        } else {
+            None
+        };
+        let address_count = if exists {
+            crate::services::keystore::load_keystore(keystore_path)
+                .map(|k| k.address_count)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        serde_json::json!({
+            "keystore_exists": exists,
+            "label": label,
+            "address_count": address_count,
+        })
+    }
+
+    /// Get total balance for all HD child wallets.
+    pub async fn get_hd_balance(
+        pool: &DbPool,
+        provider: &dyn ChainProvider,
+    ) -> Result<u64, AppError> {
+        crate::services::wallet_service::get_hd_wallet_balance(pool, provider).await
+    }
+
+    /// Get per-address balances for all HD child wallets.
+    pub async fn get_hd_address_balances(
+        pool: &DbPool,
+        provider: &dyn ChainProvider,
+    ) -> Result<Vec<serde_json::Value>, AppError> {
+        let balances =
+            crate::services::wallet_service::get_hd_wallet_address_balances(pool, provider).await?;
+        Ok(balances
+            .into_iter()
+            .map(|(w, bal)| {
+                serde_json::json!({
+                    "wallet": w,
+                    "balance_shannons": bal,
+                })
+            })
+            .collect())
+    }
+
+    /// Re-sync HD addresses from keystore and refresh on-chain balances.
+    pub async fn refresh_hd_wallet(
+        pool: &DbPool,
+        keystore_path: &std::path::Path,
+        password: &str,
+        provider: &dyn ChainProvider,
+    ) -> Result<serde_json::Value, AppError> {
+        let (keystore, children, total, balances) =
+            crate::services::wallet_service::refresh_hd_wallet(
+                pool,
+                keystore_path,
+                password,
+                provider,
+            )
+            .await?;
+        Ok(serde_json::json!({
+            "keystore": keystore,
+            "children": children,
+            "total_balance_shannons": total,
+            "address_balances": balances.into_iter().map(|(w, bal)| {
+                serde_json::json!({
+                    "wallet": w,
+                    "balance_shannons": bal,
+                })
+            }).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Import/recover HD wallet from a mnemonic phrase.
+    pub fn import_mnemonic(
+        pool: &DbPool,
+        keystore_path: &std::path::Path,
+        mnemonic_phrase: &str,
+        label: &str,
+        password: &str,
+        address_count: u32,
+    ) -> Result<serde_json::Value, AppError> {
+        let (keystore, children) = crate::services::wallet_service::import_hd_from_mnemonic(
+            pool, keystore_path, mnemonic_phrase, label, password, address_count,
+        )?;
+        Ok(serde_json::json!({
+            "keystore": keystore,
+            "children": children,
+            "address_count": keystore.address_count,
+        }))
+    }
+
+    /// Delete the HD wallet: remove keystore file and all hd_child rows.
+    pub fn delete_hd_wallet(
+        pool: &DbPool,
+        keystore_path: &std::path::Path,
+    ) -> Result<(), AppError> {
+        crate::services::wallet_service::delete_hd_wallet(pool, keystore_path)
     }
 
     // ═══════════════════════════════════════════════════════
@@ -326,6 +555,46 @@ impl GatewayService {
     // Channels
     // ═══════════════════════════════════════════════════════
 
+    /// List all Fiber channels with their associated on-chain opticrum match
+    /// cells (if any). Uses two-step matching:
+    /// 1. Filter match cells by counterparty fiber pubkey
+    /// 2. Among filtered, match by channel outpoint
+    pub async fn get_channels_with_matches(
+        provider: &dyn ChainProvider,
+    ) -> Result<Vec<ChannelWithMatch>, AppError> {
+        let channels = provider.scan_fiber_channels(&[]).await?;
+
+        // Scan on-chain matches — if it fails, still return channels without
+        // match info rather than failing the whole request.
+        let matches = match provider.scan_matches().await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to scan on-chain matches: {} — returning channels without match info",
+                    e
+                );
+                vec![]
+            }
+        };
+
+        Ok(channels
+            .into_iter()
+            .map(|ch| {
+                let match_info = find_match_for_channel(&ch, &matches);
+                let match_status = if match_info.is_some() {
+                    "matched"
+                } else {
+                    "not_found"
+                };
+                ChannelWithMatch {
+                    channel: ch,
+                    match_info,
+                    match_status: match_status.to_string(),
+                }
+            })
+            .collect())
+    }
+
     // ═══════════════════════════════════════════════════════
     // Fiber node info
     // ═══════════════════════════════════════════════════════
@@ -366,10 +635,7 @@ impl GatewayService {
         unsigned_db::set_witnesses(&mut conn, id, &json)
     }
 
-    pub fn submit_to_chain(
-        pool: &DbPool,
-        id: &str,
-    ) -> Result<(), AppError> {
+    pub fn submit_to_chain(pool: &DbPool, id: &str) -> Result<(), AppError> {
         let mut conn = pool.get()?;
         let tx_hash = format!("broadcast:{}", id);
         unsigned_db::mark_broadcast(&mut conn, id, &tx_hash)
@@ -405,14 +671,61 @@ impl GatewayService {
     // ═══════════════════════════════════════════════════════
 
     pub fn get_signer_info(signer: &dyn Signer) -> serde_json::Value {
-        let hashes: Vec<String> = signer
-            .lock_hashes()
-            .iter()
-            .map(hex::encode)
-            .collect();
+        let hashes: Vec<String> = signer.lock_hashes().iter().map(hex::encode).collect();
         serde_json::json!({
             "label": signer.label(),
             "lock_hashes": hashes,
         })
     }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+/// Find the on-chain opticrum Match cell corresponding to a Fiber channel.
+///
+/// Two-step lookup:
+/// 1. Filter match cells by counterparty fiber pubkey
+///    (`counterparty_fiber_key == match_args.order_args.fiber_pubkey`)
+/// 2. Among filtered, match by channel outpoint
+///    (`(tx_hash, output_index) == match_args.channel_outpoint`)
+///
+/// Returns `None` if the counterparty's Fiber key is not a valid 33-byte
+/// pubkey, or if no matching match cell is found.
+fn find_match_for_channel(
+    channel: &FiberChannelInfo,
+    matches: &[MatchInfo],
+) -> Option<ChannelMatchInfo> {
+    // Decode counterparty Fiber key to 33-byte compressed pubkey
+    let target_bytes = hex::decode(&channel.counterparty_fiber_key).ok()?;
+    if target_bytes.len() != 33 {
+        return None;
+    }
+    let mut pk_arr = [0u8; 33];
+    pk_arr.copy_from_slice(&target_bytes);
+    let target_pubkey = CompressedPubkey::new(pk_arr);
+
+    for m in matches {
+        // Step 1: fiber pubkey must match
+        if m.match_args.order_args.fiber_pubkey != target_pubkey {
+            continue;
+        }
+        // Step 2: channel outpoint must match
+        let match_tx = hex::encode(m.match_args.channel_outpoint.tx_hash);
+        if match_tx != channel.tx_hash
+            || m.match_args.channel_outpoint.index != channel.output_index
+        {
+            continue;
+        }
+        // Both matched — build result
+        return Some(ChannelMatchInfo {
+            match_tx_hash: hex::encode(m.match_outpoint.tx_hash),
+            match_output_index: m.match_outpoint.index,
+            xudt_amount: m.match_data.xudt_amount,
+            shannons_per_block: m.match_data.shannons_per_block,
+            last_extraction_block: m.match_data.last_extraction_block,
+            ckb_capacity: m.ckb_capacity,
+            seller_lock_hash: hex::encode(m.match_args.seller_lock_hash),
+        });
+    }
+    None
 }

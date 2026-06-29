@@ -33,7 +33,9 @@ function findTrend(key: string) {
 
 <template>
   <div class="dashboard">
-    <h2 class="page-title">{{ t('dashboard.title') }}</h2>
+    <h2 class="page-title">
+      {{ t('dashboard.title') }}
+    </h2>
 
     <div class="kpi-grid">
       <KpiCard
@@ -74,20 +76,49 @@ function findTrend(key: string) {
     </div>
 
     <div class="chart-row">
-      <ChartCard :title="t('dashboard.revenueTrend')" :period="t('dashboard.last30Days')" :loading="loading" class="chart-col-16">
-        <TrendChart v-if="dash?.extraction_history?.length" :data="dash.extraction_history" />
+      <ChartCard
+        :title="t('dashboard.revenueTrend')"
+        :period="t('dashboard.last30Days')"
+        :loading="loading"
+        class="chart-col-16"
+      >
+        <TrendChart
+          v-if="dash?.extraction_history?.length"
+          :data="dash.extraction_history"
+        />
       </ChartCard>
-      <ChartCard :title="t('dashboard.matchDist')" :loading="loading" class="chart-col-8">
-        <DonutChart v-if="dash?.match_distribution?.length" :data="dash.match_distribution" />
+      <ChartCard
+        :title="t('dashboard.matchDist')"
+        :loading="loading"
+        class="chart-col-8"
+      >
+        <DonutChart
+          v-if="dash?.match_distribution?.length"
+          :data="dash.match_distribution"
+        />
       </ChartCard>
     </div>
 
     <div class="chart-row">
-      <ChartCard :title="t('dashboard.monthlyMatch')" :loading="loading" class="chart-col-14">
-        <BarChart v-if="dash?.monthly_stats?.length" :data="dash.monthly_stats" />
+      <ChartCard
+        :title="t('dashboard.monthlyMatch')"
+        :loading="loading"
+        class="chart-col-14"
+      >
+        <BarChart
+          v-if="dash?.monthly_stats?.length"
+          :data="dash.monthly_stats"
+        />
       </ChartCard>
-      <ChartCard :title="t('dashboard.topSellers')" :loading="loading" class="chart-col-10">
-        <RankingBar v-if="dash?.top_sellers?.length" :data="dash.top_sellers" />
+      <ChartCard
+        :title="t('dashboard.topSellers')"
+        :loading="loading"
+        class="chart-col-10"
+      >
+        <RankingBar
+          v-if="dash?.top_sellers?.length"
+          :data="dash.top_sellers"
+        />
       </ChartCard>
     </div>
   </div>

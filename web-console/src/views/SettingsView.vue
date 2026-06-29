@@ -94,66 +94,233 @@ onMounted(() => { loadConfig(); loadUnsignedTxs(); loadServerInfo() })
 
 <template>
   <div class="page-settings">
-    <h2 class="page-title">{{ t('settings.title') }}</h2>
+    <h2 class="page-title">
+      {{ t('settings.title') }}
+    </h2>
     <div class="sub-tabs">
-      <button class="sub-tab" :class="{ active: activeTab === 'auto-match' }" @click="activeTab = 'auto-match'">{{ t('settings.autoMatch') }}</button>
-      <button class="sub-tab" :class="{ active: activeTab === 'signing' }" @click="activeTab = 'signing'">{{ t('settings.signing') }}</button>
-      <button class="sub-tab" :class="{ active: activeTab === 'network' }" @click="activeTab = 'network'">{{ t('settings.network') }}</button>
+      <button
+        class="sub-tab"
+        :class="{ active: activeTab === 'auto-match' }"
+        @click="activeTab = 'auto-match'"
+      >
+        {{ t('settings.autoMatch') }}
+      </button>
+      <button
+        class="sub-tab"
+        :class="{ active: activeTab === 'signing' }"
+        @click="activeTab = 'signing'"
+      >
+        {{ t('settings.signing') }}
+      </button>
+      <button
+        class="sub-tab"
+        :class="{ active: activeTab === 'network' }"
+        @click="activeTab = 'network'"
+      >
+        {{ t('settings.network') }}
+      </button>
     </div>
 
-    <div v-if="activeTab === 'auto-match'" class="card config-card">
+    <div
+      v-if="activeTab === 'auto-match'"
+      class="card config-card"
+    >
       <div class="card-header">
         <h3>{{ t('settings.autoMatchConfig') }}</h3>
-        <button v-if="!editing" class="btn btn-default btn-sm" @click="startEditing">{{ t('settings.edit') }}</button>
+        <button
+          v-if="!editing"
+          class="btn btn-default btn-sm"
+          @click="startEditing"
+        >
+          {{ t('settings.edit') }}
+        </button>
       </div>
-      <div v-if="configLoading" class="text-muted">{{ t('common.loading') }}</div>
+      <div
+        v-if="configLoading"
+        class="text-muted"
+      >
+        {{ t('common.loading') }}
+      </div>
       <template v-else-if="config">
-        <div v-if="!editing" class="config-display">
-          <div class="config-row"><span class="config-label">{{ t('settings.enabled') }}</span><StatusTag :status="config.enabled ? 'live' : 'destroyed'" :label="config.enabled ? t('settings.enabledLabel') : t('settings.disabledLabel')" /></div>
-          <div class="config-row"><span class="config-label">{{ t('settings.minCapacity') }}</span><span>{{ (config.min_capacity_shannons / 100_000_000).toFixed(0) }} {{ t('common.CKB') }}</span></div>
-          <div class="config-row"><span class="config-label">{{ t('settings.maxEscrow') }}</span><span>{{ config.max_escrow_blocks.toLocaleString() }} {{ t('settings.blocks') }}</span></div>
-          <div class="config-row"><span class="config-label">{{ t('settings.interval') }}</span><span>{{ config.interval_secs }} {{ t('settings.seconds') }}</span></div>
+        <div
+          v-if="!editing"
+          class="config-display"
+        >
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.enabled') }}</span><StatusTag
+              :status="config.enabled ? 'live' : 'destroyed'"
+              :label="config.enabled ? t('settings.enabledLabel') : t('settings.disabledLabel')"
+            />
+          </div>
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.minCapacity') }}</span><span>{{ (config.min_capacity_shannons / 100_000_000).toFixed(0) }} {{ t('common.CKB') }}</span>
+          </div>
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.maxEscrow') }}</span><span>{{ config.max_escrow_blocks.toLocaleString() }} {{ t('settings.blocks') }}</span>
+          </div>
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.interval') }}</span><span>{{ config.interval_secs }} {{ t('settings.seconds') }}</span>
+          </div>
         </div>
-        <div v-else class="config-form">
-          <div class="form-group"><label class="form-label"><input v-model="editForm.enabled" type="checkbox" /> {{ t('settings.enableAutoMatch') }}</label></div>
-          <div class="form-group"><label class="form-label">{{ t('settings.minCapacity') }} (shannons)</label><input v-model.number="editForm.min_capacity_shannons" type="number" class="form-input" /></div>
-          <div class="form-group"><label class="form-label">{{ t('settings.maxEscrow') }}</label><input v-model.number="editForm.max_escrow_blocks" type="number" class="form-input" /></div>
-          <div class="form-group"><label class="form-label">{{ t('settings.interval') }} ({{ t('settings.seconds') }})</label><input v-model.number="editForm.interval_secs" type="number" class="form-input" /></div>
-          <div class="form-actions"><button class="btn btn-default" @click="editing = false">{{ t('settings.cancel') }}</button><button class="btn btn-primary" @click="saveConfig">{{ t('settings.save') }}</button></div>
-          <p class="form-hint text-muted">{{ t('settings.restartNote') }}</p>
+        <div
+          v-else
+          class="config-form"
+        >
+          <div class="form-group">
+            <label class="form-label"><input
+              v-model="editForm.enabled"
+              type="checkbox"
+            > {{ t('settings.enableAutoMatch') }}</label>
+          </div>
+          <div class="form-group">
+            <label class="form-label">{{ t('settings.minCapacity') }} (shannons)</label><input
+              v-model.number="editForm.min_capacity_shannons"
+              type="number"
+              class="form-input"
+            >
+          </div>
+          <div class="form-group">
+            <label class="form-label">{{ t('settings.maxEscrow') }}</label><input
+              v-model.number="editForm.max_escrow_blocks"
+              type="number"
+              class="form-input"
+            >
+          </div>
+          <div class="form-group">
+            <label class="form-label">{{ t('settings.interval') }} ({{ t('settings.seconds') }})</label><input
+              v-model.number="editForm.interval_secs"
+              type="number"
+              class="form-input"
+            >
+          </div>
+          <div class="form-actions">
+            <button
+              class="btn btn-default"
+              @click="editing = false"
+            >
+              {{ t('settings.cancel') }}
+            </button><button
+              class="btn btn-primary"
+              @click="saveConfig"
+            >
+              {{ t('settings.save') }}
+            </button>
+          </div>
+          <p class="form-hint text-muted">
+            {{ t('settings.restartNote') }}
+          </p>
         </div>
       </template>
     </div>
 
     <div v-if="activeTab === 'signing'">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md);"><h3>{{ t('settings.signing') }}</h3><button class="btn btn-default btn-sm" @click="loadUnsignedTxs">{{ t('matches.refresh') }}</button></div>
-      <EmptyState v-if="txsError" icon="⚠️" :message="txsError" :action-label="t('common.retry')" @action="loadUnsignedTxs" />
-      <EmptyState v-else-if="!txsLoading && !txs.length" icon="📝" :message="t('settings.noUnsignedTxs')" />
-      <DataTable v-else :columns="txColumns" :rows="txs" :loading="txsLoading">
-        <template #cell-id="{ value }"><code class="font-mono">{{ truncateAddress(String(value), 8, 4) }}</code></template>
-        <template #cell-status="{ value }"><StatusTag :status="String(value)" /></template>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md);">
+        <h3>{{ t('settings.signing') }}</h3><button
+          class="btn btn-default btn-sm"
+          @click="loadUnsignedTxs"
+        >
+          {{ t('matches.refresh') }}
+        </button>
+      </div>
+      <EmptyState
+        v-if="txsError"
+        icon="⚠️"
+        :message="txsError"
+        :action-label="t('common.retry')"
+        @action="loadUnsignedTxs"
+      />
+      <EmptyState
+        v-else-if="!txsLoading && !txs.length"
+        icon="📝"
+        :message="t('settings.noUnsignedTxs')"
+      />
+      <DataTable
+        v-else
+        :columns="txColumns"
+        :rows="txs"
+        :loading="txsLoading"
+      >
+        <template #cell-id="{ value }">
+          <code class="font-mono">{{ truncateAddress(String(value), 8, 4) }}</code>
+        </template>
+        <template #cell-status="{ value }">
+          <StatusTag :status="String(value)" />
+        </template>
         <template #cell-actions="{ row }">
-          <button v-if="row.status === 'pending'" class="btn btn-sm btn-primary" @click="viewTx(row)">{{ t('settings.viewSign') }}</button>
-          <button v-else-if="row.status === 'signed'" class="btn btn-sm btn-primary" @click="broadcastTx(row)">{{ t('settings.broadcast') }}</button>
-          <span v-else class="text-muted">—</span>
+          <button
+            v-if="row.status === 'pending'"
+            class="btn btn-sm btn-primary"
+            @click="viewTx(row)"
+          >
+            {{ t('settings.viewSign') }}
+          </button>
+          <button
+            v-else-if="row.status === 'signed'"
+            class="btn btn-sm btn-primary"
+            @click="broadcastTx(row)"
+          >
+            {{ t('settings.broadcast') }}
+          </button>
+          <span
+            v-else
+            class="text-muted"
+          >—</span>
         </template>
       </DataTable>
     </div>
 
-    <div v-if="activeTab === 'network'" class="card config-card">
-      <div class="card-header"><h3>{{ t('settings.networkInfo') }}</h3></div>
-      <div v-if="serverInfo" class="config-display">
+    <div
+      v-if="activeTab === 'network'"
+      class="card config-card"
+    >
+      <div class="card-header">
+        <h3>{{ t('settings.networkInfo') }}</h3>
+      </div>
+      <div
+        v-if="serverInfo"
+        class="config-display"
+      >
         <div class="config-row">
           <span class="config-label">{{ t('settings.network') }}</span>
-          <StatusTag :status="serverInfo.network === 'mainnet' ? 'destroyed' : 'live'" :label="serverInfo.network === 'mainnet' ? 'Mainnet' : 'Testnet'" />
+          <StatusTag
+            :status="serverInfo.network === 'mainnet' ? 'destroyed' : 'live'"
+            :label="serverInfo.network === 'mainnet' ? 'Mainnet' : 'Testnet'"
+          />
         </div>
-        <div class="config-row"><span class="config-label">CKB RPC</span><code class="font-mono" style="font-size:var(--fs-caption)">{{ serverInfo.ckb_rpc_url }}</code></div>
-        <div class="config-row"><span class="config-label">CKB Indexer</span><code class="font-mono" style="font-size:var(--fs-caption)">{{ serverInfo.ckb_indexer_url }}</code></div>
-        <div class="config-row"><span class="config-label">Fiber RPC</span><code class="font-mono" style="font-size:var(--fs-caption)">{{ serverInfo.fiber_rpc_url }}</code></div>
-        <div class="config-row"><span class="config-label">{{ t('settings.version') }}</span><span>{{ serverInfo.version }}</span></div>
-        <p class="form-hint text-muted" style="margin-top:var(--space-md)">{{ t('settings.networkSwitchNote') }}</p>
+        <div class="config-row">
+          <span class="config-label">CKB RPC</span><code
+            class="font-mono"
+            style="font-size:var(--fs-caption)"
+          >{{ serverInfo.ckb_rpc_url }}</code>
+        </div>
+        <div class="config-row">
+          <span class="config-label">CKB Indexer</span><code
+            class="font-mono"
+            style="font-size:var(--fs-caption)"
+          >{{ serverInfo.ckb_indexer_url }}</code>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Fiber RPC</span><code
+            class="font-mono"
+            style="font-size:var(--fs-caption)"
+          >{{ serverInfo.fiber_rpc_url }}</code>
+        </div>
+        <div class="config-row">
+          <span class="config-label">{{ t('settings.version') }}</span><span>{{ serverInfo.version }}</span>
+        </div>
+        <p
+          class="form-hint text-muted"
+          style="margin-top:var(--space-md)"
+        >
+          {{ t('settings.networkSwitchNote') }}
+        </p>
       </div>
-      <div v-else class="text-muted">{{ t('common.loading') }}</div>
+      <div
+        v-else
+        class="text-muted"
+      >
+        {{ t('common.loading') }}
+      </div>
     </div>
   </div>
 </template>

@@ -19,7 +19,10 @@ const typeIcons: Record<string, string> = {
 
 <template>
   <Teleport to="body">
-    <div class="toast-container" aria-live="polite">
+    <div
+      class="toast-container"
+      aria-live="polite"
+    >
       <TransitionGroup name="toast">
         <div
           v-for="msg in messages"

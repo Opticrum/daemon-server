@@ -52,9 +52,19 @@ function onKeydown(e: KeyboardEvent) {
       @click="onOverlayClick"
       @keydown="onKeydown"
     >
-      <div class="modal-card" role="dialog" aria-modal="true" :aria-label="title">
-        <div v-if="title" class="modal-header">
-          <h3 class="modal-title">{{ title }}</h3>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="title"
+      >
+        <div
+          v-if="title"
+          class="modal-header"
+        >
+          <h3 class="modal-title">
+            {{ title }}
+          </h3>
         </div>
         <div class="modal-body">
           <slot />
@@ -63,8 +73,8 @@ function onKeydown(e: KeyboardEvent) {
           <button
             class="btn btn-default"
             data-testid="modal-cancel"
-            @click="emit('cancel')"
             :disabled="loading"
+            @click="emit('cancel')"
           >
             {{ cancelText || t('common.cancel') }}
           </button>
@@ -72,10 +82,14 @@ function onKeydown(e: KeyboardEvent) {
             class="btn"
             :class="danger ? 'btn-danger' : 'btn-primary'"
             data-testid="modal-confirm"
-            @click="emit('confirm')"
             :disabled="loading"
+            @click="emit('confirm')"
           >
-            <span v-if="loading" class="spinner" style="width:14px;height:14px;border-width:2px;" />
+            <span
+              v-if="loading"
+              class="spinner"
+              style="width:14px;height:14px;border-width:2px;"
+            />
             {{ confirmText || t('common.confirm') }}
           </button>
         </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Chart } from 'chart.js'
+import "chart.js"
 import { useChart } from '@/composables/useChart'
 import type { TrendDataPoint } from '@/types/api'
 

@@ -19,10 +19,19 @@ defineEmits<{
 </script>
 
 <template>
-  <div class="empty-state" data-testid="empty-state">
+  <div
+    class="empty-state"
+    data-testid="empty-state"
+  >
     <span class="empty-icon">{{ icon }}</span>
-    <p class="empty-message">{{ message || t('common.noData') }}</p>
-    <button v-if="actionLabel" class="btn btn-primary btn-sm" @click="$emit('action')">
+    <p class="empty-message">
+      {{ message || t('common.noData') }}
+    </p>
+    <button
+      v-if="actionLabel"
+      class="btn btn-primary btn-sm"
+      @click="$emit('action')"
+    >
       {{ actionLabel }}
     </button>
   </div>

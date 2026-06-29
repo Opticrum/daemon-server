@@ -44,13 +44,20 @@ impl SchedulerState {
 pub type SharedSchedulerState = Arc<RwLock<SchedulerState>>;
 
 /// Helper: record a successful cycle.
-pub fn record_success(state: &RwLock<SchedulerState>, field: fn(&mut SchedulerState) -> &mut CycleState, duration: Duration, processed: u64) {
+pub fn record_success(
+    state: &RwLock<SchedulerState>,
+    field: fn(&mut SchedulerState) -> &mut CycleState,
+    duration: Duration,
+    processed: u64,
+) {
     if let Ok(mut s) = state.write() {
         let cs = field(&mut s);
-        cs.last_run = Some(SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default());
+        cs.last_run = Some(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_default(),
+        );
         cs.last_duration_ms = duration.as_millis() as u64;
         cs.cycles += 1;
         cs.total_processed += processed;
@@ -60,13 +67,19 @@ pub fn record_success(state: &RwLock<SchedulerState>, field: fn(&mut SchedulerSt
 }
 
 /// Helper: record a failed cycle.
-pub fn record_error(state: &RwLock<SchedulerState>, field: fn(&mut SchedulerState) -> &mut CycleState, error: &str) {
+pub fn record_error(
+    state: &RwLock<SchedulerState>,
+    field: fn(&mut SchedulerState) -> &mut CycleState,
+    error: &str,
+) {
     if let Ok(mut s) = state.write() {
         let cs = field(&mut s);
-        cs.last_run = Some(SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default());
+        cs.last_run = Some(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_default(),
+        );
         cs.last_error = Some(error.to_string());
     }
 }

@@ -66,10 +66,7 @@ pub fn insert_match(
 }
 
 /// Get a match by its database ID.
-pub fn get_match_by_id(
-    conn: &mut SqliteConnection,
-    id: i64,
-) -> Result<TrackedMatch, AppError> {
+pub fn get_match_by_id(conn: &mut SqliteConnection, id: i64) -> Result<TrackedMatch, AppError> {
     tracked_matches::table
         .filter(tracked_matches::id.eq(id))
         .first(conn)
@@ -85,11 +82,9 @@ pub fn update_match_extraction(
     id: i64,
     last_extraction_block: u64,
 ) -> Result<(), AppError> {
-    let affected = diesel::update(
-        tracked_matches::table.filter(tracked_matches::id.eq(id)),
-    )
-    .set(tracked_matches::last_extraction_block.eq(last_extraction_block as i64))
-    .execute(conn)?;
+    let affected = diesel::update(tracked_matches::table.filter(tracked_matches::id.eq(id)))
+        .set(tracked_matches::last_extraction_block.eq(last_extraction_block as i64))
+        .execute(conn)?;
 
     if affected == 0 {
         return Err(AppError::NotFound(format!("Match id={id}")));
@@ -103,11 +98,9 @@ pub fn update_match_status(
     id: i64,
     status: &str,
 ) -> Result<(), AppError> {
-    let affected = diesel::update(
-        tracked_matches::table.filter(tracked_matches::id.eq(id)),
-    )
-    .set(tracked_matches::status.eq(status))
-    .execute(conn)?;
+    let affected = diesel::update(tracked_matches::table.filter(tracked_matches::id.eq(id)))
+        .set(tracked_matches::status.eq(status))
+        .execute(conn)?;
 
     if affected == 0 {
         return Err(AppError::NotFound(format!("Match id={id}")));

@@ -31,7 +31,7 @@ const hexValid = computed(() => {
         class="form-input"
         placeholder="例如：主钱包"
         @input="update('label', ($event.target as HTMLInputElement).value)"
-      />
+      >
     </div>
     <div class="form-group">
       <label class="form-label">私钥 (64 位十六进制)</label>
@@ -42,11 +42,17 @@ const hexValid = computed(() => {
         placeholder="输入 64 位十六进制私钥"
         maxlength="64"
         @input="update('private_key_hex', ($event.target as HTMLInputElement).value)"
-      />
-      <span v-if="hexValid === false" class="form-hint text-danger">
+      >
+      <span
+        v-if="hexValid === false"
+        class="form-hint text-danger"
+      >
         ⚠️ 私钥必须为 64 位十六进制字符
       </span>
-      <span v-else-if="hexValid === true" class="form-hint text-success">
+      <span
+        v-else-if="hexValid === true"
+        class="form-hint text-success"
+      >
         ✓ 格式正确
       </span>
     </div>
@@ -58,7 +64,7 @@ const hexValid = computed(() => {
         class="form-input"
         placeholder="留空则不加密存储"
         @input="update('password', ($event.target as HTMLInputElement).value)"
-      />
+      >
     </div>
   </div>
 </template>

@@ -33,24 +33,44 @@ onMounted(async () => {
 <template>
   <header class="app-header">
     <div class="header-left">
-      <button class="hamburger-btn" data-testid="sidebar-toggle" @click="$emit('toggle-sidebar')" aria-label="Toggle sidebar">
+      <button
+        class="hamburger-btn"
+        data-testid="sidebar-toggle"
+        aria-label="Toggle sidebar"
+        @click="$emit('toggle-sidebar')"
+      >
         <span class="hamburger-line" />
         <span class="hamburger-line" />
         <span class="hamburger-line" />
       </button>
       <div class="brand">
         <span class="brand-icon">⚡</span>
-        <span class="brand-name" data-testid="brand-name">{{ t('app.title') }}</span>
+        <span
+          class="brand-name"
+          data-testid="brand-name"
+        >{{ t('app.title') }}</span>
       </div>
     </div>
     <div class="header-right">
-      <button class="lang-toggle" data-testid="lang-toggle" @click="toggle" :title="localeLabel">
+      <button
+        class="lang-toggle"
+        data-testid="lang-toggle"
+        :title="localeLabel"
+        @click="toggle"
+      >
         {{ localeLabel }}
       </button>
-      <span class="network-badge" :class="network" data-testid="network-badge">
+      <span
+        class="network-badge"
+        :class="network"
+        data-testid="network-badge"
+      >
         {{ network === 'mainnet' ? 'Mainnet' : 'Testnet' }}
       </span>
-      <span class="header-badge" data-testid="signer-badge">{{ t('common.signer') }}: {{ signerLabel }}</span>
+      <span
+        class="header-badge"
+        data-testid="signer-badge"
+      >{{ t('common.signer') }}: {{ signerLabel }}</span>
     </div>
   </header>
 </template>

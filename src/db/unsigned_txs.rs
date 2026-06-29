@@ -81,14 +81,13 @@ pub fn set_witnesses(
     id: &str,
     witnesses_json: &str,
 ) -> Result<(), AppError> {
-    let affected = diesel::update(
-        unsigned_transactions::table.filter(unsigned_transactions::id.eq(id)),
-    )
-    .set((
-        unsigned_transactions::signed_witnesses_json.eq(Some(witnesses_json)),
-        unsigned_transactions::status.eq("signed"),
-    ))
-    .execute(conn)?;
+    let affected =
+        diesel::update(unsigned_transactions::table.filter(unsigned_transactions::id.eq(id)))
+            .set((
+                unsigned_transactions::signed_witnesses_json.eq(Some(witnesses_json)),
+                unsigned_transactions::status.eq("signed"),
+            ))
+            .execute(conn)?;
 
     if affected == 0 {
         return Err(AppError::NotFound(format!("Unsigned tx {id} not found")));
@@ -102,14 +101,13 @@ pub fn mark_broadcast(
     id: &str,
     tx_hash: &str,
 ) -> Result<(), AppError> {
-    let affected = diesel::update(
-        unsigned_transactions::table.filter(unsigned_transactions::id.eq(id)),
-    )
-    .set((
-        unsigned_transactions::tx_hash.eq(Some(tx_hash)),
-        unsigned_transactions::status.eq("broadcast"),
-    ))
-    .execute(conn)?;
+    let affected =
+        diesel::update(unsigned_transactions::table.filter(unsigned_transactions::id.eq(id)))
+            .set((
+                unsigned_transactions::tx_hash.eq(Some(tx_hash)),
+                unsigned_transactions::status.eq("broadcast"),
+            ))
+            .execute(conn)?;
 
     if affected == 0 {
         return Err(AppError::NotFound(format!("Unsigned tx {id} not found")));

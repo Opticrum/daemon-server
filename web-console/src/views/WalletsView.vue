@@ -1,12 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, inject } from 'vue'
+import { ref, onMounted, inject, computed, h } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
-import { truncateAddress } from '@/utils/format'
-import WalletImportForm from '@/components/ui/WalletImportForm.vue'
-import Skeleton from '@/components/ui/Skeleton.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
-import type { WalletResponse, ImportWalletRequest } from '@/types/api'
+import { truncateAddress, formatCKB } from '@/utils/format'
+import type { WalletResponse, HdStatusResponse, AddressBalanceItem } from '@/types/api'
 
 const api = useApi()
 const { t } = useI18n()
@@ -14,75 +11,517 @@ const toast = inject<any>('toast')!
 const modal = inject<any>('modal')!
 
 const wallets = ref<WalletResponse[]>([])
+const hdStatus = ref<HdStatusResponse | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
-const importForm = ref<ImportWalletRequest>({ label: '', private_key_hex: '', password: '' })
+const balanceLoading = ref(false)
+const addressBalances = ref<AddressBalanceItem[]>([])
+const totalBalance = ref<number | null>(null)
 
-async function loadWallets() {
-  loading.value = true
-  error.value = null
-  try { wallets.value = await api.listWallets() }
+// HD wallet form state
+const showCreateHd = ref(false)
+const showImportMnemonic = ref(false)
+const showMnemonic = ref(false)
+const hdPassword = ref('')
+const hdLabel = ref('My HD Wallet')
+const hdAddressCount = ref(5)
+const hdMnemonic = ref('')
+const importMnemonicPhrase = ref('')
+const unlocked = ref(false)
+const sessionPassword = ref('')
+
+const hdChildren = computed(() => wallets.value.filter(w => w.wallet_type === 'hd_child'))
+
+async function loadAll() {
+  loading.value = true; error.value = null
+  try { wallets.value = await api.listWallets(); hdStatus.value = await api.getHdStatus() }
   catch (e: any) { error.value = e.message || t('wallets.loadFailed') }
   finally { loading.value = false }
 }
 
-async function importWallet() {
-  if (!importForm.value.label || !importForm.value.private_key_hex) {
-    toast.warning(t('wallets.fillRequired'))
-    return
-  }
+async function loadBalances() {
+  balanceLoading.value = true
   try {
-    await api.importWallet(importForm.value)
-    toast.success(t('wallets.importSuccess'))
-    importForm.value = { label: '', private_key_hex: '', password: '' }
-    modal.hide()
-    await loadWallets()
+    const [bal, items] = await Promise.all([api.getWalletBalance(), api.getAddressBalances()])
+    totalBalance.value = bal.total_balance_shannons
+    addressBalances.value = items
+  } catch (e: any) {
+    toast.error(e.message || t('wallets.loadFailed'))
+  } finally {
+    balanceLoading.value = false
+  }
+}
+
+function applyRefreshResult(result: { total_balance_shannons: number; address_balances: AddressBalanceItem[] }) {
+  totalBalance.value = result.total_balance_shannons
+  addressBalances.value = result.address_balances
+}
+
+async function doRefreshHd(password: string) {
+  loading.value = true
+  balanceLoading.value = true
+  error.value = null
+  try {
+    const result = await api.refreshHdWallet({ password })
+    sessionPassword.value = password
+    unlocked.value = true
+    await loadAll()
+    if (hdStatus.value) {
+      hdStatus.value = {
+        ...hdStatus.value,
+        label: result.keystore.label,
+        address_count: result.keystore.address_count,
+      }
+    }
+    applyRefreshResult(result)
+  } catch (e: any) {
+    error.value = e.message || t('wallets.loadFailed')
+    throw e
+  } finally {
+    loading.value = false
+    balanceLoading.value = false
+  }
+}
+
+async function createHdWallet() {
+  if (!hdPassword.value || !hdLabel.value) { toast.warning(t('wallets.fillRequired')); return }
+  try {
+    const result = await api.createHdWallet({ label: hdLabel.value, password: hdPassword.value, address_count: hdAddressCount.value })
+    hdMnemonic.value = result.mnemonic; showMnemonic.value = true; showCreateHd.value = false
+    unlocked.value = true; sessionPassword.value = hdPassword.value; hdPassword.value = ''
+    toast.success(t('wallets.hdCreated'))
+    await doRefreshHd(sessionPassword.value)
   } catch (e: any) { toast.error(e.message || t('wallets.importFailed')) }
 }
 
-async function deleteWallet(id: number, label: string) {
-  const ok = await modal.confirm(t('wallets.deleteConfirm', { label }), {
-    title: t('wallets.deleteTitle'), danger: true, confirmText: t('common.deleteConfirm'),
-  })
-  if (!ok) return
-  try { await api.deleteWallet(id); toast.success(t('wallets.deleteSuccess')); await loadWallets() }
-  catch (e: any) { toast.error(e.message || t('wallets.deleteFailed')) }
+async function importFromMnemonic() {
+  if (!importMnemonicPhrase.value.trim() || !hdPassword.value || !hdLabel.value) {
+    toast.warning(t('wallets.fillRequired')); return
+  }
+  try {
+    await api.importMnemonic({
+      mnemonic: importMnemonicPhrase.value.trim(),
+      label: hdLabel.value,
+      password: hdPassword.value,
+      address_count: hdAddressCount.value,
+    })
+    toast.success(t('wallets.importSuccess'))
+    showImportMnemonic.value = false; unlocked.value = true
+    sessionPassword.value = hdPassword.value; hdPassword.value = ''; importMnemonicPhrase.value = ''
+    await doRefreshHd(sessionPassword.value)
+  } catch (e: any) { toast.error(e.message || t('wallets.importFailed')) }
 }
 
-function showImportModal() {
-  importForm.value = { label: '', private_key_hex: '', password: '' }
+function showUnlockModal() {
+  const pw = ref('')
+  const err = ref('')
   modal.show({
-    title: t('wallets.importTitle'),
-    content: WalletImportForm,
-    contentProps: { modelValue: importForm.value, 'onUpdate:modelValue': (v: ImportWalletRequest) => { importForm.value = v } },
-    confirmText: t('common.import'),
-    onConfirm: importWallet,
+    title: t('wallets.unlockTitle'),
+    content: {
+      setup() {
+        return () => h('div', { class: 'unlock-dialog' }, [
+          h('div', { class: 'unlock-icon-wrap' }, [
+            h('span', { class: 'unlock-icon' }, '🔐'),
+          ]),
+          h('p', { class: 'unlock-hint' }, t('wallets.unlockHint')),
+          h('input', {
+            type: 'password',
+            class: 'input unlock-input',
+            value: pw.value,
+            onInput: (e: Event) => { pw.value = (e.target as HTMLInputElement).value; err.value = '' },
+            onKeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') { /* handled by onConfirm */ } },
+            placeholder: t('wallets.passwordPlaceholder'),
+            autofocus: true,
+          }),
+          h('p', { class: 'unlock-error', style: { display: err.value ? 'block' : 'none' } }, err.value),
+        ])
+      },
+    },
+    confirmText: t('wallets.unlock'),
+    onConfirm: async () => {
+      if (!pw.value) {
+        err.value = t('wallets.fillRequired')
+        return
+      }
+      try {
+        await api.unlockWallet({ password: pw.value })
+        sessionPassword.value = pw.value
+        toast.success(t('wallets.unlockSuccess'))
+        unlocked.value = true
+        await doRefreshHd(pw.value)
+      } catch (e: any) {
+        err.value = e.message || t('wallets.unlockFailed')
+      }
+    },
     onCancel: () => modal.hide(),
   })
 }
 
-onMounted(loadWallets)
+async function refreshWallet() {
+  if (sessionPassword.value) {
+    try {
+      await doRefreshHd(sessionPassword.value)
+      toast.success(t('wallets.refreshed'))
+    } catch { /* toast shown in doRefreshHd */ }
+    return
+  }
+  showRefreshModal()
+}
+
+function showRefreshModal() {
+  const pw = ref('')
+  const err = ref('')
+  modal.show({
+    title: t('wallets.refresh'),
+    content: {
+      setup() {
+        return () => h('div', { class: 'unlock-dialog' }, [
+          h('p', { class: 'unlock-hint' }, t('wallets.refreshHint')),
+          h('input', {
+            type: 'password',
+            class: 'input unlock-input',
+            value: pw.value,
+            onInput: (e: Event) => { pw.value = (e.target as HTMLInputElement).value; err.value = '' },
+            placeholder: t('wallets.passwordPlaceholder'),
+            autofocus: true,
+          }),
+          h('p', { class: 'unlock-error', style: { display: err.value ? 'block' : 'none' } }, err.value),
+        ])
+      },
+    },
+    confirmText: t('wallets.refresh'),
+    onConfirm: async () => {
+      if (!pw.value) {
+        err.value = t('wallets.fillRequired')
+        return
+      }
+      try {
+        await doRefreshHd(pw.value)
+        toast.success(t('wallets.refreshed'))
+      } catch (e: any) {
+        err.value = e.message || t('wallets.loadFailed')
+      }
+    },
+    onCancel: () => modal.hide(),
+  })
+}
+
+function showDeriveModalFn() {
+  const pw = ref('')
+  const err = ref('')
+  modal.show({
+    title: t('wallets.deriveMore'),
+    content: {
+      setup() {
+        return () => h('div', { class: 'unlock-dialog' }, [
+          h('div', { class: 'unlock-icon-wrap' }, [
+            h('span', { class: 'unlock-icon' }, '➕'),
+          ]),
+          h('p', { class: 'unlock-hint' }, t('wallets.deriveMoreHint')),
+          h('input', {
+            type: 'password',
+            class: 'input unlock-input',
+            value: pw.value,
+            onInput: (e: Event) => { pw.value = (e.target as HTMLInputElement).value; err.value = '' },
+            placeholder: t('wallets.passwordPlaceholder'),
+          }),
+          h('p', { class: 'unlock-error', style: { display: err.value ? 'block' : 'none' } }, err.value),
+        ])
+      },
+    },
+    confirmText: t('common.confirm'),
+    onConfirm: async () => {
+      if (!pw.value) { err.value = t('wallets.fillRequired'); return }
+      try {
+        await api.deriveMoreAddresses({ password: pw.value, count: 3 })
+        sessionPassword.value = pw.value
+        toast.success(t('wallets.importSuccess'))
+        await doRefreshHd(pw.value)
+      } catch (e: any) { err.value = e.message || t('wallets.importFailed') }
+    },
+    onCancel: () => modal.hide(),
+  })
+}
+
+async function deleteHdWallet() {
+  const ok = await modal.confirm(t('wallets.deleteHdWarning'), {
+    title: t('wallets.deleteHdTitle'),
+    danger: true,
+    confirmText: t('wallets.deleteHdConfirm'),
+  })
+  if (!ok) return
+  try {
+    await api.deleteHdWallet()
+    toast.success(t('wallets.deleteSuccess'))
+    unlocked.value = false
+    sessionPassword.value = ''
+    totalBalance.value = null
+    addressBalances.value = []
+    await loadAll()
+  } catch (e: any) { toast.error(e.message || t('wallets.deleteFailed')) }
+}
+
+function balanceFor(id: number): number | null {
+  if (balanceLoading.value) return null
+  return addressBalances.value.find(a => a.wallet.id === id)?.balance_shannons ?? 0
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.success(t('common.copied'))
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta)
+    toast.success(t('common.copied'))
+  }
+}
+
+onMounted(async () => { await loadAll(); if (hdStatus.value?.keystore_exists) await loadBalances() })
 </script>
 
 <template>
   <div class="page-wallets">
     <div class="page-header">
-      <h2 class="page-title">{{ t('wallets.title') }}</h2>
-      <button class="btn btn-primary" @click="showImportModal">+ {{ t('wallets.import') }}</button>
+      <h2 class="page-title">
+        {{ t('wallets.title') }}
+      </h2>
     </div>
 
-    <Skeleton v-if="loading" type="card" :cols="3" />
-    <EmptyState v-else-if="error" icon="⚠️" :message="error" :action-label="t('common.retry')" @action="loadWallets" />
-    <EmptyState v-else-if="!wallets.length" icon="💼" :message="t('wallets.noWallets')" :action-label="t('wallets.import')" @action="showImportModal" />
-    <div v-else class="wallet-grid">
-      <div v-for="w in wallets" :key="w.id" class="wallet-card card">
-        <div class="wallet-card-header">
-          <span class="wallet-label">{{ w.label }}</span>
-          <button class="btn-delete" @click="deleteWallet(w.id, w.label)" title="Delete">🗑️</button>
+    <!-- Mnemonic display (shown once after creation) -->
+    <div
+      v-if="showMnemonic"
+      class="card mnemonic-card"
+    >
+      <div class="card-header">
+        <h3>{{ t('wallets.mnemonicTitle') }}</h3>
+        <button
+          class="btn btn-primary btn-sm"
+          @click="showMnemonic = false"
+        >
+          {{ t('common.confirm') }}
+        </button>
+      </div>
+      <p class="mnemonic-warning">
+        {{ t('wallets.mnemonicWarning') }}
+      </p>
+      <pre class="mnemonic-words">{{ hdMnemonic }}</pre>
+    </div>
+
+    <!-- HD Wallet Section -->
+    <div class="card hd-card">
+      <div class="card-header">
+        <h3>{{ t('wallets.hdWallet') }}</h3>
+        <div class="card-actions">
+          <!-- No wallet: create / import mnemonic -->
+          <template v-if="!hdStatus?.keystore_exists">
+            <button
+              class="btn btn-primary btn-sm"
+              @click="showCreateHd = !showCreateHd; showImportMnemonic = false"
+            >
+              {{ t('wallets.createHD') }}
+            </button>
+            <button
+              class="btn btn-outline btn-sm"
+              @click="showImportMnemonic = !showImportMnemonic; showCreateHd = false"
+            >
+              {{ t('wallets.importMnemonic') }}
+            </button>
+          </template>
+          <!-- Wallet exists, locked -->
+          <template v-else-if="!unlocked">
+            <button
+              class="btn btn-outline btn-sm"
+              @click="showUnlockModal"
+            >
+              {{ t('wallets.unlock') }}
+            </button>
+          </template>
+          <!-- Wallet unlocked -->
+          <template v-else>
+            <button
+              class="btn btn-outline btn-sm"
+              @click="refreshWallet"
+            >
+              {{ t('wallets.refresh') }}
+            </button>
+          </template>
+          <!-- Delete (danger) — always visible when wallet exists -->
+          <button
+            v-if="hdStatus?.keystore_exists"
+            class="btn btn-danger btn-sm"
+            @click="deleteHdWallet"
+          >
+            {{ t('wallets.deleteHd') }}
+          </button>
         </div>
-        <div class="wallet-addr font-mono">{{ truncateAddress(w.ckb_address, 12, 10) }}</div>
-        <div class="wallet-meta"><span class="text-muted">{{ t('wallets.lockHash') }}</span><code class="font-mono">{{ truncateAddress(w.lock_hash, 8, 6) }}</code></div>
-        <div class="wallet-meta"><span class="text-muted">{{ t('wallets.createdAt') }}</span><span>{{ w.created_at }}</span></div>
+      </div>
+
+      <!-- Create HD Wallet form -->
+      <div
+        v-if="showCreateHd"
+        class="form-inline"
+      >
+        <div class="field">
+          <label class="caption">{{ t('wallets.label') }}</label>
+          <input
+            v-model="hdLabel"
+            class="input"
+            :placeholder="t('wallets.labelPlaceholder')"
+          >
+        </div>
+        <div class="field">
+          <label class="caption">{{ t('wallets.password') }}</label>
+          <input
+            v-model="hdPassword"
+            type="password"
+            class="input"
+            :placeholder="t('wallets.passwordPlaceholder')"
+          >
+        </div>
+        <div class="field field-sm">
+          <label class="caption">{{ t('wallets.addressCount') }}</label>
+          <input
+            v-model.number="hdAddressCount"
+            type="number"
+            min="1"
+            max="50"
+            class="input input-sm"
+          >
+        </div>
+        <button
+          class="btn btn-primary btn-sm"
+          @click="createHdWallet"
+        >
+          {{ t('wallets.createHD') }}
+        </button>
+      </div>
+
+      <!-- Import Mnemonic form -->
+      <div
+        v-if="showImportMnemonic"
+        class="form-import"
+      >
+        <div class="field">
+          <label class="caption">{{ t('wallets.label') }}</label>
+          <input
+            v-model="hdLabel"
+            class="input"
+            :placeholder="t('wallets.labelPlaceholder')"
+          >
+        </div>
+        <div class="field">
+          <label class="caption">{{ t('wallets.password') }}</label>
+          <input
+            v-model="hdPassword"
+            type="password"
+            class="input"
+            :placeholder="t('wallets.passwordPlaceholder')"
+          >
+        </div>
+        <div class="field">
+          <label class="caption">{{ t('wallets.mnemonicTitle') }}</label>
+          <textarea
+            v-model="importMnemonicPhrase"
+            class="input textarea"
+            :placeholder="t('wallets.mnemonicPlaceholder')"
+            rows="3"
+          />
+        </div>
+        <div class="field field-sm">
+          <label class="caption">{{ t('wallets.addressCount') }}</label>
+          <input
+            v-model.number="hdAddressCount"
+            type="number"
+            min="1"
+            max="50"
+            class="input input-sm"
+          >
+        </div>
+        <button
+          class="btn btn-primary btn-sm"
+          @click="importFromMnemonic"
+        >
+          {{ t('wallets.importMnemonic') }}
+        </button>
+      </div>
+
+      <!-- HD summary -->
+      <div
+        v-if="hdStatus?.keystore_exists"
+        class="hd-summary"
+      >
+        <div class="summary-item">
+          <span class="summary-label">{{ t('wallets.totalBalance') }}</span>
+          <span
+            v-if="unlocked"
+            class="summary-value"
+          >{{ balanceLoading ? '...' : totalBalance !== null ? formatCKB(totalBalance) : '--' }}</span>
+          <span
+            v-else
+            class="summary-value locked"
+          >🔒 {{ t('wallets.locked') }}</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">{{ t('wallets.addressCount') }}</span><span class="summary-value">{{ hdStatus.address_count }}</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">{{ t('wallets.label') }}</span><span class="summary-value">{{ hdStatus.label || '--' }}</span>
+        </div>
+      </div>
+      <div
+        v-else-if="!showCreateHd && !showImportMnemonic"
+        class="text-muted"
+        style="padding:var(--space-md)"
+      >
+        {{ t('wallets.noHDWallet') }}
+      </div>
+    </div>
+
+    <!-- Address Balances -->
+    <div
+      v-if="hdChildren.length"
+      class="card addr-card"
+      :class="{ locked: !unlocked }"
+      style="margin-top:var(--space-xl)"
+    >
+      <div
+        v-if="!unlocked"
+        class="lock-overlay"
+      >
+        <span class="lock-icon">🔒</span>
+      </div>
+      <div class="card-header">
+        <h3>{{ t('wallets.perAddress') }}</h3>
+      </div>
+      <div class="address-list">
+        <div
+          v-for="w in hdChildren"
+          :key="w.id"
+          class="address-row"
+        >
+          <span class="addr-index">#{{ w.derivation_index }}</span>
+          <code
+            class="font-mono addr-address copyable"
+            :title="w.ckb_address"
+            @click="copyToClipboard(w.ckb_address)"
+          >{{ truncateAddress(w.ckb_address, 30, 20) }}</code>
+          <span class="addr-derivation">m/44'/309'/0'/0/{{ w.derivation_index }}</span>
+          <span class="addr-balance">{{ unlocked ? (balanceFor(w.id) === null ? '...' : formatCKB(balanceFor(w.id)!)) : '--' }}</span>
+        </div>
+      </div>
+      <div
+        v-if="unlocked"
+        class="derive-more-bar"
+      >
+        <button
+          class="btn-add"
+          :title="t('wallets.deriveMore')"
+          @click="showDeriveModalFn"
+        >
+          +
+        </button>
       </div>
     </div>
   </div>
@@ -90,17 +529,75 @@ onMounted(loadWallets)
 
 <style scoped>
 .page-wallets { max-width: 1200px; margin: 0 auto; }
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-xl); }
-.page-title { font-size: var(--fs-h2); font-weight: var(--fw-h2); line-height: var(--lh-h2); color: var(--text-primary); }
-.btn { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-md); height: 32px; border: none; border-radius: var(--radius-md); font-size: var(--fs-body); font-family: inherit; cursor: pointer; transition: all var(--transition-base); font-weight: 500; }
-.btn-primary { background: var(--primary-500); color: #fff; } .btn-primary:hover { background: var(--primary-400); }
-.wallet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-md); }
-.wallet-card { background: var(--bg-card); border-radius: var(--radius-lg); border: 1px solid var(--border-light); box-shadow: var(--shadow-base); padding: var(--space-xl); transition: all var(--transition-base); }
-.wallet-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
-.wallet-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-sm); }
-.wallet-label { font-size: var(--fs-h3); font-weight: var(--fw-h3); color: var(--text-primary); }
-.btn-delete { background: none; border: none; cursor: pointer; font-size: 16px; opacity: 0.5; transition: opacity var(--transition-base); } .btn-delete:hover { opacity: 1; }
-.wallet-addr { font-size: var(--fs-caption); color: var(--text-secondary); margin-bottom: var(--space-md); padding: var(--space-xs) var(--space-sm); background: var(--gray-50); border-radius: var(--radius-sm); word-break: break-all; }
-.wallet-meta { display: flex; justify-content: space-between; font-size: var(--fs-caption); margin-bottom: var(--space-xs); }
-.wallet-meta code { font-size: var(--fs-small); color: var(--primary-600); }
+.page-header { margin-bottom: var(--space-xl); }
+.page-title { font-size: var(--fs-h2); font-weight: var(--fw-h2); color: var(--text-primary); }
+
+.card { background: var(--bg-card); border-radius: var(--radius-lg); border: 1px solid var(--border-light); box-shadow: var(--shadow-base); padding: var(--space-xl); }
+.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); }
+.card-header h3 { font-size: var(--fs-h3); font-weight: var(--fw-h3); margin: 0; }
+.card-actions { display: flex; gap: var(--space-xs); }
+
+.mnemonic-card { border-color: var(--warning-500); margin-bottom: var(--space-xl); }
+.mnemonic-warning { color: var(--danger); font-weight: 600; margin-bottom: var(--space-md); }
+.mnemonic-words { background: var(--bg-surface); border: 1px solid var(--border-light); border-radius: var(--radius-md); padding: var(--space-lg); font-size: var(--fs-h3); font-family: var(--font-mono); word-spacing: var(--space-md); line-height: 1.8; text-align: center; }
+
+.hd-summary { display: flex; gap: var(--space-xl); margin-top: var(--space-md); }
+.summary-item { display: flex; flex-direction: column; gap: 2px; }
+.summary-label { font-size: var(--fs-small); color: var(--text-secondary); }
+.summary-value { font-size: var(--fs-h3); font-weight: var(--fw-h3); color: var(--text-primary); }
+.summary-value.locked { color: var(--text-disabled); font-size: var(--fs-body); font-weight: 500; }
+
+.form-inline { display: flex; gap: var(--space-sm); margin-bottom: var(--space-lg); align-items: flex-end; flex-wrap: wrap; }
+.form-import { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-lg); }
+.form-import .textarea { resize: vertical; padding: var(--space-sm); height: auto; }
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-sm { max-width: 80px; }
+.caption { font-size: var(--fs-small); color: var(--text-secondary); font-weight: 500; }
+
+.address-list { display: flex; flex-direction: column; }
+.address-row { display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-light); font-size: var(--fs-body); }
+.address-row:last-child { border-bottom: none; }
+.addr-index { font-weight: 600; color: var(--text-secondary); min-width: 32px; }
+.addr-address { flex: 1; font-size: var(--fs-caption); }
+.copyable { cursor: pointer; transition: color var(--transition-base); }
+.copyable:hover { color: var(--primary-500); }
+.addr-derivation { font-size: var(--fs-small); color: var(--text-disabled); min-width: 160px; }
+
+.derive-more-bar { margin-top: var(--space-md); padding-top: var(--space-md); border-top: 1px solid var(--border-light); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-sm); }
+.btn-add { width: 28px; height: 28px; border-radius: 50%; border: 1px dashed var(--border-dark); background: transparent; color: var(--text-secondary); font-size: var(--fs-h3); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition-base); }
+.btn-add:hover { border-color: var(--primary-500); color: var(--primary-500); }
+.addr-balance { font-weight: 600; color: var(--primary-500); min-width: 100px; text-align: right; }
+
+/* Locked overlay */
+.addr-card { position: relative; }
+.addr-card.locked .address-list { filter: blur(6px); user-select: none; pointer-events: none; }
+.lock-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 1; }
+.lock-icon { font-size: 48px; opacity: 0.6; filter: none; }
+
+.btn { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-md); height: 36px; border: none; border-radius: var(--radius-md); font-size: var(--fs-body); font-family: inherit; cursor: pointer; transition: all var(--transition-base); font-weight: 500; white-space: nowrap; }
+.btn-primary { background: var(--primary-500); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-400); }
+.btn-outline { background: transparent; color: var(--primary-500); border: 1px solid var(--primary-500); }
+.btn-outline:hover { background: var(--primary-50); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #ff7875; }
+.btn-sm { height: 28px; font-size: var(--fs-small); padding: 0 var(--space-sm); }
+
+.input { height: 36px; padding: 0 var(--space-sm); border: 1px solid var(--border-dark); border-radius: var(--radius-md); font-size: var(--fs-body); color: var(--text-primary); background: var(--bg-card); outline: none; }
+.input:focus { border-color: var(--primary-500); box-shadow: 0 0 0 2px rgba(24,144,255,0.2); }
+.input-sm { width: 70px; }
+
+.text-muted { color: var(--text-disabled); font-size: var(--fs-body); }
+</style>
+
+<!-- Global styles for modal dialogs (teleported to body, scoped won't reach) -->
+<style>
+.unlock-dialog { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); }
+.unlock-icon-wrap { margin-bottom: 0; }
+.unlock-icon { font-size: 40px; line-height: 1; }
+.unlock-hint { color: var(--text-secondary); font-size: var(--fs-body); line-height: 1.6; text-align: center; margin: 0; }
+.unlock-input { width: 100%; height: 40px; padding: 0 var(--space-md); border: 1px solid var(--border-dark); border-radius: 6px; font-size: var(--fs-body); color: var(--text-primary); background: var(--bg-card); outline: none; box-sizing: border-box; transition: border-color 0.2s, box-shadow 0.2s; }
+.unlock-input:focus { border-color: var(--primary-500); box-shadow: 0 0 0 2px rgba(24,144,255,0.2); }
+.unlock-error { color: var(--danger); font-size: var(--fs-small); margin: 0; width: 100%; }
 </style>

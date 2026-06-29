@@ -253,7 +253,8 @@ mod tests {
         extract_rent(&provider, &pool, match_id).await.unwrap();
 
         // Check extraction history
-        let history = match_db::get_extractions_for_match(&mut conn, "match_tx_hash_001", 0).unwrap();
+        let history =
+            match_db::get_extractions_for_match(&mut conn, "match_tx_hash_001", 0).unwrap();
         assert!(!history.is_empty());
         assert!(history[0].extracted_amount > 0);
     }

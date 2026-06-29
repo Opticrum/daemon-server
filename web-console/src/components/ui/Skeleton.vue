@@ -11,22 +11,51 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div v-if="type === 'card'" class="skeleton-cards">
-    <div v-for="i in cols" :key="i" class="skeleton-card">
+  <div
+    v-if="type === 'card'"
+    class="skeleton-cards"
+  >
+    <div
+      v-for="i in cols"
+      :key="i"
+      class="skeleton-card"
+    >
       <div class="skeleton-line w-40" />
       <div class="skeleton-line w-60 skeleton-line-lg" />
       <div class="skeleton-line w-80" />
     </div>
   </div>
-  <div v-else-if="type === 'table'" class="skeleton-table">
-    <div v-for="i in rows" :key="i" class="skeleton-row">
-      <div v-for="j in 4" :key="j" class="skeleton-cell">
-        <div class="skeleton-line" :style="{ width: (40 + Math.random() * 40).toFixed(0) + '%' }" />
+  <div
+    v-else-if="type === 'table'"
+    class="skeleton-table"
+  >
+    <div
+      v-for="i in rows"
+      :key="i"
+      class="skeleton-row"
+    >
+      <div
+        v-for="j in 4"
+        :key="j"
+        class="skeleton-cell"
+      >
+        <div
+          class="skeleton-line"
+          :style="{ width: (40 + Math.random() * 40).toFixed(0) + '%' }"
+        />
       </div>
     </div>
   </div>
-  <div v-else class="skeleton-text">
-    <div v-for="i in rows" :key="i" class="skeleton-line" :style="{ width: (60 + Math.random() * 40).toFixed(0) + '%' }" />
+  <div
+    v-else
+    class="skeleton-text"
+  >
+    <div
+      v-for="i in rows"
+      :key="i"
+      class="skeleton-line"
+      :style="{ width: (60 + Math.random() * 40).toFixed(0) + '%' }"
+    />
   </div>
 </template>
 

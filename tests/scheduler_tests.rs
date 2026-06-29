@@ -27,7 +27,7 @@ async fn extracts_when_above_threshold() {
     let provider = test_provider();
 
     // Add a wallet
-    wallet_db::insert_wallet(&mut conn, "w", b"enc", &[10u8; 32], "addr10").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w", b"enc", &[10u8; 32], "addr10", None, None, None, "imported").unwrap();
 
     // Add a match with high shannons_per_block (1000 shannons/block)
     match_db::insert_match(
@@ -55,7 +55,7 @@ async fn skips_when_below_threshold() {
     let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&mut conn, "w2", b"enc2", &[11u8; 32], "addr11").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w2", b"enc2", &[11u8; 32], "addr11", None, None, None, "imported").unwrap();
 
     // Low shannons_per_block: 1 shannon/block
     match_db::insert_match(
@@ -83,7 +83,7 @@ async fn respects_min_extraction_different_levels() {
     let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&mut conn, "w3", b"enc3", &[12u8; 32], "addr12").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w3", b"enc3", &[12u8; 32], "addr12", None, None, None, "imported").unwrap();
 
     match_db::insert_match(
         &mut conn,
@@ -105,9 +105,7 @@ async fn respects_min_extraction_different_levels() {
     assert_eq!(result, 0, "should skip with high threshold");
 
     // Low threshold: extracted
-    let result = run_extraction_cycle(&pool, 100, &provider)
-        .await
-        .unwrap();
+    let result = run_extraction_cycle(&pool, 100, &provider).await.unwrap();
     assert!(result > 0, "should extract with low threshold");
 }
 
@@ -117,7 +115,7 @@ async fn only_processes_live_matches() {
     let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&mut conn, "w4", b"enc4", &[13u8; 32], "addr13").unwrap();
+    wallet_db::insert_wallet(&mut conn, "w4", b"enc4", &[13u8; 32], "addr13", None, None, None, "imported").unwrap();
 
     // Insert a destroyed match
     match_db::insert_match(
@@ -144,7 +142,7 @@ async fn multiple_matches_all_processed() {
     let mut conn = pool.get().unwrap();
     let provider = test_provider();
 
-    wallet_db::insert_wallet(&mut conn, "multi", b"enc", &[14u8; 32], "addr14").unwrap();
+    wallet_db::insert_wallet(&mut conn, "multi", b"enc", &[14u8; 32], "addr14", None, None, None, "imported").unwrap();
 
     for i in 0..5 {
         match_db::insert_match(

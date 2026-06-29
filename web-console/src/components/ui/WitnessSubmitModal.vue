@@ -48,11 +48,17 @@ const isValid = computed(() => {
         :value="modelValue"
         class="witness-textarea font-mono"
         rows="6"
-        placeholder='粘贴 JSON，例如: [{"lock": "...", "input_type": "", "output_type": ""}]'
+        placeholder="粘贴 JSON，例如: [{&quot;lock&quot;: &quot;...&quot;, &quot;input_type&quot;: &quot;&quot;, &quot;output_type&quot;: &quot;&quot;}]"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
       />
-      <span v-if="isValid === true" class="form-hint text-success">✓ JSON 格式正确</span>
-      <span v-else-if="isValid === false" class="form-hint text-danger">JSON 格式错误，请检查</span>
+      <span
+        v-if="isValid === true"
+        class="form-hint text-success"
+      >✓ JSON 格式正确</span>
+      <span
+        v-else-if="isValid === false"
+        class="form-hint text-danger"
+      >JSON 格式错误，请检查</span>
     </div>
   </div>
 </template>

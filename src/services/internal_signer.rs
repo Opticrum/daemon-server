@@ -25,10 +25,7 @@ impl InternalSigner {
     /// Decrypts the wallet's encrypted private key using the server password.
     pub fn new(wallet: WalletRecord, encryption_password: &str) -> Result<Self, AppError> {
         let secret_key = crypto::decrypt_secret_key(&wallet.encrypted_key, encryption_password)?;
-        Ok(Self {
-            wallet,
-            secret_key,
-        })
+        Ok(Self { wallet, secret_key })
     }
 
     /// Get a reference to the wallet this signer uses.
@@ -121,8 +118,7 @@ mod tests {
         let test_key = test_secret_key_bytes();
         let encrypted = crypto::encrypt(&test_key, "test-pw").unwrap();
         let lock_hash = [0x42u8; 32];
-        wallets::insert_wallet(&mut conn, "test", &encrypted, &lock_hash, "addr")
-            .unwrap();
+        wallets::insert_wallet(&mut conn, "test", &encrypted, &lock_hash, "addr", None, None, None, "imported").unwrap();
         let wallet = wallets::get_wallet_by_id(&mut conn, 1).unwrap();
 
         let signer = InternalSigner::new(wallet, "test-pw").expect("should create signer");

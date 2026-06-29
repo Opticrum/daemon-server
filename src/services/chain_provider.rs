@@ -56,6 +56,46 @@ pub trait ChainProvider: Send + Sync {
         let _ = owner_lock_hash;
         Ok(Vec::new())
     }
+
+    /// Query live cells locked by a given lock hash.
+    /// Returns the cell outputs with their capacities.
+    /// Default: no-op (MockChainProvider overrides with in-memory filter,
+    /// RealChainProvider queries the CKB indexer).
+    async fn get_cells_by_lock(
+        &self,
+        _lock_hash: &[u8; 32],
+    ) -> Result<Vec<CellOutput>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// Query live cells for a secp256k1_blake160 lock script (by lock args).
+    async fn get_cells_by_lock_arg(
+        &self,
+        _lock_arg: &[u8; 20],
+    ) -> Result<Vec<CellOutput>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// Get total CKB balance for a lock hash (sum of live cell capacities).
+    async fn get_balance(&self, lock_hash: &[u8; 32]) -> Result<u64, AppError> {
+        let cells = self.get_cells_by_lock(lock_hash).await?;
+        Ok(cells.iter().map(|c| c.capacity).sum())
+    }
+
+    /// Get total CKB balance for a CKB address (preferred — queries indexer by lock args).
+    async fn get_balance_by_address(&self, address: &str) -> Result<u64, AppError> {
+        use crate::services::address::{lock_arg_from_address, script_lock_hash};
+        let lock_arg = lock_arg_from_address(address)?;
+        let lock_hash = script_lock_hash(&lock_arg);
+        let cells = self.get_cells_by_lock_arg(&lock_arg).await?;
+        if cells.is_empty() {
+            // Fallback for providers that only implement lock_hash lookup.
+            let fallback = self.get_cells_by_lock(&lock_hash).await?;
+            Ok(fallback.iter().map(|c| c.capacity).sum())
+        } else {
+            Ok(cells.iter().map(|c| c.capacity).sum())
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -72,18 +112,61 @@ pub struct CellOutput {
 }
 
 /// Lightweight Fiber channel info returned by `scan_fiber_channels`.
+///
+/// Fields are extracted from the Fiber node's `list_channels` JSON-RPC response
+/// (deserialized via `fiber_json_types::channel::Channel`).
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct FiberChannelInfo {
-    /// Channel cell tx_hash (hex).
+    /// Channel ID (hex, 32 bytes).
+    pub channel_id: String,
+    /// Counterparty's Fiber public key (hex, 33 bytes compressed pubkey).
+    pub counterparty_fiber_key: String,
+    /// Channel funding outpoint tx_hash (hex).
     pub tx_hash: String,
-    /// Channel cell output index.
+    /// Channel funding outpoint output index.
     pub output_index: u32,
-    /// Channel capacity in shannons.
+    /// Total channel capacity in shannons (local_balance + remote_balance).
     pub capacity: u64,
-    /// Channel status: "open", "closing", "closed".
-    pub status: String,
-    /// Counterparty lock hash (hex).
-    pub counterparty_lock_hash: String,
+    /// Local balance in shannons.
+    pub local_balance: u64,
+    /// Remote balance in shannons.
+    pub remote_balance: u64,
+    /// Channel state name (e.g. "ChannelReady", "ShuttingDown", "Closed").
+    pub state_name: String,
+    /// Whether the channel is public (announced to network).
+    pub is_public: bool,
+    /// Whether the channel is enabled for routing.
+    pub enabled: bool,
+}
+
+/// Summary of an on-chain opticrum Match cell linked to a Fiber channel.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ChannelMatchInfo {
+    /// Match cell tx_hash (hex).
+    pub match_tx_hash: String,
+    /// Match cell output index.
+    pub match_output_index: u32,
+    /// Locked xUDT amount.
+    pub xudt_amount: u128,
+    /// Per-block rent rate in shannons.
+    pub shannons_per_block: u64,
+    /// Last extraction block number.
+    pub last_extraction_block: u64,
+    /// CKB capacity of the match cell in shannons.
+    pub ckb_capacity: u64,
+    /// Seller lock hash (hex).
+    pub seller_lock_hash: String,
+}
+
+/// A Fiber channel with its associated on-chain opticrum match cell (if found).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ChannelWithMatch {
+    #[serde(flatten)]
+    pub channel: FiberChannelInfo,
+    /// The matched opticrum Match cell, if found on chain.
+    pub match_info: Option<ChannelMatchInfo>,
+    /// "matched" or "not_found".
+    pub match_status: String,
 }
 
 /// Fiber node metadata returned by the `node_info` JSON-RPC method.
@@ -124,6 +207,7 @@ pub struct MockChainProvider {
     pub submitted_txs: Mutex<Vec<String>>,
     pub cells: Mutex<std::collections::HashMap<(String, u32), CellOutput>>,
     pub fiber_channels: Mutex<Vec<FiberChannelInfo>>,
+    pub channel_matches: Mutex<Vec<ChannelWithMatch>>,
     pub fiber_node_info: Mutex<Option<FiberNodeInfo>>,
 }
 
@@ -142,6 +226,7 @@ impl MockChainProvider {
             submitted_txs: Mutex::new(Vec::new()),
             cells: Mutex::new(std::collections::HashMap::new()),
             fiber_channels: Mutex::new(Vec::new()),
+            channel_matches: Mutex::new(Vec::new()),
             fiber_node_info: Mutex::new(None),
         }
     }
@@ -175,9 +260,20 @@ impl MockChainProvider {
         self.fiber_channels.lock().unwrap().push(channel);
     }
 
+    pub fn add_channel_with_match(&self, cwm: ChannelWithMatch) {
+        self.channel_matches.lock().unwrap().push(cwm);
+    }
+
     pub fn with_fiber_channels(channels: Vec<FiberChannelInfo>) -> Self {
         Self {
             fiber_channels: Mutex::new(channels),
+            ..Self::new()
+        }
+    }
+
+    pub fn with_channel_matches(cwms: Vec<ChannelWithMatch>) -> Self {
+        Self {
+            channel_matches: Mutex::new(cwms),
             ..Self::new()
         }
     }
@@ -225,5 +321,28 @@ impl ChainProvider for MockChainProvider {
         _owner_lock_hash: &[u8],
     ) -> Result<Vec<FiberChannelInfo>, AppError> {
         Ok(self.fiber_channels.lock().unwrap().clone())
+    }
+
+    async fn get_cells_by_lock(
+        &self,
+        lock_hash: &[u8; 32],
+    ) -> Result<Vec<CellOutput>, AppError> {
+        Ok(self
+            .cells
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|c| &c.lock_hash == lock_hash)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_cells_by_lock_arg(
+        &self,
+        lock_arg: &[u8; 20],
+    ) -> Result<Vec<CellOutput>, AppError> {
+        use crate::services::address::script_lock_hash;
+        let lock_hash = script_lock_hash(lock_arg);
+        self.get_cells_by_lock(&lock_hash).await
     }
 }

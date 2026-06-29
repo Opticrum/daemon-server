@@ -16,7 +16,10 @@ function update(field: string, value: string | number) {
 
 <template>
   <div class="match-form">
-    <div v-if="modelValue.tx_hash" class="form-group">
+    <div
+      v-if="modelValue.tx_hash"
+      class="form-group"
+    >
       <label class="form-label">订单交易哈希</label>
       <code class="form-static font-mono">{{ modelValue.tx_hash }}</code>
     </div>
@@ -28,7 +31,7 @@ function update(field: string, value: string | number) {
         class="form-input font-mono"
         placeholder="ckb1q..."
         @input="update('seller_address', ($event.target as HTMLInputElement).value)"
-      />
+      >
     </div>
     <div class="form-group">
       <label class="form-label">通道 Outpoint 交易哈希</label>
@@ -38,7 +41,7 @@ function update(field: string, value: string | number) {
         class="form-input font-mono"
         placeholder="0x..."
         @input="update('channel_outpoint_tx_hash', ($event.target as HTMLInputElement).value)"
-      />
+      >
     </div>
     <div class="form-group">
       <label class="form-label">通道 Outpoint 输出索引</label>
@@ -48,7 +51,7 @@ function update(field: string, value: string | number) {
         class="form-input"
         min="0"
         @input="update('channel_outpoint_index', Number(($event.target as HTMLInputElement).value))"
-      />
+      >
     </div>
   </div>
 </template>

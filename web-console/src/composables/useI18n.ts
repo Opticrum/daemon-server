@@ -1,4 +1,4 @@
-import { ref, computed, inject, provide, type InjectionKey, type Ref } from 'vue'
+import { ref, computed, inject, provide, type InjectionKey } from 'vue'
 import { messages, defaultLocale, type Locale } from '@/locales'
 
 const STORAGE_KEY = 'opticrum-locale'
