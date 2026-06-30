@@ -48,6 +48,34 @@ export class ApiHelpers {
       }
     }
   }
+
+  // ── Signer wallets ──
+  async getSignerWallets() {
+    const res = await this.request.get(`${API}/signer/wallets`)
+    return res.json() as Promise<{ id: number; label: string; ckb_address: string; derivation_index: number | null; derivation_path: string | null }[]>
+  }
+
+  // ── HD wallet management ──
+  async getHdStatus() {
+    const res = await this.request.get(`${API}/wallets/hd-status`)
+    return res.json() as Promise<{ keystore_exists: boolean; label: string | null; address_count: number }>
+  }
+
+  async createHdWallet(label = 'E2E-HD-Wallet', password = 'e2e-test-password', addressCount = 3) {
+    const res = await this.request.post(`${API}/wallets/create-hd`, { data: { label, password, address_count: addressCount } })
+    if (!res.ok()) return null
+    return res.json() as Promise<any>
+  }
+
+  async unlockWallet(password = 'e2e-test-password') {
+    const res = await this.request.post(`${API}/wallets/unlock`, { data: { password } })
+    if (!res.ok()) return null
+    return res.json() as Promise<any>
+  }
+
+  async deleteHdWallet() {
+    await this.request.delete(`${API}/wallets/delete-hd`).catch(() => {})
+  }
 }
 
 type Fixtures = {

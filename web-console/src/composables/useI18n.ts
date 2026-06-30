@@ -7,14 +7,14 @@ function loadLocale(): Locale {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored === 'zh-CN' || stored === 'en') return stored
-  } catch { /* ignore */ }
+  } catch { console.warn('Failed to read locale from localStorage') }
   return defaultLocale
 }
 
 function saveLocale(locale: Locale) {
   try {
     localStorage.setItem(STORAGE_KEY, locale)
-  } catch { /* ignore */ }
+  } catch { console.warn('Failed to read locale from localStorage') }
 }
 
 export const I18N_KEY: InjectionKey<ReturnType<typeof createI18n>> = Symbol('i18n')

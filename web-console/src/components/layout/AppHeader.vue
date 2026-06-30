@@ -13,19 +13,14 @@ defineEmits<{
 
 const { t, toggle, localeLabel } = useI18n()
 const api = useApi()
-const signerLabel = ref('—')
 const network = ref('testnet')
 
 onMounted(async () => {
   try {
-    const [signerInfo, serverInfo] = await Promise.all([
-      api.getSignerInfo(),
-      api.getServerInfo(),
-    ])
-    signerLabel.value = signerInfo.label || t('common.signer')
+    const serverInfo = await api.getServerInfo()
     network.value = serverInfo.network
-  } catch {
-    signerLabel.value = t('common.signer')
+  } catch (e) {
+    console.warn('Failed to load server info in header:', e);
   }
 })
 </script>
@@ -67,10 +62,6 @@ onMounted(async () => {
       >
         {{ network === 'mainnet' ? 'Mainnet' : 'Testnet' }}
       </span>
-      <span
-        class="header-badge"
-        data-testid="signer-badge"
-      >{{ t('common.signer') }}: {{ signerLabel }}</span>
     </div>
   </header>
 </template>
@@ -178,16 +169,6 @@ onMounted(async () => {
   border-color: rgba(82, 196, 26, 0.3);
 }
 
-.header-badge {
-  font-size: var(--fs-caption);
-  padding: 4px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--gray-100);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-
-/* Show hamburger when sidebar is hidden (mobile) */
 @media (max-width: 991px) {
   .hamburger-btn {
     display: flex;

@@ -149,7 +149,7 @@ pub async fn run_auto_match_cycle(
             crate::services::signer::SignResult::Signed { tx_hex } => tx_hex,
             crate::services::signer::SignResult::Unsigned { .. } => {
                 tracing::warn!(
-                    "Auto-match: external signer cannot auto-sign — skipping order {}",
+                    "Auto-match: HD wallet is locked — skipping order {}",
                     hex::encode(order.order_outpoint.tx_hash)
                 );
                 continue;

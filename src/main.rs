@@ -12,9 +12,9 @@ use tracing::{error, info, warn};
 use rust_server::config::Config;
 use rust_server::services::chain_provider::ChainProvider;
 use rust_server::services::console::scheduler_state::{SchedulerState, SharedSchedulerState};
-use rust_server::services::external_signer::ExternalSigner;
-use rust_server::services::signer::Signer;
+use rust_server::services::hd_wallet_signer::HdWalletSigner;
 use rust_server::services::transaction_assembler::TransactionAssembler;
+use rust_server::services::wallet_session::WalletSessionManager;
 use rust_server::services::RealChainProvider;
 use rust_server::{api, db, scheduler};
 
@@ -43,11 +43,16 @@ async fn main() -> std::io::Result<()> {
     };
 
     // Build chain provider (network is auto-detected from RPC URL)
-    let real_provider = RealChainProvider::new(
+    let mut real_provider = RealChainProvider::new(
         &config.ckb_rpc_url,
         &config.ckb_indexer_url,
         &config.fiber_rpc_url,
     );
+
+    // Resolve Network::Custom(url) → Testnet/Mainnet from on-chain chain_info.
+    if let Err(e) = real_provider.update_network().await {
+        warn!(error = %e, "Failed to auto-detect network from chain — using URL-based fallback");
+    }
 
     // Verify chain connectivity
     let tip_block = match real_provider.get_tip_block_number().await {
@@ -69,8 +74,9 @@ async fn main() -> std::io::Result<()> {
 
     let chain_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
 
-    // Signing: external by default, network-aware
-    let signer: Arc<dyn Signer> = Arc::new(ExternalSigner::new(chain_provider.network()));
+    // Signing: built-in HD wallet (unlock via admin panel)
+    let signer: Arc<HdWalletSigner> = Arc::new(HdWalletSigner::new());
+    let wallet_session: Arc<WalletSessionManager> = Arc::new(WalletSessionManager::default());
 
     // Consolidated startup summary
     info!(
@@ -90,6 +96,15 @@ async fn main() -> std::io::Result<()> {
     let scheduler_state: SharedSchedulerState =
         Arc::new(std::sync::RwLock::new(SchedulerState::new()));
 
+    // Fetch own Fiber node pubkey once at startup (used to filter self-owned
+    // orders from chain scans).
+    let own_fiber_pubkey = chain_provider
+        .get_fiber_node_info()
+        .await
+        .ok()
+        .flatten()
+        .map(|info| info.pubkey);
+
     // Build application state
     let keystore_path = config.keystore_path.clone();
     let state = api::AppState {
@@ -97,9 +112,11 @@ async fn main() -> std::io::Result<()> {
         config: config.clone(),
         chain_provider: chain_provider.clone(),
         signer,
+        wallet_session: wallet_session.clone(),
         tx_assembler,
         scheduler_state: scheduler_state.clone(),
         keystore_path,
+        own_fiber_pubkey,
     };
     let state = web::Data::new(state);
 

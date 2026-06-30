@@ -44,9 +44,18 @@ fn wallet_list() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    wallet_db::insert_wallet(&mut conn, "w1", b"k1", &[1u8; 32], "addr1", None, None, None, "imported").unwrap();
-    wallet_db::insert_wallet(&mut conn, "w2", b"k2", &[2u8; 32], "addr2", None, None, None, "imported").unwrap();
-    wallet_db::insert_wallet(&mut conn, "w3", b"k3", &[3u8; 32], "addr3", None, None, None, "imported").unwrap();
+    wallet_db::insert_wallet(
+        &mut conn, "w1", b"k1", &[1u8; 32], "addr1", None, None, None, "imported",
+    )
+    .unwrap();
+    wallet_db::insert_wallet(
+        &mut conn, "w2", b"k2", &[2u8; 32], "addr2", None, None, None, "imported",
+    )
+    .unwrap();
+    wallet_db::insert_wallet(
+        &mut conn, "w3", b"k3", &[3u8; 32], "addr3", None, None, None, "imported",
+    )
+    .unwrap();
 
     let wallets = wallet_db::list_wallets(&mut conn).unwrap();
     assert_eq!(wallets.len(), 3);
@@ -57,7 +66,18 @@ fn wallet_delete() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    let id = wallet_db::insert_wallet(&mut conn, "to-delete", b"key", &[9u8; 32], "addr", None, None, None, "imported").unwrap();
+    let id = wallet_db::insert_wallet(
+        &mut conn,
+        "to-delete",
+        b"key",
+        &[9u8; 32],
+        "addr",
+        None,
+        None,
+        None,
+        "imported",
+    )
+    .unwrap();
     let deleted = wallet_db::delete_wallet(&mut conn, id).unwrap();
     assert!(deleted);
 
@@ -78,8 +98,13 @@ fn wallet_unique_lock_hash() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    wallet_db::insert_wallet(&mut conn, "w1", b"k1", &[5u8; 32], "addr", None, None, None, "imported").unwrap();
-    let result = wallet_db::insert_wallet(&mut conn, "w2", b"k2", &[5u8; 32], "addr2", None, None, None, "imported");
+    wallet_db::insert_wallet(
+        &mut conn, "w1", b"k1", &[5u8; 32], "addr", None, None, None, "imported",
+    )
+    .unwrap();
+    let result = wallet_db::insert_wallet(
+        &mut conn, "w2", b"k2", &[5u8; 32], "addr2", None, None, None, "imported",
+    );
     assert!(result.is_err());
 }
 
@@ -88,7 +113,10 @@ fn wallet_get_by_lock_hash() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    wallet_db::insert_wallet(&mut conn, "by-hash", b"key", &[7u8; 32], "addr7", None, None, None, "imported").unwrap();
+    wallet_db::insert_wallet(
+        &mut conn, "by-hash", b"key", &[7u8; 32], "addr7", None, None, None, "imported",
+    )
+    .unwrap();
     let wallet = wallet_db::get_wallet_by_lock_hash(&mut conn, &[7u8; 32]).unwrap();
     assert_eq!(wallet.label, "by-hash");
 }

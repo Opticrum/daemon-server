@@ -6,9 +6,8 @@
 //! 3. TOML config file (`config.toml` or `--config <path>`)
 //! 4. Built-in defaults
 //!
-//! Signing is always external by default (JoyID, UTXOGlobal, etc.).
-//! The admin panel accepts a raw private key at runtime to switch to
-//! automated (internal) signing mode — no config needed.
+//! Transaction signing uses the built-in HD wallet. Unlock the keystore
+//! in the admin panel to load signing keys into memory.
 
 use clap::Parser;
 use serde::Deserialize;

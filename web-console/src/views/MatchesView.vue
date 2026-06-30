@@ -37,7 +37,7 @@ const columns: ColumnDef[] = [
 async function loadMatches() {
   loading.value = true; error.value = null
   try { matches.value = await api.listMatches(filterStatus.value || undefined) }
-  catch (e: any) { error.value = e.message || t('matches.loadFailed') }
+  catch (e: any) { console.error('Failed to load matches:', e); error.value = e.message || t('matches.loadFailed') }
   finally { loading.value = false }
 }
 
@@ -45,14 +45,14 @@ function setFilter(status: string) { filterStatus.value = status; loadMatches() 
 
 async function extractRent(match: TrackedMatch) {
   try { await api.extractRent(match.id); toast.success(t('matches.extractSuccess')); await loadMatches() }
-  catch (e: any) { toast.error(e.message || 'Extract failed') }
+  catch (e: any) { console.error('Failed to extract rent:', e); toast.error(e.message || 'Extract failed') }
 }
 
 async function destroyMatch(match: TrackedMatch) {
   const ok = await modal.confirm(t('matches.destroyConfirm', { id: match.id }), { title: t('matches.destroyTitle'), danger: true, confirmText: t('matches.destroy') })
   if (!ok) return
   try { await api.destroyMatch(match.id); toast.success(t('matches.destroySuccess')); await loadMatches() }
-  catch (e: any) { toast.error(e.message || 'Destroy failed') }
+  catch (e: any) { console.error('Failed to destroy match:', e); toast.error(e.message || 'Destroy failed') }
 }
 
 onMounted(loadMatches)

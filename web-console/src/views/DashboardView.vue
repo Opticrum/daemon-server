@@ -19,8 +19,8 @@ const loading = ref(true)
 onMounted(async () => {
   try {
     dash.value = await api.getDashboard()
-  } catch {
-    // error handled silently — dashboard shows zero state
+  } catch (e) {
+    console.error('Failed to load dashboard:', e)
   } finally {
     loading.value = false
   }

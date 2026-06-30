@@ -9,6 +9,7 @@ pub mod console;
 pub mod crypto;
 pub mod external_signer;
 pub mod hd_wallet;
+pub mod hd_wallet_signer;
 pub mod internal_signer;
 pub mod keystore;
 pub mod match_service;
@@ -17,6 +18,7 @@ pub mod rent_service;
 pub mod signer;
 pub mod transaction_assembler;
 pub mod wallet_service;
+pub mod wallet_session;
 
 pub use chain_provider::MockChainProvider;
 pub use real_chain_provider::RealChainProvider;

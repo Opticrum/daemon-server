@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { watch, type Component } from 'vue'
 
 import { useI18n } from '@/composables/useI18n'
 
@@ -8,16 +8,18 @@ const { t } = useI18n()
 const props = withDefaults(defineProps<{
   visible: boolean
   title?: string
-  confirmText?: string
+  confirmText?: string | null
   cancelText?: string
   danger?: boolean
   loading?: boolean
+  extra?: Component
 }>(), {
   title: '',
   confirmText: '',
   cancelText: '',
   danger: false,
   loading: false,
+  extra: undefined,
 })
 
 const emit = defineEmits<{
@@ -78,20 +80,26 @@ function onKeydown(e: KeyboardEvent) {
           >
             {{ cancelText || t('common.cancel') }}
           </button>
-          <button
-            class="btn"
-            :class="danger ? 'btn-danger' : 'btn-primary'"
-            data-testid="modal-confirm"
-            :disabled="loading"
-            @click="emit('confirm')"
-          >
-            <span
-              v-if="loading"
-              class="spinner"
-              style="width:14px;height:14px;border-width:2px;"
-            />
-            {{ confirmText || t('common.confirm') }}
-          </button>
+          <component
+            :is="extra"
+            v-if="extra"
+          />
+          <template v-if="confirmText !== null">
+            <button
+              class="btn"
+              :class="danger ? 'btn-danger' : 'btn-primary'"
+              data-testid="modal-confirm"
+              :disabled="loading"
+              @click="emit('confirm')"
+            >
+              <span
+                v-if="loading"
+                class="spinner"
+                style="width:14px;height:14px;border-width:2px;"
+              />
+              {{ confirmText || t('common.confirm') }}
+            </button>
+          </template>
         </div>
       </div>
     </div>

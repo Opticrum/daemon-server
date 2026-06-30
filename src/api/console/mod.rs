@@ -3,12 +3,125 @@
 //! Every handler delegates to `GatewayService` methods.
 //! All routes are mounted under `/api/console`.
 
-use actix_web::{web, HttpResponse};
+use actix_web::cookie::{Cookie, SameSite};
+use actix_web::{web, HttpRequest, HttpResponse};
 use serde::Deserialize;
 
 use crate::api::AppState;
 use crate::error::AppError;
 use crate::services::console::gateway_service::GatewayService;
+use crate::services::wallet_session::{SessionStatus, SESSION_COOKIE, SESSION_TTL_SECS};
+
+fn session_token(req: &HttpRequest) -> Option<String> {
+    req.cookie(SESSION_COOKIE)
+        .map(|cookie| cookie.value().to_string())
+}
+
+fn session_cookie(token: &str) -> Cookie<'static> {
+    Cookie::build(SESSION_COOKIE, token.to_string())
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .max_age(actix_web::cookie::time::Duration::seconds(
+            SESSION_TTL_SECS as i64,
+        ))
+        .finish()
+}
+
+fn clear_session_cookie() -> Cookie<'static> {
+    Cookie::build(SESSION_COOKIE, "")
+        .path("/")
+        .http_only(true)
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish()
+}
+
+fn unlock_signer(state: &web::Data<AppState>, password: &str) -> Result<(), AppError> {
+    state.signer.load_keys(&state.db, password)
+}
+
+fn start_wallet_session(state: &web::Data<AppState>, password: &str) -> Result<String, AppError> {
+    unlock_signer(state, password)?;
+    Ok(state.wallet_session.create(password.to_string()))
+}
+
+/// Clear both the wallet session and the in-memory signer keys.
+/// Called on explicit lock or HD wallet deletion.
+fn end_wallet_session(state: &web::Data<AppState>) {
+    state.wallet_session.clear();
+    state.signer.clear();
+}
+
+/// Clear only the wallet session — leaves the signer keys in memory so the
+/// background auto-matcher can keep signing without re-unlock.
+fn clear_session_only(state: &web::Data<AppState>) {
+    state.wallet_session.clear();
+}
+
+fn resolve_password(
+    state: &web::Data<AppState>,
+    req: &HttpRequest,
+    body_password: Option<&str>,
+) -> Result<String, AppError> {
+    if let Some(password) = body_password {
+        if !password.is_empty() {
+            return Ok(password.to_string());
+        }
+    }
+    if let Some(token) = session_token(req) {
+        if let Some(password) = state.wallet_session.password_for(&token) {
+            return Ok(password);
+        }
+    }
+    Err(AppError::WalletError(
+        "Wallet locked — unlock required".into(),
+    ))
+}
+
+/// Check session status without destructive side effects.
+/// The `WalletSessionManager::status` internally clears expired sessions;
+/// we do NOT clear the signer here — that only happens on explicit lock/delete.
+fn session_status(state: &web::Data<AppState>, req: &HttpRequest) -> SessionStatus {
+    let token = session_token(req);
+    state.wallet_session.status(token.as_deref())
+}
+
+/// Ensure the HD wallet signer is loaded into memory.
+///
+/// If the session is active but the signer happened to be cleared (e.g. server
+/// restart while session cookie is still valid), this auto-restores the keys
+/// using the stored password.
+///
+/// If the session is inactive, the signer is left untouched — it may still hold
+/// keys from a previous unlock so the background auto-matcher keeps working.
+fn ensure_signer_from_session(
+    state: &web::Data<AppState>,
+    req: &HttpRequest,
+) -> Result<(), AppError> {
+    // Always touch the session to extend its TTL (sliding expiration).
+    // This keeps the session alive as long as the user is actively browsing,
+    // even when the signer is already loaded from a previous unlock.
+    if let Some(token) = session_token(req) {
+        let _ = state.wallet_session.touch(&token);
+    }
+
+    // Already unlocked — nothing to do.
+    if state.signer.is_unlocked() {
+        return Ok(());
+    }
+
+    // Re-unlock from session: retrieve the stored password, decrypt keys.
+    let token = session_token(req)
+        .ok_or_else(|| AppError::WalletError("Wallet locked — unlock required".into()))?;
+
+    let password = state.wallet_session.password_for(&token).ok_or_else(|| {
+        // Session expired or invalid — clear only the session, not the signer.
+        clear_session_only(state);
+        AppError::WalletError("Wallet session expired — unlock required".into())
+    })?;
+
+    unlock_signer(state, &password)
+}
 
 /// Mount all console routes under `/api/console`.
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
@@ -32,17 +145,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/channels", web::get().to(scan_channels))
             // Fiber node info
             .route("/fiber-node-info", web::get().to(fiber_node_info))
-            // Signing
-            .route("/signing", web::get().to(list_unsigned))
-            .route("/signing/{id}", web::get().to(get_unsigned))
-            .route("/signing/{id}/witnesses", web::post().to(submit_witnesses))
-            .route("/signing/{id}/submit", web::post().to(submit_to_chain))
             // Config
             .route("/config", web::get().to(get_config))
             // Scheduler
             .route("/scheduler/status", web::get().to(scheduler_status))
-            // Signer
-            .route("/signer-info", web::get().to(signer_info))
             // Server info
             .route("/server-info", web::get().to(server_info)),
     );
@@ -137,12 +243,20 @@ pub async fn create_hd_wallet(
         &body.password,
         body.address_count.unwrap_or(5),
     )?;
-    Ok(HttpResponse::Created().json(result))
+    let token = start_wallet_session(&state, &body.password)?;
+    Ok(HttpResponse::Created()
+        .cookie(session_cookie(&token))
+        .json(result))
 }
 
 #[derive(Deserialize)]
 pub struct UnlockWalletBody {
     pub password: String,
+}
+
+#[derive(Deserialize)]
+pub struct RefreshWalletBody {
+    pub password: Option<String>,
 }
 
 pub async fn unlock_keystore(
@@ -154,70 +268,96 @@ pub async fn unlock_keystore(
         std::path::Path::new(&state.keystore_path),
         &body.password,
     )?;
-    Ok(HttpResponse::Ok().json(result))
+    let token = start_wallet_session(&state, &body.password)?;
+    Ok(HttpResponse::Ok()
+        .cookie(session_cookie(&token))
+        .json(result))
+}
+
+pub async fn wallet_session(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> Result<HttpResponse, AppError> {
+    let status = session_status(&state, &req);
+    if status.active {
+        ensure_signer_from_session(&state, &req)?;
+    }
+    Ok(HttpResponse::Ok().json(status))
+}
+
+pub async fn lock_wallet(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    end_wallet_session(&state);
+    Ok(HttpResponse::Ok()
+        .cookie(clear_session_cookie())
+        .json(serde_json::json!({ "locked": true })))
 }
 
 #[derive(Deserialize)]
 pub struct DeriveMoreBody {
-    pub password: String,
+    pub password: Option<String>,
     pub count: Option<u32>,
 }
 
 pub async fn derive_more_addresses(
     state: web::Data<AppState>,
+    req: HttpRequest,
     body: web::Json<DeriveMoreBody>,
 ) -> Result<HttpResponse, AppError> {
+    let password = resolve_password(&state, &req, body.password.as_deref())?;
     let records = GatewayService::derive_more_addresses(
         &state.db,
         std::path::Path::new(&state.keystore_path),
-        &body.password,
+        &password,
         body.count.unwrap_or(5),
     )?;
+    unlock_signer(&state, &password)?;
+    if session_token(&req).is_none() {
+        let token = start_wallet_session(&state, &password)?;
+        return Ok(HttpResponse::Ok()
+            .cookie(session_cookie(&token))
+            .json(records));
+    }
     Ok(HttpResponse::Ok().json(records))
 }
 
-pub async fn hd_status(
-    state: web::Data<AppState>,
-) -> Result<HttpResponse, AppError> {
+pub async fn hd_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let status = GatewayService::get_hd_status(std::path::Path::new(&state.keystore_path));
     Ok(HttpResponse::Ok().json(status))
 }
 
-pub async fn hd_balance(
-    state: web::Data<AppState>,
-) -> Result<HttpResponse, AppError> {
-    let balance = GatewayService::get_hd_balance(
-        &state.db,
-        state.chain_provider.as_ref(),
-    )
-    .await?;
+pub async fn hd_balance(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let balance = GatewayService::get_hd_balance(&state.db, state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "total_balance_shannons": balance,
     })))
 }
 
-pub async fn hd_address_balances(
-    state: web::Data<AppState>,
-) -> Result<HttpResponse, AppError> {
-    let balances = GatewayService::get_hd_address_balances(
-        &state.db,
-        state.chain_provider.as_ref(),
-    )
-    .await?;
+pub async fn hd_address_balances(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let balances =
+        GatewayService::get_hd_address_balances(&state.db, state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(balances))
 }
 
 pub async fn refresh_hd_wallet(
     state: web::Data<AppState>,
-    body: web::Json<UnlockWalletBody>,
+    req: HttpRequest,
+    body: web::Json<RefreshWalletBody>,
 ) -> Result<HttpResponse, AppError> {
+    let password = resolve_password(&state, &req, body.password.as_deref())?;
     let result = GatewayService::refresh_hd_wallet(
         &state.db,
         std::path::Path::new(&state.keystore_path),
-        &body.password,
+        &password,
         state.chain_provider.as_ref(),
     )
     .await?;
+    unlock_signer(&state, &password)?;
+    if session_token(&req).is_none() {
+        let token = start_wallet_session(&state, &password)?;
+        return Ok(HttpResponse::Ok()
+            .cookie(session_cookie(&token))
+            .json(result));
+    }
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -241,17 +381,48 @@ pub async fn import_mnemonic(
         &body.password,
         body.address_count.unwrap_or(5),
     )?;
-    Ok(HttpResponse::Created().json(result))
+    let token = start_wallet_session(&state, &body.password)?;
+    Ok(HttpResponse::Created()
+        .cookie(session_cookie(&token))
+        .json(result))
 }
 
-pub async fn delete_hd_wallet(
-    state: web::Data<AppState>,
-) -> Result<HttpResponse, AppError> {
-    GatewayService::delete_hd_wallet(
-        &state.db,
-        std::path::Path::new(&state.keystore_path),
-    )?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
+pub async fn delete_hd_wallet(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    GatewayService::delete_hd_wallet(&state.db, std::path::Path::new(&state.keystore_path))?;
+    end_wallet_session(&state);
+    Ok(HttpResponse::Ok()
+        .cookie(clear_session_cookie())
+        .json(serde_json::json!({"deleted": true})))
+}
+
+/// Lighter wallet info for the address selector in the match dialog.
+/// Omits `encrypted_key` and other internal fields.
+#[derive(serde::Serialize)]
+pub struct SignerWalletItem {
+    pub id: i64,
+    pub label: String,
+    pub ckb_address: String,
+    pub derivation_index: Option<i32>,
+    pub derivation_path: Option<String>,
+}
+
+/// Return the currently loaded (unlocked) HD wallet addresses for the
+/// match-order address selector. Returns an empty array when the signer
+/// is locked or no HD wallet is configured.
+pub async fn signer_wallets(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let wallets: Vec<SignerWalletItem> = state
+        .signer
+        .wallet_records()
+        .into_iter()
+        .map(|wr| SignerWalletItem {
+            id: wr.id,
+            label: wr.label,
+            ckb_address: wr.ckb_address,
+            derivation_index: wr.derivation_index,
+            derivation_path: wr.derivation_path,
+        })
+        .collect();
+    Ok(HttpResponse::Ok().json(wallets))
 }
 
 // ═══════════════════════════════════════════════════════
@@ -272,8 +443,15 @@ pub struct OrderScanItem {
 
 pub async fn scan_orders(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let orders = state.chain_provider.scan_orders().await?;
+    let own_pubkey = &state.own_fiber_pubkey;
     let items: Vec<OrderScanItem> = orders
         .into_iter()
+        .filter(|o| {
+            // Filter out orders belonging to our own Fiber node.
+            own_pubkey.as_ref().is_none_or(|pk| {
+                hex::encode(o.order_args.fiber_pubkey.to_bytes()) != *pk
+            })
+        })
         .map(|o| OrderScanItem {
             tx_hash: hex::encode(o.order_outpoint.tx_hash),
             output_index: o.order_outpoint.index,
@@ -290,10 +468,8 @@ pub async fn scan_orders(state: web::Data<AppState>) -> Result<HttpResponse, App
 
 #[derive(Deserialize)]
 pub struct MatchOrderBody {
-    order_output_index: u32,
-    seller_address: String,
-    channel_outpoint_tx_hash: String,
-    channel_outpoint_index: u32,
+    pub order_output_index: u32,
+    pub seller_address: String,
 }
 
 pub async fn match_order(
@@ -308,8 +484,6 @@ pub async fn match_order(
         &tx_hash,
         body.order_output_index,
         &body.seller_address,
-        &body.channel_outpoint_tx_hash,
-        body.channel_outpoint_index,
     )
     .await?;
     Ok(HttpResponse::Ok().json(result))
@@ -360,6 +534,56 @@ pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, A
     Ok(HttpResponse::Ok().json(channels))
 }
 
+#[derive(Deserialize)]
+pub struct CloseChannelBody {
+    pub force: Option<bool>,
+}
+
+pub async fn close_channel(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+    body: web::Json<CloseChannelBody>,
+) -> Result<HttpResponse, AppError> {
+    let channel_id = path.into_inner();
+    GatewayService::close_channel(
+        state.chain_provider.as_ref(),
+        &channel_id,
+        body.force.unwrap_or(false),
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({"closed": true})))
+}
+
+// ═══════════════════════════════════════════════════════
+// Peer connection
+// ═══════════════════════════════════════════════════════
+
+pub async fn check_peer_connection(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let pubkey = path.into_inner();
+    let peers = state.chain_provider.list_peers().await?;
+    let connected = peers.iter().any(|p| p.pubkey == pubkey);
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "connected": connected,
+        "pubkey": pubkey,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct ConnectPeerBody {
+    pub pubkey: String,
+}
+
+pub async fn connect_to_peer(
+    state: web::Data<AppState>,
+    body: web::Json<ConnectPeerBody>,
+) -> Result<HttpResponse, AppError> {
+    state.chain_provider.connect_peer(&body.pubkey).await?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({"connected": true})))
+}
+
 // ═══════════════════════════════════════════════════════
 // Fiber node info
 // ═══════════════════════════════════════════════════════
@@ -370,48 +594,6 @@ pub async fn fiber_node_info(state: web::Data<AppState>) -> Result<HttpResponse,
         "rpc_url": state.config.fiber_rpc_url,
         "node_info": node_info,
     })))
-}
-
-// ═══════════════════════════════════════════════════════
-// Signing
-// ═══════════════════════════════════════════════════════
-
-pub async fn list_unsigned(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let txs = GatewayService::list_unsigned_txs(&state.db)?;
-    Ok(HttpResponse::Ok().json(txs))
-}
-
-pub async fn get_unsigned(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-) -> Result<HttpResponse, AppError> {
-    let id = path.into_inner();
-    let tx = GatewayService::get_unsigned_tx(&state.db, &id)?;
-    Ok(HttpResponse::Ok().json(tx))
-}
-
-#[derive(Deserialize)]
-pub struct WitnessBody {
-    witnesses: serde_json::Value,
-}
-
-pub async fn submit_witnesses(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-    body: web::Json<WitnessBody>,
-) -> Result<HttpResponse, AppError> {
-    let id = path.into_inner();
-    GatewayService::submit_witnesses(&state.db, &id, body.witnesses.clone())?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({"id": id, "status": "signed"})))
-}
-
-pub async fn submit_to_chain(
-    state: web::Data<AppState>,
-    path: web::Path<String>,
-) -> Result<HttpResponse, AppError> {
-    let id = path.into_inner();
-    GatewayService::submit_to_chain(&state.db, &id)?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({"id": id, "status": "broadcast"})))
 }
 
 // ═══════════════════════════════════════════════════════
@@ -464,13 +646,4 @@ pub async fn scheduler_status(state: web::Data<AppState>) -> Result<HttpResponse
     };
     let status = GatewayService::get_scheduler_status(&s);
     Ok(HttpResponse::Ok().json(status))
-}
-
-// ═══════════════════════════════════════════════════════
-// Signer
-// ═══════════════════════════════════════════════════════
-
-pub async fn signer_info(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let info = GatewayService::get_signer_info(state.signer.as_ref());
-    Ok(HttpResponse::Ok().json(info))
 }

@@ -50,7 +50,7 @@ const navGroupDefs: NavGroup[] = [
   {
     titleKey: 'nav.sysSettings',
     items: [
-      { hash: 'settings', labelKey: 'nav.autoMatchSigning', icon: '⚙️' },
+      { hash: 'settings', labelKey: 'nav.settings', icon: '⚙️' },
     ],
   },
 ]

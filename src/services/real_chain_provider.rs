@@ -16,8 +16,10 @@ use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
 use crate::fiber::rpc_client::FiberRpcExt;
-use crate::services::chain_provider::{CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo};
-use fiber_json_types::channel::ListChannelsResult;
+use crate::services::chain_provider::{
+    CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo, PeerInfo,
+};
+use fiber_json_types::channel::{ListChannelsResult, OpenChannelResult};
 use opticrum_protocol::OutPoint as ProtocolOutPoint;
 
 /// Production chain provider backed by a real CKB RPC node and indexer.
@@ -35,7 +37,8 @@ impl RealChainProvider {
     /// `fiber_rpc_url` — Fiber network node RPC endpoint.
     ///
     /// The CKB network ("testnet" or "mainnet") is auto-detected from the
-    /// RPC URL using common naming conventions.
+    /// RPC URL. The resolved `Network` is passed to `opticrum_calculator`
+    /// reader functions so they never encounter `Network::Custom(url)`.
     pub fn new(ckb_rpc_url: &str, ckb_indexer_url: &str, fiber_rpc_url: &str) -> Self {
         let rpc = RpcClient::new(ckb_rpc_url, Some(ckb_indexer_url));
         let network = Self::detect_network(ckb_rpc_url);
@@ -47,8 +50,6 @@ impl RealChainProvider {
                     fiber_rpc_url,
                     e
                 );
-                // Fallback: create with localhost default so the server still starts.
-                // RPC calls will fail at request time with a clear error.
                 crate::fiber::rpc_client::RpcClient::new("http://localhost:8227", false, None)
                     .expect("localhost fallback RPC client")
             });
@@ -108,6 +109,15 @@ impl RealChainProvider {
     /// The configured CKB network ("testnet" or "mainnet").
     pub fn network(&self) -> &str {
         &self.network
+    }
+
+    /// Update the RPC client's network from on-chain `get_blockchain_info`.
+    /// Resolves `Network::Custom(url)` to `Mainnet` or `Testnet`.
+    pub async fn update_network(&mut self) -> Result<(), AppError> {
+        self.rpc
+            .update_network()
+            .await
+            .map_err(|e| AppError::ChainError(format!("update_network: {}", e)))
     }
 
     fn map_err(e: impl std::fmt::Display) -> AppError {
@@ -201,14 +211,13 @@ impl ChainProvider for RealChainProvider {
         lock_arg: &[u8; 20],
     ) -> Result<Vec<CellOutput>, AppError> {
         use crate::services::address::{script_lock_hash, secp256k1_blake160_lock_script};
-        use ckb_cinnabar_calculator::indexer::{SearchKey, ScriptType};
+        use ckb_cinnabar_calculator::indexer::{ScriptType, SearchKey};
         use ckb_cinnabar_calculator::re_exports::ckb_jsonrpc_types::JsonBytes;
         use ckb_cinnabar_calculator::rpc::RPC;
 
         let script: ckb_cinnabar_calculator::re_exports::ckb_jsonrpc_types::Script =
-            serde_json::from_value(secp256k1_blake160_lock_script(lock_arg)).map_err(|e| {
-                AppError::ChainError(format!("Build lock script for indexer: {e}"))
-            })?;
+            serde_json::from_value(secp256k1_blake160_lock_script(lock_arg))
+                .map_err(|e| AppError::ChainError(format!("Build lock script for indexer: {e}")))?;
 
         let search_key = SearchKey {
             script,
@@ -261,10 +270,7 @@ impl ChainProvider for RealChainProvider {
         Ok(cells)
     }
 
-    async fn get_cells_by_lock(
-        &self,
-        lock_hash: &[u8; 32],
-    ) -> Result<Vec<CellOutput>, AppError> {
+    async fn get_cells_by_lock(&self, lock_hash: &[u8; 32]) -> Result<Vec<CellOutput>, AppError> {
         // Without lock args we cannot query the indexer efficiently; callers should
         // prefer get_cells_by_lock_arg / get_balance_by_address.
         tracing::debug!(
@@ -374,5 +380,72 @@ impl ChainProvider for RealChainProvider {
 
         tracing::info!(count = channels.len(), "Fiber channels listed");
         Ok(channels)
+    }
+
+    async fn shutdown_channel(&self, channel_id: &str, force: bool) -> Result<(), AppError> {
+        tracing::info!(
+            channel_id = %channel_id,
+            force,
+            "Calling Fiber shutdown_channel"
+        );
+        let params = serde_json::json!({
+            "channel_id": channel_id,
+            "force": force,
+        });
+        self.fiber_rpc
+            .call("shutdown_channel", vec![params])
+            .await
+            .map_err(|e| AppError::ChainError(format!("Fiber RPC shutdown_channel: {}", e)))?;
+        tracing::info!(channel_id = %channel_id, "Fiber channel shutdown initiated");
+        Ok(())
+    }
+
+    async fn open_channel(
+        &self,
+        peer_pubkey: &str,
+        funding_amount: u64,
+    ) -> Result<String, AppError> {
+        tracing::info!(
+            peer = %peer_pubkey,
+            amount = funding_amount,
+            "Calling Fiber open_channel"
+        );
+        let params = serde_json::json!({
+            "pubkey": peer_pubkey,
+            "funding_amount": funding_amount.to_string(),
+        });
+        let value = self
+            .fiber_rpc
+            .call("open_channel", vec![params])
+            .await
+            .map_err(|e| AppError::ChainError(format!("Fiber RPC open_channel: {}", e)))?;
+        let result: OpenChannelResult = serde_json::from_value(value)
+            .map_err(|e| AppError::ChainError(format!("open_channel parse: {}", e)))?;
+        let id = hex::encode(result.temporary_channel_id.as_bytes());
+        tracing::info!(temp_id = %id, "Fiber channel open initiated");
+        Ok(id)
+    }
+
+    async fn list_peers(&self) -> Result<Vec<PeerInfo>, AppError> {
+        let result: fiber_json_types::peer::ListPeersResult =
+            self.fiber_rpc.call_fiber_no_params("list_peers").await?;
+        Ok(result
+            .peers
+            .into_iter()
+            .map(|p| PeerInfo {
+                pubkey: p.pubkey.to_string(),
+                address: p.address,
+            })
+            .collect())
+    }
+
+    async fn connect_peer(&self, pubkey: &str) -> Result<(), AppError> {
+        tracing::info!(peer = %pubkey, "Calling Fiber connect_peer");
+        let params = serde_json::json!({ "pubkey": pubkey });
+        self.fiber_rpc
+            .call("connect_peer", vec![params])
+            .await
+            .map_err(|e| AppError::ChainError(format!("Fiber RPC connect_peer: {}", e)))?;
+        Ok(())
     }
 }

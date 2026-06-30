@@ -118,7 +118,10 @@ mod tests {
         let test_key = test_secret_key_bytes();
         let encrypted = crypto::encrypt(&test_key, "test-pw").unwrap();
         let lock_hash = [0x42u8; 32];
-        wallets::insert_wallet(&mut conn, "test", &encrypted, &lock_hash, "addr", None, None, None, "imported").unwrap();
+        wallets::insert_wallet(
+            &mut conn, "test", &encrypted, &lock_hash, "addr", None, None, None, "imported",
+        )
+        .unwrap();
         let wallet = wallets::get_wallet_by_id(&mut conn, 1).unwrap();
 
         let signer = InternalSigner::new(wallet, "test-pw").expect("should create signer");

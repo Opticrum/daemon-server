@@ -15,8 +15,9 @@ use crate::config::Config;
 use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::SharedSchedulerState;
-use crate::services::signer::Signer;
+use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::transaction_assembler::TransactionAssembler;
+use crate::services::wallet_session::WalletSessionManager;
 
 mod admin;
 pub mod console;
@@ -24,7 +25,6 @@ mod fiber;
 mod health;
 mod matches;
 mod orders;
-mod transactions;
 mod wallet;
 
 /// Application state shared across all handlers.
@@ -35,14 +35,19 @@ pub struct AppState {
     pub config: Config,
     /// Chain provider for CKB RPC and indexer access.
     pub chain_provider: Arc<dyn ChainProvider>,
-    /// Signing provider (internal or external).
-    pub signer: Arc<dyn Signer>,
+    /// HD wallet signing provider (unlock via admin panel).
+    pub signer: Arc<HdWalletSigner>,
+    /// In-memory unlock session (1-hour HttpOnly cookie).
+    pub wallet_session: Arc<WalletSessionManager>,
     /// Real transaction assembler (None for MockChainProvider test mode).
     pub tx_assembler: Option<TransactionAssembler>,
     /// Shared scheduler state for console observability.
     pub scheduler_state: SharedSchedulerState,
     /// HD wallet keystore file path.
     pub keystore_path: String,
+    /// Own Fiber node pubkey (cached at startup) — used to filter out
+    /// self-owned orders from chain scan results.
+    pub own_fiber_pubkey: Option<String>,
 }
 
 /// Mount all API routes on the given `ServiceConfig`.
@@ -60,22 +65,6 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/matches/{id}/extract", web::post().to(matches::extract))
             .route("/matches/{id}/destroy", web::post().to(matches::destroy))
             .route("/fiber/channels", web::get().to(fiber::list_channels))
-            .route(
-                "/transactions/unsigned",
-                web::get().to(transactions::list_unsigned),
-            )
-            .route(
-                "/transactions/unsigned/{id}",
-                web::get().to(transactions::get_unsigned),
-            )
-            .route(
-                "/transactions/unsigned/{id}/witnesses",
-                web::post().to(transactions::submit_witnesses),
-            )
-            .route(
-                "/transactions/unsigned/{id}/submit",
-                web::post().to(transactions::submit_to_chain),
-            )
             .route("/admin/stats", web::get().to(admin::stats))
             .route(
                 "/admin/auto-match/config",
@@ -99,6 +88,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 web::post().to(console::unlock_keystore),
             )
             .route(
+                "/console/wallets/session",
+                web::get().to(console::wallet_session),
+            )
+            .route(
+                "/console/wallets/lock",
+                web::post().to(console::lock_wallet),
+            )
+            .route(
                 "/console/wallets/derive-more",
                 web::post().to(console::derive_more_addresses),
             )
@@ -106,8 +103,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 "/console/wallets/import-mnemonic",
                 web::post().to(console::import_mnemonic),
             )
-            .route("/console/wallets/hd-status", web::get().to(console::hd_status))
-            .route("/console/wallets/balance", web::get().to(console::hd_balance))
+            .route(
+                "/console/wallets/hd-status",
+                web::get().to(console::hd_status),
+            )
+            .route(
+                "/console/wallets/balance",
+                web::get().to(console::hd_balance),
+            )
             .route(
                 "/console/wallets/balances",
                 web::get().to(console::hd_address_balances),
@@ -119,6 +122,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/console/wallets/delete-hd",
                 web::delete().to(console::delete_hd_wallet),
+            )
+            .route(
+                "/console/signer/wallets",
+                web::get().to(console::signer_wallets),
             )
             // Catch-all: delete individual wallet by id
             .route(
@@ -140,18 +147,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 web::post().to(console::destroy_match),
             )
             .route("/console/channels", web::get().to(console::scan_channels))
-            .route("/console/signing", web::get().to(console::list_unsigned))
             .route(
-                "/console/signing/{id}",
-                web::get().to(console::get_unsigned),
-            )
-            .route(
-                "/console/signing/{id}/witnesses",
-                web::post().to(console::submit_witnesses),
-            )
-            .route(
-                "/console/signing/{id}/submit",
-                web::post().to(console::submit_to_chain),
+                "/console/channels/{channel_id}/close",
+                web::post().to(console::close_channel),
             )
             .route("/console/config", web::get().to(console::get_config))
             .route("/console/config", web::put().to(console::update_config))
@@ -159,11 +157,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 "/console/scheduler/status",
                 web::get().to(console::scheduler_status),
             )
-            .route("/console/signer-info", web::get().to(console::signer_info))
             .route("/console/server-info", web::get().to(console::server_info))
             .route(
                 "/console/fiber-node-info",
                 web::get().to(console::fiber_node_info),
+            )
+            .route(
+                "/console/peers/check/{pubkey}",
+                web::get().to(console::check_peer_connection),
+            )
+            .route(
+                "/console/peers/connect",
+                web::post().to(console::connect_to_peer),
             ),
     );
 }

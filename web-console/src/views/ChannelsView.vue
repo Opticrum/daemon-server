@@ -12,6 +12,7 @@ import type { ChannelWithMatch } from '@/types/api'
 const api = useApi()
 const { t } = useI18n()
 const toast = inject<any>('toast')!
+const modal = inject<any>('modal')!
 
 const { rpcUrl, nodeInfo, connected, loading: nodeLoading, fetchNodeInfo } = useFiber()
 
@@ -33,6 +34,7 @@ async function loadChannels() {
   try {
     channels.value = await api.scanChannels()
   } catch (e: any) {
+    console.error('Failed to load channels:', e);
     error.value = e.message || t('channels.loadFailed')
     toast.error(error.value!)
   } finally {
@@ -51,11 +53,12 @@ const filteredChannels = computed(() => {
 })
 
 const columns: ColumnDef[] = [
-  { key: 'channel_id', label: t('channels.channelId') },
-  { key: 'counterparty_fiber_key', label: t('channels.counterpartyFiberKey') },
-  { key: 'capacity', label: t('channels.totalCapacity'), sortable: true, align: 'right' },
+  { key: 'channel_id', label: t('channels.channelId'), align: 'center' },
+  { key: 'counterparty_fiber_key', label: t('channels.counterpartyFiberKey'), align: 'center' },
+  { key: 'capacity', label: t('channels.totalCapacity'), sortable: true, align: 'center' },
   { key: 'state_name', label: t('channels.stateName'), align: 'center' },
   { key: 'match_status', label: t('channels.matchStatus'), align: 'center' },
+  { key: 'actions', label: t('common.actions'), align: 'center' },
 ]
 
 function hexToNum(hex: string): number {
@@ -76,6 +79,7 @@ async function copyToClipboard(text: string) {
     await navigator.clipboard.writeText(text)
     toast.success(t('common.copied'))
   } catch {
+    console.warn('Clipboard API unavailable, using fallback');
     // Fallback for older browsers
     const ta = document.createElement('textarea')
     ta.value = text
@@ -90,6 +94,27 @@ async function copyToClipboard(text: string) {
 
 function formatMatchRate(shannons: number): string {
   return `${shannons} sh/block`
+}
+
+async function closeChannel(channel: ChannelWithMatch) {
+  const channelId = channel.channel_id
+  const confirmed = await modal.confirm(
+    t('channels.closeChannelWarning', { id: truncateAddress(channelId, 8, 8) }),
+    {
+      title: t('channels.closeChannelTitle'),
+      confirmText: t('channels.closeChannelConfirm'),
+      danger: true,
+    },
+  )
+  if (!confirmed) return
+  try {
+    await api.closeChannel(channelId)
+    toast.success(t('channels.closeSuccess'))
+    await loadChannels()
+  } catch (e: any) {
+    console.error('Failed to close channel:', e);
+    toast.error(e.message || t('channels.closeFailed'))
+  }
 }
 </script>
 
@@ -242,10 +267,10 @@ function formatMatchRate(shannons: number): string {
       </template>
       <template #cell-counterparty_fiber_key="{ value }">
         <code
-          class="font-mono copyable"
+          class="font-mono copyable fiber-key-cell"
           :title="String(value)"
           @click="copyToClipboard(String(value))"
-        >{{ truncateAddress(String(value), 10, 8) }}</code>
+        >{{ truncateAddress(String(value), 20, 16) }}</code>
       </template>
       <template #cell-capacity="{ value }">
         {{ formatCKB(Number(value)) }}
@@ -273,6 +298,15 @@ function formatMatchRate(shannons: number): string {
           v-else
           class="match-none"
         >{{ t('channels.matchNotFound') }}</span>
+      </template>
+      <template #cell-actions="{ row }">
+        <button
+          v-if="row.state_name !== 'Closed'"
+          class="btn btn-sm btn-danger"
+          @click="closeChannel(row)"
+        >
+          {{ t('channels.closeChannel') }}
+        </button>
       </template>
     </DataTable>
   </div>
@@ -334,6 +368,42 @@ function formatMatchRate(shannons: number): string {
   color: var(--text-disabled);
   font-size: var(--fs-body);
   font-style: italic;
+}
+
+/* Channel table — centered like on-chain orders */
+.page-channels :deep(.data-table) {
+  table-layout: fixed;
+  width: 100%;
+}
+.page-channels :deep(.data-table th:nth-child(1)),
+.page-channels :deep(.data-table td:nth-child(1)) {
+  width: 14%;
+}
+.page-channels :deep(.data-table th:nth-child(2)),
+.page-channels :deep(.data-table td:nth-child(2)) {
+  width: 32%;
+  overflow: hidden;
+}
+.page-channels :deep(.data-table th:nth-child(3)),
+.page-channels :deep(.data-table td:nth-child(3)),
+.page-channels :deep(.data-table th:nth-child(4)),
+.page-channels :deep(.data-table td:nth-child(4)),
+.page-channels :deep(.data-table th:nth-child(5)),
+.page-channels :deep(.data-table td:nth-child(5)),
+.page-channels :deep(.data-table th:nth-child(6)),
+.page-channels :deep(.data-table td:nth-child(6)) {
+  width: 13%;
+}
+.page-channels :deep(.data-table th),
+.page-channels :deep(.data-table td) {
+  text-align: center;
+}
+.fiber-key-cell {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  vertical-align: middle;
 }
 
 /* Click-to-copy */

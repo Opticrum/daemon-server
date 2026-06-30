@@ -1,9 +1,7 @@
 //! Signing abstraction — pluggable transaction signing providers.
 //!
-//! Supports two modes:
-//! - **Internal**: server-stored encrypted private keys (required for auto-match)
-//! - **External**: produces unsigned transaction data for external wallets
-//!   (JoyID, UTXOGlobal, etc.) to sign
+//! The server uses the built-in HD wallet signer. Keys are loaded when the
+//! user unlocks the keystore in the admin panel.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

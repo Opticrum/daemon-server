@@ -86,11 +86,13 @@ pub fn test_app_state() -> rust_server::api::AppState {
         db: test_db(),
         config,
         chain_provider: std::sync::Arc::new(rust_server::services::MockChainProvider::new()),
-        signer: std::sync::Arc::new(rust_server::services::external_signer::ExternalSigner::new(
-            "testnet",
-        )),
+        signer: std::sync::Arc::new(rust_server::services::hd_wallet_signer::HdWalletSigner::new()),
+        wallet_session: std::sync::Arc::new(
+            rust_server::services::wallet_session::WalletSessionManager::default(),
+        ),
         tx_assembler: None,
         keystore_path: "data/keystore.json".to_string(),
         scheduler_state,
+        own_fiber_pubkey: None,
     }
 }

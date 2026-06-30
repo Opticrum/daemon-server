@@ -355,10 +355,13 @@ impl GatewayService {
         password: &str,
         address_count: u32,
     ) -> Result<serde_json::Value, AppError> {
-        let (keystore, mnemonic, children) =
-            crate::services::wallet_service::create_hd_wallet(
-                pool, keystore_path, label, password, address_count,
-            )?;
+        let (keystore, mnemonic, children) = crate::services::wallet_service::create_hd_wallet(
+            pool,
+            keystore_path,
+            label,
+            password,
+            address_count,
+        )?;
         Ok(serde_json::json!({
             "keystore": keystore,
             "mnemonic": mnemonic,
@@ -388,9 +391,7 @@ impl GatewayService {
         password: &str,
         count: u32,
     ) -> Result<Vec<wallet_db::WalletRecord>, AppError> {
-        crate::services::wallet_service::derive_more_addresses(
-            pool, keystore_path, password, count,
-        )
+        crate::services::wallet_service::derive_more_addresses(pool, keystore_path, password, count)
     }
 
     /// Get HD wallet status.
@@ -481,7 +482,12 @@ impl GatewayService {
         address_count: u32,
     ) -> Result<serde_json::Value, AppError> {
         let (keystore, children) = crate::services::wallet_service::import_hd_from_mnemonic(
-            pool, keystore_path, mnemonic_phrase, label, password, address_count,
+            pool,
+            keystore_path,
+            mnemonic_phrase,
+            label,
+            password,
+            address_count,
         )?;
         Ok(serde_json::json!({
             "keystore": keystore,
@@ -508,8 +514,6 @@ impl GatewayService {
         order_tx_hash: &str,
         order_output_index: u32,
         seller_address: &str,
-        channel_outpoint_tx_hash: &str,
-        channel_outpoint_index: u32,
     ) -> Result<MatchOrderResult, AppError> {
         match_service::match_order(
             provider,
@@ -517,8 +521,6 @@ impl GatewayService {
             order_tx_hash,
             order_output_index,
             seller_address,
-            channel_outpoint_tx_hash,
-            channel_outpoint_index,
         )
         .await
     }
@@ -593,6 +595,16 @@ impl GatewayService {
                 }
             })
             .collect())
+    }
+
+    /// Shut down a Fiber channel by its channel ID.
+    /// Uses cooperative close by default (`force=false`).
+    pub async fn close_channel(
+        provider: &dyn ChainProvider,
+        channel_id: &str,
+        force: bool,
+    ) -> Result<(), AppError> {
+        provider.shutdown_channel(channel_id, force).await
     }
 
     // ═══════════════════════════════════════════════════════

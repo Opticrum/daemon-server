@@ -36,6 +36,7 @@ export function useFiber() {
         connected.value = false
       }
     } catch (e: any) {
+      console.error('Failed to fetch fiber node info:', e)
       error.value = e?.message || String(e)
       connected.value = false
       nodeInfo.value = null

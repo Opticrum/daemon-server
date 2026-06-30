@@ -9,7 +9,7 @@ test.describe('Settings', () => {
     await expect(page.locator('.page-title')).toBeVisible({ timeout: 15000 })
   })
 
-  test('sub-tabs toggle between auto-match and signing', async ({ page }) => {
+  test('sub-tabs toggle between auto-match and network', async ({ page }) => {
     const tabs = page.locator('.sub-tab')
     expect(await tabs.count()).toBe(2)
 
@@ -17,8 +17,7 @@ test.describe('Settings', () => {
     await expect(page.locator('.config-card')).toBeVisible({ timeout: 10000 })
 
     await tabs.nth(1).click()
-    const signingContent = page.locator('[data-testid="empty-state"], .data-table').first()
-    await expect(signingContent).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('.config-row').first()).toBeVisible({ timeout: 10000 })
   })
 
   test('auto-match config loads and displays values', async ({ page }) => {
@@ -33,7 +32,6 @@ test.describe('Settings', () => {
     await expect(page.locator('.config-form')).toBeVisible()
 
     await page.locator('.config-form .btn-primary').click()
-    // Must be a success toast, not error
     const toast = page.locator('.toast-item.toast-success')
     await expect(toast.first()).toBeVisible({ timeout: 5000 })
   })
@@ -46,22 +44,8 @@ test.describe('Settings', () => {
     await expect(page.locator('.config-display')).toBeVisible()
   })
 
-  test('signing tab shows content', async ({ page }) => {
+  test('network tab shows server info', async ({ page }) => {
     await page.locator('.sub-tab').nth(1).click()
-    await page.waitForTimeout(2000)
-    const content = page.locator('[data-testid="empty-state"], .data-table').first()
-    await expect(content).toBeVisible({ timeout: 15000 })
-  })
-
-  test('broadcast button shows confirm modal on signed transactions', async ({ page }) => {
-    await page.locator('.sub-tab').nth(1).click()
-    await page.waitForTimeout(3000)
-    const broadcastBtn = page.locator('.data-table .btn-primary').first()
-    if (!(await broadcastBtn.isVisible().catch(() => false))) {
-      test.skip(true, 'No signed transactions available')
-      return
-    }
-    await broadcastBtn.click()
-    await expect(page.locator('[data-testid="modal-overlay"]')).toBeVisible()
+    await expect(page.locator('.config-row').first()).toBeVisible({ timeout: 15000 })
   })
 })

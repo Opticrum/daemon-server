@@ -2,19 +2,14 @@
 import { ref, onMounted, inject } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
-import { truncateAddress } from '@/utils/format'
-import DataTable, { type ColumnDef } from '@/components/ui/DataTable.vue'
 import StatusTag from '@/components/ui/StatusTag.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
-import WitnessSubmitModal from '@/components/ui/WitnessSubmitModal.vue'
-import type { AutoMatchConfig, UnsignedTx, ServerInfo } from '@/types/api'
+import type { AutoMatchConfig, ServerInfo } from '@/types/api'
 
 const api = useApi()
 const { t } = useI18n()
 const toast = inject<any>('toast')!
-const modal = inject<any>('modal')!
 
-const activeTab = ref<'auto-match' | 'signing' | 'network'>('auto-match')
+const activeTab = ref<'auto-match' | 'network'>('auto-match')
 
 // Auto-Match Config
 const config = ref<AutoMatchConfig | null>(null)
@@ -25,60 +20,13 @@ const editForm = ref<AutoMatchConfig>({ enabled: false, min_capacity_shannons: 0
 async function loadConfig() {
   configLoading.value = true
   try { config.value = await api.getAutoMatchConfig(); editForm.value = { ...config.value } }
-  catch (e: any) { toast.error(e.message || t('settings.configLoadFailed')) }
+  catch (e: any) { console.error('Failed to load auto-match config:', e); toast.error(e.message || t('settings.configLoadFailed')) }
   finally { configLoading.value = false }
 }
 function startEditing() { if (config.value) editForm.value = { ...config.value }; editing.value = true }
 async function saveConfig() {
   try { await api.updateAutoMatchConfig(editForm.value); toast.success(t('settings.configSaved')); config.value = { ...editForm.value }; editing.value = false }
-  catch (e: any) { toast.error(e.message || t('settings.configSaveFailed')) }
-}
-
-// External Signing
-const txs = ref<UnsignedTx[]>([])
-const txsLoading = ref(false)
-const txsError = ref<string | null>(null)
-const witnessJson = ref('')
-
-const txColumns: ColumnDef[] = [
-  { key: 'id', label: t('common.id') },
-  { key: 'operation', label: t('common.operation') },
-  { key: 'status', label: t('common.status'), align: 'center' },
-  { key: 'created_at', label: t('common.createdAt') },
-  { key: 'actions', label: t('common.actions'), align: 'center' },
-]
-
-async function loadUnsignedTxs() {
-  txsLoading.value = true; txsError.value = null
-  try { txs.value = await api.listUnsignedTxs() }
-  catch (e: any) { txsError.value = e.message || t('settings.loadSigningFailed') }
-  finally { txsLoading.value = false }
-}
-
-async function viewTx(tx: UnsignedTx) {
-  witnessJson.value = ''
-  try {
-    const detail = await api.getUnsignedTx(tx.id)
-    modal.show({
-      title: t('settings.submitWitness'),
-      content: WitnessSubmitModal,
-      contentProps: { txId: tx.id, txData: detail.tx_data_json ? JSON.parse(detail.tx_data_json) : detail, operation: tx.operation, modelValue: witnessJson.value, 'onUpdate:modelValue': (v: string) => { witnessJson.value = v } },
-      confirmText: t('settings.submitWitness'),
-      onConfirm: async () => {
-        if (!witnessJson.value.trim()) { toast.warning(t('settings.witnessPlaceholder')); throw new Error('empty') }
-        try { const parsed = JSON.parse(witnessJson.value); await api.submitWitnesses(tx.id, parsed); toast.success(t('settings.witnessSuccess')); modal.hide(); await loadUnsignedTxs() }
-        catch (e: any) { toast.error(e instanceof SyntaxError ? t('common.jsonInvalid') : e.message || t('settings.witnessFailed')); throw e }
-      },
-      onCancel: () => modal.hide(),
-    })
-  } catch (e: any) { toast.error(e.message || t('settings.loadTxFailed')) }
-}
-
-async function broadcastTx(tx: UnsignedTx) {
-  const ok = await modal.confirm(t('settings.broadcastConfirm', { id: truncateAddress(tx.id, 8, 4) }), { title: t('settings.broadcastTitle'), confirmText: t('common.broadcast') })
-  if (!ok) return
-  try { await api.submitTx(tx.id); toast.success(t('settings.broadcastSuccess')); await loadUnsignedTxs() }
-  catch (e: any) { toast.error(e.message || t('settings.broadcastFailed')) }
+  catch (e: any) { console.error('Failed to save auto-match config:', e); toast.error(e.message || t('settings.configSaveFailed')) }
 }
 
 // Network info
@@ -86,10 +34,10 @@ const serverInfo = ref<ServerInfo | null>(null)
 
 async function loadServerInfo() {
   try { serverInfo.value = await api.getServerInfo() }
-  catch { /* non-critical */ }
+  catch (e) { console.warn('Failed to load server info:', e) }
 }
 
-onMounted(() => { loadConfig(); loadUnsignedTxs(); loadServerInfo() })
+onMounted(() => { loadConfig(); loadServerInfo() })
 </script>
 
 <template>
@@ -104,13 +52,6 @@ onMounted(() => { loadConfig(); loadUnsignedTxs(); loadServerInfo() })
         @click="activeTab = 'auto-match'"
       >
         {{ t('settings.autoMatch') }}
-      </button>
-      <button
-        class="sub-tab"
-        :class="{ active: activeTab === 'signing' }"
-        @click="activeTab = 'signing'"
-      >
-        {{ t('settings.signing') }}
       </button>
       <button
         class="sub-tab"
@@ -213,62 +154,6 @@ onMounted(() => { loadConfig(); loadUnsignedTxs(); loadServerInfo() })
       </template>
     </div>
 
-    <div v-if="activeTab === 'signing'">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md);">
-        <h3>{{ t('settings.signing') }}</h3><button
-          class="btn btn-default btn-sm"
-          @click="loadUnsignedTxs"
-        >
-          {{ t('matches.refresh') }}
-        </button>
-      </div>
-      <EmptyState
-        v-if="txsError"
-        icon="⚠️"
-        :message="txsError"
-        :action-label="t('common.retry')"
-        @action="loadUnsignedTxs"
-      />
-      <EmptyState
-        v-else-if="!txsLoading && !txs.length"
-        icon="📝"
-        :message="t('settings.noUnsignedTxs')"
-      />
-      <DataTable
-        v-else
-        :columns="txColumns"
-        :rows="txs"
-        :loading="txsLoading"
-      >
-        <template #cell-id="{ value }">
-          <code class="font-mono">{{ truncateAddress(String(value), 8, 4) }}</code>
-        </template>
-        <template #cell-status="{ value }">
-          <StatusTag :status="String(value)" />
-        </template>
-        <template #cell-actions="{ row }">
-          <button
-            v-if="row.status === 'pending'"
-            class="btn btn-sm btn-primary"
-            @click="viewTx(row)"
-          >
-            {{ t('settings.viewSign') }}
-          </button>
-          <button
-            v-else-if="row.status === 'signed'"
-            class="btn btn-sm btn-primary"
-            @click="broadcastTx(row)"
-          >
-            {{ t('settings.broadcast') }}
-          </button>
-          <span
-            v-else
-            class="text-muted"
-          >—</span>
-        </template>
-      </DataTable>
-    </div>
-
     <div
       v-if="activeTab === 'network'"
       class="card config-card"
@@ -335,6 +220,7 @@ onMounted(() => { loadConfig(); loadUnsignedTxs(); loadServerInfo() })
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); } .card-header h3 { font-size: var(--fs-h3); font-weight: var(--fw-h3); }
 .config-display { display: flex; flex-direction: column; gap: var(--space-md); }
 .config-row { display: flex; justify-content: space-between; align-items: center; padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-light); font-size: var(--fs-body); }
+.config-row:last-child { border-bottom: none; }
 .config-label { color: var(--text-secondary); }
 .config-form { display: flex; flex-direction: column; gap: var(--space-md); }
 .form-group { display: flex; flex-direction: column; gap: var(--space-xs); }

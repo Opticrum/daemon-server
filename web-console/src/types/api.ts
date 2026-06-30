@@ -90,6 +90,16 @@ export interface UnlockWalletRequest {
   password: string
 }
 
+export interface WalletSessionStatus {
+  active: boolean
+  expires_at: string | null
+  remaining_secs: number
+}
+
+export interface RefreshHdWalletRequest {
+  password?: string
+}
+
 export interface UnlockWalletResponse {
   keystore: any
   children: WalletResponse[]
@@ -108,6 +118,15 @@ export interface WalletBalanceResponse {
 export interface AddressBalanceItem {
   wallet: WalletResponse
   balance_shannons: number
+}
+
+/** Lighter wallet info for the match-order address selector (no encrypted_key). */
+export interface SignerWalletItem {
+  id: number
+  label: string
+  ckb_address: string
+  derivation_index: number | null
+  derivation_path: string | null
 }
 
 export interface RefreshHdWalletResponse {
@@ -132,11 +151,14 @@ export interface OrderScanItem {
   ckb_capacity: number
 }
 
+export interface PeerConnectionStatus {
+  connected: boolean
+  pubkey: string
+}
+
 export interface MatchOrderRequest {
   order_output_index: number
   seller_address: string
-  channel_outpoint_tx_hash: string
-  channel_outpoint_index: number
 }
 
 export interface MatchOrderResult {

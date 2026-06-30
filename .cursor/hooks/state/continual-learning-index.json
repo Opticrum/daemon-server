@@ -1,13 +1,31 @@
 {
   "transcripts": {
+    "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/0caf9d89-4e2d-47ad-b438-a766b7a80ce3/0caf9d89-4e2d-47ad-b438-a766b7a80ce3.jsonl": {
+      "mtime": 1782788595
+    },
+    "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/0caf9d89-4e2d-47ad-b438-a766b7a80ce3/subagents/15c5a792-9924-4e34-913b-a857df94cb95.jsonl": {
+      "mtime": 1782788622
+    },
+    "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/0caf9d89-4e2d-47ad-b438-a766b7a80ce3/subagents/ea81469b-ed58-4575-bc2f-d916b8977285.jsonl": {
+      "mtime": 1782737738
+    },
     "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/24a034d4-9bbb-4d3b-82dc-92915d3ef4de/24a034d4-9bbb-4d3b-82dc-92915d3ef4de.jsonl": {
-      "mtime": 1782649061
+      "mtime": 1782649900
+    },
+    "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/24a034d4-9bbb-4d3b-82dc-92915d3ef4de/subagents/a4eb30ed-e8ca-47f3-8937-d92d91957df2.jsonl": {
+      "mtime": 1782649291
+    },
+    "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/42541186-3930-469f-aef5-70deeaa28d3a/42541186-3930-469f-aef5-70deeaa28d3a.jsonl": {
+      "mtime": 1782650029
     },
     "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/4ca6a2d4-ce4f-4178-b0bf-d9895bb8f781/4ca6a2d4-ce4f-4178-b0bf-d9895bb8f781.jsonl": {
       "mtime": 1782568382
     },
     "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/7150fb2d-410d-4d16-bcf8-1fd1c9318921/7150fb2d-410d-4d16-bcf8-1fd1c9318921.jsonl": {
       "mtime": 1782562793
+    },
+    "/Users/vimchain/.cursor/projects/Users-vimchain-Freelancer-fiber-rust-server/agent-transcripts/d5c70b8e-d64d-4d40-9e42-0c4362f02dcf/d5c70b8e-d64d-4d40-9e42-0c4362f02dcf.jsonl": {
+      "mtime": 1782736392
     }
   }
 }

@@ -19,10 +19,6 @@ pub struct MatchOrderRequest {
     pub order_output_index: u32,
     /// Seller's CKB address
     pub seller_address: String,
-    /// Channel outpoint tx_hash (the pre-created Fiber channel to use)
-    pub channel_outpoint_tx_hash: String,
-    /// Channel outpoint index
-    pub channel_outpoint_index: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -45,8 +41,14 @@ struct OrderScanItem {
 /// GET /api/orders/scan — scan the chain for live orders (seller-side).
 pub async fn scan_chain(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let orders = state.chain_provider.scan_orders().await?;
+    let own_pubkey = &state.own_fiber_pubkey;
     let items: Vec<OrderScanItem> = orders
         .into_iter()
+        .filter(|o| {
+            own_pubkey.as_ref().is_none_or(|pk| {
+                hex::encode(o.order_args.fiber_pubkey.to_bytes()) != *pk
+            })
+        })
         .map(|o| OrderScanItem {
             tx_hash: hex::encode(o.order_outpoint.tx_hash),
             output_index: o.order_outpoint.index,
@@ -80,8 +82,6 @@ pub async fn do_match(
         &order_tx_hash,
         body.order_output_index,
         &body.seller_address,
-        &body.channel_outpoint_tx_hash,
-        body.channel_outpoint_index,
     )
     .await?;
 

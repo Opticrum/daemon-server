@@ -28,14 +28,13 @@ const hdAddressCount = ref(5)
 const hdMnemonic = ref('')
 const importMnemonicPhrase = ref('')
 const unlocked = ref(false)
-const sessionPassword = ref('')
 
 const hdChildren = computed(() => wallets.value.filter(w => w.wallet_type === 'hd_child'))
 
 async function loadAll() {
   loading.value = true; error.value = null
   try { wallets.value = await api.listWallets(); hdStatus.value = await api.getHdStatus() }
-  catch (e: any) { error.value = e.message || t('wallets.loadFailed') }
+  catch (e: any) { console.error('Failed to load wallets:', e); error.value = e.message || t('wallets.loadFailed') }
   finally { loading.value = false }
 }
 
@@ -46,6 +45,7 @@ async function loadBalances() {
     totalBalance.value = bal.total_balance_shannons
     addressBalances.value = items
   } catch (e: any) {
+    console.error('Failed to load wallet balances:', e);
     toast.error(e.message || t('wallets.loadFailed'))
   } finally {
     balanceLoading.value = false
@@ -57,13 +57,12 @@ function applyRefreshResult(result: { total_balance_shannons: number; address_ba
   addressBalances.value = result.address_balances
 }
 
-async function doRefreshHd(password: string) {
+async function doRefreshHd(password?: string) {
   loading.value = true
   balanceLoading.value = true
   error.value = null
   try {
-    const result = await api.refreshHdWallet({ password })
-    sessionPassword.value = password
+    const result = await api.refreshHdWallet(password ? { password } : {})
     unlocked.value = true
     await loadAll()
     if (hdStatus.value) {
@@ -75,6 +74,7 @@ async function doRefreshHd(password: string) {
     }
     applyRefreshResult(result)
   } catch (e: any) {
+    console.error('Failed to refresh HD wallet:', e);
     error.value = e.message || t('wallets.loadFailed')
     throw e
   } finally {
@@ -83,15 +83,27 @@ async function doRefreshHd(password: string) {
   }
 }
 
+async function tryRestoreSession() {
+  if (!hdStatus.value?.keystore_exists) return
+  try {
+    const session = await api.getWalletSession()
+    if (!session.active) return
+    unlocked.value = true
+    await doRefreshHd()
+  } catch (e) {
+    console.warn('Session restore failed:', e);
+  }
+}
+
 async function createHdWallet() {
   if (!hdPassword.value || !hdLabel.value) { toast.warning(t('wallets.fillRequired')); return }
   try {
     const result = await api.createHdWallet({ label: hdLabel.value, password: hdPassword.value, address_count: hdAddressCount.value })
     hdMnemonic.value = result.mnemonic; showMnemonic.value = true; showCreateHd.value = false
-    unlocked.value = true; sessionPassword.value = hdPassword.value; hdPassword.value = ''
+    unlocked.value = true; hdPassword.value = ''
     toast.success(t('wallets.hdCreated'))
-    await doRefreshHd(sessionPassword.value)
-  } catch (e: any) { toast.error(e.message || t('wallets.importFailed')) }
+    await doRefreshHd()
+  } catch (e: any) { console.error('Failed to create HD wallet:', e); toast.error(e.message || t('wallets.importFailed')) }
 }
 
 async function importFromMnemonic() {
@@ -107,9 +119,9 @@ async function importFromMnemonic() {
     })
     toast.success(t('wallets.importSuccess'))
     showImportMnemonic.value = false; unlocked.value = true
-    sessionPassword.value = hdPassword.value; hdPassword.value = ''; importMnemonicPhrase.value = ''
-    await doRefreshHd(sessionPassword.value)
-  } catch (e: any) { toast.error(e.message || t('wallets.importFailed')) }
+    hdPassword.value = ''; importMnemonicPhrase.value = ''
+    await doRefreshHd()
+  } catch (e: any) { console.error('Failed to import from mnemonic:', e); toast.error(e.message || t('wallets.importFailed')) }
 }
 
 function showUnlockModal() {
@@ -145,11 +157,11 @@ function showUnlockModal() {
       }
       try {
         await api.unlockWallet({ password: pw.value })
-        sessionPassword.value = pw.value
         toast.success(t('wallets.unlockSuccess'))
         unlocked.value = true
         await doRefreshHd(pw.value)
       } catch (e: any) {
+        console.error('Failed to unlock wallet:', e);
         err.value = e.message || t('wallets.unlockFailed')
       }
     },
@@ -158,12 +170,25 @@ function showUnlockModal() {
 }
 
 async function refreshWallet() {
-  if (sessionPassword.value) {
+  if (unlocked.value) {
     try {
-      await doRefreshHd(sessionPassword.value)
+      await doRefreshHd()
       toast.success(t('wallets.refreshed'))
-    } catch { /* toast shown in doRefreshHd */ }
+    } catch (e) {
+      console.error('Failed to refresh wallet (unlocked path):', e);
+    }
     return
+  }
+  try {
+    const session = await api.getWalletSession()
+    if (session.active) {
+      unlocked.value = true
+      await doRefreshHd()
+      toast.success(t('wallets.refreshed'))
+      return
+    }
+  } catch (e) {
+    console.warn('Session check failed, falling through to password modal:', e);
   }
   showRefreshModal()
 }
@@ -199,6 +224,7 @@ function showRefreshModal() {
         await doRefreshHd(pw.value)
         toast.success(t('wallets.refreshed'))
       } catch (e: any) {
+        console.error('Failed to refresh wallet:', e);
         err.value = e.message || t('wallets.loadFailed')
       }
     },
@@ -207,6 +233,10 @@ function showRefreshModal() {
 }
 
 function showDeriveModalFn() {
+  if (unlocked.value) {
+    void deriveMoreAddresses()
+    return
+  }
   const pw = ref('')
   const err = ref('')
   modal.show({
@@ -233,14 +263,17 @@ function showDeriveModalFn() {
     onConfirm: async () => {
       if (!pw.value) { err.value = t('wallets.fillRequired'); return }
       try {
-        await api.deriveMoreAddresses({ password: pw.value, count: 3 })
-        sessionPassword.value = pw.value
-        toast.success(t('wallets.importSuccess'))
-        await doRefreshHd(pw.value)
-      } catch (e: any) { err.value = e.message || t('wallets.importFailed') }
+        await deriveMoreAddresses(pw.value)
+      } catch (e: any) { console.error('Failed to derive addresses:', e); err.value = e.message || t('wallets.importFailed') }
     },
     onCancel: () => modal.hide(),
   })
+}
+
+async function deriveMoreAddresses(password?: string) {
+  await api.deriveMoreAddresses(password ? { password, count: 3 } : { count: 3 })
+  toast.success(t('wallets.importSuccess'))
+  await doRefreshHd(password)
 }
 
 async function deleteHdWallet() {
@@ -254,11 +287,10 @@ async function deleteHdWallet() {
     await api.deleteHdWallet()
     toast.success(t('wallets.deleteSuccess'))
     unlocked.value = false
-    sessionPassword.value = ''
     totalBalance.value = null
     addressBalances.value = []
     await loadAll()
-  } catch (e: any) { toast.error(e.message || t('wallets.deleteFailed')) }
+  } catch (e: any) { console.error('Failed to delete HD wallet:', e); toast.error(e.message || t('wallets.deleteFailed')) }
 }
 
 function balanceFor(id: number): number | null {
@@ -271,6 +303,7 @@ async function copyToClipboard(text: string) {
     await navigator.clipboard.writeText(text)
     toast.success(t('common.copied'))
   } catch {
+    console.warn('Clipboard API unavailable, using fallback');
     const ta = document.createElement('textarea')
     ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
     document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta)
@@ -278,7 +311,11 @@ async function copyToClipboard(text: string) {
   }
 }
 
-onMounted(async () => { await loadAll(); if (hdStatus.value?.keystore_exists) await loadBalances() })
+onMounted(async () => {
+  await loadAll()
+  await tryRestoreSession()
+  if (hdStatus.value?.keystore_exists && !unlocked.value) await loadBalances()
+})
 </script>
 
 <template>
@@ -361,46 +398,6 @@ onMounted(async () => { await loadAll(); if (hdStatus.value?.keystore_exists) aw
       <!-- Create HD Wallet form -->
       <div
         v-if="showCreateHd"
-        class="form-inline"
-      >
-        <div class="field">
-          <label class="caption">{{ t('wallets.label') }}</label>
-          <input
-            v-model="hdLabel"
-            class="input"
-            :placeholder="t('wallets.labelPlaceholder')"
-          >
-        </div>
-        <div class="field">
-          <label class="caption">{{ t('wallets.password') }}</label>
-          <input
-            v-model="hdPassword"
-            type="password"
-            class="input"
-            :placeholder="t('wallets.passwordPlaceholder')"
-          >
-        </div>
-        <div class="field field-sm">
-          <label class="caption">{{ t('wallets.addressCount') }}</label>
-          <input
-            v-model.number="hdAddressCount"
-            type="number"
-            min="1"
-            max="50"
-            class="input input-sm"
-          >
-        </div>
-        <button
-          class="btn btn-primary btn-sm"
-          @click="createHdWallet"
-        >
-          {{ t('wallets.createHD') }}
-        </button>
-      </div>
-
-      <!-- Import Mnemonic form -->
-      <div
-        v-if="showImportMnemonic"
         class="form-import"
       >
         <div class="field">
@@ -420,27 +417,71 @@ onMounted(async () => { await loadAll(); if (hdStatus.value?.keystore_exists) aw
             :placeholder="t('wallets.passwordPlaceholder')"
           >
         </div>
-        <div class="field">
-          <label class="caption">{{ t('wallets.mnemonicTitle') }}</label>
-          <textarea
-            v-model="importMnemonicPhrase"
-            class="input textarea"
-            :placeholder="t('wallets.mnemonicPlaceholder')"
-            rows="3"
-          />
-        </div>
-        <div class="field field-sm">
+        <div class="field field-count">
           <label class="caption">{{ t('wallets.addressCount') }}</label>
           <input
             v-model.number="hdAddressCount"
             type="number"
             min="1"
             max="50"
-            class="input input-sm"
+            class="input"
           >
         </div>
         <button
           class="btn btn-primary btn-sm"
+          @click="createHdWallet"
+        >
+          {{ t('wallets.createHD') }}
+        </button>
+      </div>
+
+      <!-- Import Mnemonic form -->
+      <div
+        v-if="showImportMnemonic"
+        class="form-import form-import-grid"
+      >
+        <div class="form-import-col">
+          <div class="field">
+            <label class="caption">{{ t('wallets.label') }}</label>
+            <input
+              v-model="hdLabel"
+              class="input"
+              :placeholder="t('wallets.labelPlaceholder')"
+            >
+          </div>
+          <div class="field">
+            <label class="caption">{{ t('wallets.password') }}</label>
+            <input
+              v-model="hdPassword"
+              type="password"
+              class="input"
+              :placeholder="t('wallets.passwordPlaceholder')"
+            >
+          </div>
+          <div class="field field-count">
+            <label class="caption">{{ t('wallets.addressCount') }}</label>
+            <input
+              v-model.number="hdAddressCount"
+              type="number"
+              min="1"
+              max="50"
+              class="input"
+            >
+          </div>
+        </div>
+        <div class="form-import-col">
+          <div class="field">
+            <label class="caption">{{ t('wallets.mnemonicTitle') }}</label>
+            <textarea
+              v-model="importMnemonicPhrase"
+              class="input textarea"
+              :placeholder="t('wallets.mnemonicPlaceholder')"
+              rows="3"
+            />
+          </div>
+        </div>
+        <button
+          class="btn btn-primary btn-sm form-import-submit"
           @click="importFromMnemonic"
         >
           {{ t('wallets.importMnemonic') }}
@@ -547,12 +588,53 @@ onMounted(async () => { await loadAll(); if (hdStatus.value?.keystore_exists) aw
 .summary-value { font-size: var(--fs-h3); font-weight: var(--fw-h3); color: var(--text-primary); }
 .summary-value.locked { color: var(--text-disabled); font-size: var(--fs-body); font-weight: 500; }
 
-.form-inline { display: flex; gap: var(--space-sm); margin-bottom: var(--space-lg); align-items: flex-end; flex-wrap: wrap; }
-.form-import { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-lg); }
-.form-import .textarea { resize: vertical; padding: var(--space-sm); height: auto; }
+.form-import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0 auto var(--space-lg);
+  align-items: center;
+  width: 100%;
+  max-width: 480px;
+}
+.form-import-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-md) var(--space-xl);
+  align-items: start;
+  max-width: 960px;
+}
+.form-import-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.form-import-submit {
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+.form-import .textarea { resize: none; padding: var(--space-sm); height: auto; min-height: 88px; }
+.form-import .field { width: 100%; max-width: none; }
+.form-import:not(.form-import-grid) .field { width: 100%; }
+
+@media (max-width: 768px) {
+  .form-import-grid {
+    grid-template-columns: 1fr;
+  }
+}
 
 .field { display: flex; flex-direction: column; gap: 4px; }
-.field-sm { max-width: 80px; }
+.field-count {
+  flex-shrink: 0;
+}
+.field-count .caption {
+  white-space: nowrap;
+}
+.field-count .input {
+  width: 100%;
+  max-width: 120px;
+}
 .caption { font-size: var(--fs-small); color: var(--text-secondary); font-weight: 500; }
 
 .address-list { display: flex; flex-direction: column; }
@@ -586,7 +668,6 @@ onMounted(async () => { await loadAll(); if (hdStatus.value?.keystore_exists) aw
 
 .input { height: 36px; padding: 0 var(--space-sm); border: 1px solid var(--border-dark); border-radius: var(--radius-md); font-size: var(--fs-body); color: var(--text-primary); background: var(--bg-card); outline: none; }
 .input:focus { border-color: var(--primary-500); box-shadow: 0 0 0 2px rgba(24,144,255,0.2); }
-.input-sm { width: 70px; }
 
 .text-muted { color: var(--text-disabled); font-size: var(--fs-body); }
 </style>

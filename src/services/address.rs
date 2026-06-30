@@ -11,9 +11,8 @@ use secp256k1::PublicKey;
 
 /// CKB secp256k1_blake160 sighash_all type script hash (mainnet & testnet).
 pub const SIGHASH_TYPE_HASH: [u8; 32] = [
-    0x9b, 0xd7, 0xe0, 0x6f, 0x3e, 0xcf, 0x4b, 0xe0, 0xf2, 0xfc, 0xd2, 0x18, 0x8b, 0x23, 0xf1,
-    0xb9, 0xfc, 0xc8, 0x8e, 0x5d, 0x4b, 0x65, 0xa8, 0x63, 0x7b, 0x17, 0x72, 0x3b, 0xbd, 0xa3,
-    0xcc, 0xe8,
+    0x9b, 0xd7, 0xe0, 0x6f, 0x3e, 0xcf, 0x4b, 0xe0, 0xf2, 0xfc, 0xd2, 0x18, 0x8b, 0x23, 0xf1, 0xb9,
+    0xfc, 0xc8, 0x8e, 0x5d, 0x4b, 0x65, 0xa8, 0x63, 0x7b, 0x17, 0x72, 0x3b, 0xbd, 0xa3, 0xcc, 0xe8,
 ];
 
 /// Alias kept for callers that reference the old name.
@@ -77,8 +76,7 @@ fn build_full_address(lock_arg: &[u8; 20], hrp: &str) -> String {
     payload.push(HASH_TYPE_TYPE);
     payload.extend_from_slice(lock_arg);
 
-    bech32::encode(hrp, payload.to_base32(), Variant::Bech32m)
-        .expect("bech32m encode succeeds")
+    bech32::encode(hrp, payload.to_base32(), Variant::Bech32m).expect("bech32m encode succeeds")
 }
 
 /// Legacy short address (bech32) — ckb-cli `address(deprecated)`.
@@ -200,19 +198,15 @@ mod tests {
             .try_into()
             .unwrap();
         let addr = build_short_address(&lock_arg, "ckb");
-        assert_eq!(
-            addr,
-            "ckb1qyqt8xaupvm8837nv3gtc9x0ekkj64vud3jqfwyw5v"
-        );
+        assert_eq!(addr, "ckb1qyqt8xaupvm8837nv3gtc9x0ekkj64vud3jqfwyw5v");
     }
 
     #[test]
     fn test_address_from_private_key_matches_ckb_cli_flow() {
         // ckb-signer keystore test vector private key
-        let sk_bytes = hex::decode(
-            "d00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc",
-        )
-        .unwrap();
+        let sk_bytes =
+            hex::decode("d00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc")
+                .unwrap();
         let sk = secp256k1::SecretKey::from_slice(&sk_bytes).unwrap();
         let secp = Secp256k1::new();
         let pk = PublicKey::from_secret_key(&secp, &sk);

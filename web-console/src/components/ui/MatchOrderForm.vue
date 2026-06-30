@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import type { MatchOrderRequest } from '@/types/api'
+import type { MatchOrderRequest, SignerWalletItem } from '@/types/api'
+import { useI18n } from '@/composables/useI18n'
+import { truncateAddress } from '@/utils/format'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: MatchOrderRequest & { tx_hash?: string }
+  wallets?: SignerWalletItem[]
 }>()
 
 const emit = defineEmits<{
@@ -24,35 +29,48 @@ function update(field: string, value: string | number) {
       <code class="form-static font-mono">{{ modelValue.tx_hash }}</code>
     </div>
     <div class="form-group">
-      <label class="form-label">卖家地址</label>
+      <label
+        class="form-label"
+        :title="modelValue.seller_address"
+      >{{ t('orders.selectSellerAddr') }}</label>
+      <!-- Dropdown when HD wallet addresses are available -->
+      <select
+        v-if="wallets && wallets.length > 0"
+        :value="modelValue.seller_address"
+        class="form-input form-select"
+        @change="update('seller_address', ($event.target as HTMLSelectElement).value)"
+      >
+        <option
+          value=""
+          disabled
+        >
+          -- {{ t('orders.selectSellerAddr') }} --
+        </option>
+        <option
+          v-for="w in wallets"
+          :key="w.id"
+          :value="w.ckb_address"
+        >
+          #{{ w.derivation_index }} &mdash; {{ truncateAddress(w.ckb_address, 14, 8) }}
+        </option>
+      </select>
+      <!-- Fallback text input when no wallets available -->
       <input
+        v-else
         :value="modelValue.seller_address"
         type="text"
         class="form-input font-mono"
         placeholder="ckb1q..."
         @input="update('seller_address', ($event.target as HTMLInputElement).value)"
       >
+      <span
+        v-if="!wallets || wallets.length === 0"
+        class="form-hint"
+      >{{ t('orders.noWalletsUnlocked') }}</span>
     </div>
-    <div class="form-group">
-      <label class="form-label">通道 Outpoint 交易哈希</label>
-      <input
-        :value="modelValue.channel_outpoint_tx_hash"
-        type="text"
-        class="form-input font-mono"
-        placeholder="0x..."
-        @input="update('channel_outpoint_tx_hash', ($event.target as HTMLInputElement).value)"
-      >
-    </div>
-    <div class="form-group">
-      <label class="form-label">通道 Outpoint 输出索引</label>
-      <input
-        :value="modelValue.channel_outpoint_index"
-        type="number"
-        class="form-input"
-        min="0"
-        @input="update('channel_outpoint_index', Number(($event.target as HTMLInputElement).value))"
-      >
-    </div>
+    <p class="form-note">
+      {{ t('orders.channelAutoNote') }}
+    </p>
   </div>
 </template>
 
@@ -94,6 +112,29 @@ function update(field: string, value: string | number) {
 }
 .form-input::placeholder {
   color: var(--text-disabled);
+}
+
+.form-select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+.form-hint {
+  font-size: var(--fs-small);
+  color: var(--text-disabled);
+  text-align: center;
+  margin-top: 2px;
+}
+
+.form-note {
+  font-size: var(--fs-small);
+  color: var(--text-disabled);
+  text-align: center;
+  margin: 0;
 }
 
 .form-static {

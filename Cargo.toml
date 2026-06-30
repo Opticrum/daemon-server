@@ -16,7 +16,7 @@ opticrum-calculator = { path = "../opticrum/calculator/opticrum" }
 opticrum-protocol = { path = "../opticrum/opticrum-protocol" }
 
 # CKB chain interaction (local path — matches opticrum workspace)
-ckb-cinnabar-calculator = { git = "https://github.com/ashuralyk/ckb-cinnabar.git", branch = "master" }
+ckb-cinnabar-calculator = { path = "../../ckb-cinnabar/cinnabar/calculate" }
 
 # Database (Diesel ORM — no raw SQL)
 diesel = { version = "2", features = ["sqlite", "r2d2", "returning_clauses_for_sqlite_3_35"] }

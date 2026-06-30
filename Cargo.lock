@@ -791,7 +791,6 @@ dependencies = [
 [[package]]
 name = "ckb-cinnabar-calculator"
 version = "0.1.0"
-source = "git+https://github.com/ashuralyk/ckb-cinnabar.git?branch=master#638558a473dc67f2f8e2d07fa37109cc82103633"
 dependencies = [
  "async-trait",
  "bech32 0.8.1",
@@ -821,7 +820,6 @@ dependencies = [
 [[package]]
 name = "ckb-cinnabar-verifier"
 version = "0.1.0"
-source = "git+https://github.com/ashuralyk/ckb-cinnabar.git?branch=master#638558a473dc67f2f8e2d07fa37109cc82103633"
 dependencies = [
  "blake2b-ref",
  "ckb-std",

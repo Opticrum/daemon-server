@@ -57,14 +57,42 @@ pub trait ChainProvider: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Shut down a Fiber channel by its channel ID.
+    /// `force=false` attempts a cooperative close; `force=true` does a
+    /// unilateral close. Default: no-op (MockChainProvider records the call).
+    async fn shutdown_channel(&self, channel_id: &str, force: bool) -> Result<(), AppError> {
+        let _ = (channel_id, force);
+        Ok(())
+    }
+
+    /// Open a new Fiber channel to a peer.
+    /// Returns the temporary channel ID (hex-encoded Hash256).
+    /// Default: returns a mock ID (MockChainProvider records the call).
+    async fn open_channel(
+        &self,
+        peer_pubkey: &str,
+        funding_amount: u64,
+    ) -> Result<String, AppError> {
+        let _ = (peer_pubkey, funding_amount);
+        Ok("mock_temporary_channel_id".into())
+    }
+
+    /// List all connected Fiber peers.
+    async fn list_peers(&self) -> Result<Vec<PeerInfo>, AppError> {
+        Ok(vec![])
+    }
+
+    /// Connect to a Fiber peer by pubkey.
+    async fn connect_peer(&self, pubkey: &str) -> Result<(), AppError> {
+        let _ = pubkey;
+        Ok(())
+    }
+
     /// Query live cells locked by a given lock hash.
     /// Returns the cell outputs with their capacities.
     /// Default: no-op (MockChainProvider overrides with in-memory filter,
     /// RealChainProvider queries the CKB indexer).
-    async fn get_cells_by_lock(
-        &self,
-        _lock_hash: &[u8; 32],
-    ) -> Result<Vec<CellOutput>, AppError> {
+    async fn get_cells_by_lock(&self, _lock_hash: &[u8; 32]) -> Result<Vec<CellOutput>, AppError> {
         Ok(Vec::new())
     }
 
@@ -169,6 +197,15 @@ pub struct ChannelWithMatch {
     pub match_status: String,
 }
 
+/// Lightweight connected peer info returned by `list_peers`.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct PeerInfo {
+    /// Peer identity pubkey (hex, 33 bytes).
+    pub pubkey: String,
+    /// Multiaddr used for the connection.
+    pub address: String,
+}
+
 /// Fiber node metadata returned by the `node_info` JSON-RPC method.
 /// Fields mirror the Fiber node's snake_case response.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -209,6 +246,10 @@ pub struct MockChainProvider {
     pub fiber_channels: Mutex<Vec<FiberChannelInfo>>,
     pub channel_matches: Mutex<Vec<ChannelWithMatch>>,
     pub fiber_node_info: Mutex<Option<FiberNodeInfo>>,
+    pub shutdown_channels: Mutex<Vec<(String, bool)>>,
+    pub open_channels: Mutex<Vec<(String, u64)>>,
+    pub peer_list: Mutex<Vec<PeerInfo>>,
+    pub peer_connections: Mutex<Vec<String>>,
 }
 
 impl Default for MockChainProvider {
@@ -228,6 +269,10 @@ impl MockChainProvider {
             fiber_channels: Mutex::new(Vec::new()),
             channel_matches: Mutex::new(Vec::new()),
             fiber_node_info: Mutex::new(None),
+            shutdown_channels: Mutex::new(Vec::new()),
+            open_channels: Mutex::new(Vec::new()),
+            peer_list: Mutex::new(Vec::new()),
+            peer_connections: Mutex::new(Vec::new()),
         }
     }
 
@@ -323,10 +368,39 @@ impl ChainProvider for MockChainProvider {
         Ok(self.fiber_channels.lock().unwrap().clone())
     }
 
-    async fn get_cells_by_lock(
+    async fn shutdown_channel(&self, channel_id: &str, force: bool) -> Result<(), AppError> {
+        self.shutdown_channels
+            .lock()
+            .unwrap()
+            .push((channel_id.to_string(), force));
+        Ok(())
+    }
+
+    async fn open_channel(
         &self,
-        lock_hash: &[u8; 32],
-    ) -> Result<Vec<CellOutput>, AppError> {
+        peer_pubkey: &str,
+        funding_amount: u64,
+    ) -> Result<String, AppError> {
+        self.open_channels
+            .lock()
+            .unwrap()
+            .push((peer_pubkey.to_string(), funding_amount));
+        Ok("mock_temporary_channel_id".into())
+    }
+
+    async fn list_peers(&self) -> Result<Vec<PeerInfo>, AppError> {
+        Ok(self.peer_list.lock().unwrap().clone())
+    }
+
+    async fn connect_peer(&self, pubkey: &str) -> Result<(), AppError> {
+        self.peer_connections
+            .lock()
+            .unwrap()
+            .push(pubkey.to_string());
+        Ok(())
+    }
+
+    async fn get_cells_by_lock(&self, lock_hash: &[u8; 32]) -> Result<Vec<CellOutput>, AppError> {
         Ok(self
             .cells
             .lock()

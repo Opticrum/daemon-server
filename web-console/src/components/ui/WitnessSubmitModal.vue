@@ -18,7 +18,8 @@ const isValid = computed(() => {
   try {
     JSON.parse(val)
     return true
-  } catch {
+  } catch (e) {
+    console.warn('Invalid JSON in witness submit:', e)
     return false
   }
 })

@@ -1,4 +1,4 @@
-import { ApiError, type AutoMatchConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type TrackedMatch, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type UnsignedTx, type ServerInfo } from '@/types/api'
+import { ApiError, type AutoMatchConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type TrackedMatch, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus } from '@/types/api'
 
 // ═══════════════════════════════════════════
 // Fetch wrapper
@@ -8,6 +8,7 @@ const BASE = '/api'
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(BASE + path, {
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -18,7 +19,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let data: any
   try {
     data = await res.json()
-  } catch {
+  } catch (e) {
+    console.error('Failed to parse API response:', e)
     throw new ApiError(res.status, 'parse_error', `Invalid response: ${res.status} ${res.statusText}`)
   }
 
@@ -52,7 +54,11 @@ export function useApi() {
       request('/console/wallets/create-hd', { method: 'POST', body: JSON.stringify(body) }),
     unlockWallet: (body: UnlockWalletRequest): Promise<UnlockWalletResponse> =>
       request('/console/wallets/unlock', { method: 'POST', body: JSON.stringify(body) }),
-    deriveMoreAddresses: (body: { password: string; count?: number }): Promise<WalletResponse[]> =>
+    getWalletSession: (): Promise<WalletSessionStatus> =>
+      request('/console/wallets/session'),
+    lockWallet: (): Promise<{ locked: boolean }> =>
+      request('/console/wallets/lock', { method: 'POST' }),
+    deriveMoreAddresses: (body: { password?: string; count?: number }): Promise<WalletResponse[]> =>
       request('/console/wallets/derive-more', { method: 'POST', body: JSON.stringify(body) }),
     getHdStatus: (): Promise<HdStatusResponse> =>
       request('/console/wallets/hd-status'),
@@ -60,8 +66,10 @@ export function useApi() {
       request('/console/wallets/balance'),
     getAddressBalances: (): Promise<AddressBalanceItem[]> =>
       request('/console/wallets/balances'),
-    refreshHdWallet: (body: UnlockWalletRequest): Promise<RefreshHdWalletResponse> =>
+    refreshHdWallet: (body: RefreshHdWalletRequest = {}): Promise<RefreshHdWalletResponse> =>
       request('/console/wallets/refresh-hd', { method: 'POST', body: JSON.stringify(body) }),
+    getSignerWallets: (): Promise<SignerWalletItem[]> =>
+      request('/console/signer/wallets'),
     importMnemonic: (body: ImportMnemonicRequest): Promise<CreateHdWalletResponse> =>
       request('/console/wallets/import-mnemonic', { method: 'POST', body: JSON.stringify(body) }),
     deleteHdWallet: (): Promise<{ deleted: boolean }> =>
@@ -71,7 +79,11 @@ export function useApi() {
     scanOrders: (): Promise<OrderScanItem[]> =>
       request('/console/orders'),
     matchOrder: (txHash: string, body: MatchOrderRequest): Promise<MatchOrderResult> =>
-      request(`/console/orders/${encodeURIComponent(txHash)}/match`, { method: 'POST', body: JSON.stringify(body) }),
+      request(`/console/orders/${encodeURIComponent(txHash)}/match`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(130_000), // 130s to cover 120s polling + overhead
+      }),
 
     // ── Matches ──
     listMatches: (status?: string): Promise<TrackedMatch[]> =>
@@ -84,20 +96,21 @@ export function useApi() {
     // ── Channels ──
     scanChannels: (): Promise<ChannelWithMatch[]> =>
       request('/console/channels'),
+    closeChannel: (channelId: string, force?: boolean): Promise<{ closed: boolean }> =>
+      request(
+        `/console/channels/${encodeURIComponent(channelId)}/close`,
+        { method: 'POST', body: JSON.stringify({ force: force ?? false }) },
+      ),
+
+    // ── Peer Connection ──
+    checkPeerConnection: (pubkey: string): Promise<PeerConnectionStatus> =>
+      request(`/console/peers/check/${encodeURIComponent(pubkey)}`),
+    connectToPeer: (pubkey: string): Promise<{ connected: boolean }> =>
+      request('/console/peers/connect', { method: 'POST', body: JSON.stringify({ pubkey }) }),
 
     // ── Fiber Node Info ──
     getFiberNodeInfo: (): Promise<FiberNodeInfoResponse> =>
       request('/console/fiber-node-info'),
-
-    // ── Signing ──
-    listUnsignedTxs: (): Promise<UnsignedTx[]> =>
-      request('/console/signing'),
-    getUnsignedTx: (id: string): Promise<UnsignedTx> =>
-      request(`/console/signing/${encodeURIComponent(id)}`),
-    submitWitnesses: (id: string, witnesses: any): Promise<{ id: string; status: string }> =>
-      request(`/console/signing/${encodeURIComponent(id)}/witnesses`, { method: 'POST', body: JSON.stringify({ witnesses }) }),
-    submitTx: (id: string): Promise<{ id: string; tx_hash: string; status: string }> =>
-      request(`/console/signing/${encodeURIComponent(id)}/submit`, { method: 'POST' }),
 
     // ── Config ──
     getAutoMatchConfig: (): Promise<AutoMatchConfig> =>
@@ -109,11 +122,9 @@ export function useApi() {
     getServerInfo: (): Promise<ServerInfo> =>
       request('/console/server-info'),
 
-    // ── Scheduler + Signer ──
+    // ── Scheduler ──
     getSchedulerStatus: (): Promise<any> =>
       request('/console/scheduler/status'),
-    getSignerInfo: (): Promise<{ label: string; lock_hashes: string[] }> =>
-      request('/console/signer-info'),
   }
 }
 

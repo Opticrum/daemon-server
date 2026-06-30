@@ -5,9 +5,10 @@ export interface ModalOptions {
   message?: string
   content?: Component
   contentProps?: Record<string, any>
-  confirmText?: string
+  confirmText?: string | null
   cancelText?: string
   danger?: boolean
+  extra?: Component
   onConfirm?: () => void | Promise<void>
   onCancel?: () => void
 }
@@ -18,9 +19,10 @@ export function useModal() {
   const message = ref('')
   const content: Ref<Component | undefined> = ref(undefined)
   const contentProps: Ref<Record<string, any> | undefined> = ref(undefined)
-  const confirmText = ref('确定')
+  const confirmText = ref<string | null>('确定')
   const cancelText = ref('取消')
   const danger = ref(false)
+  const extra: Ref<Component | undefined> = ref(undefined)
   const loading = ref(false)
 
   let pendingConfirm: (() => void | Promise<void>) | undefined
@@ -30,9 +32,10 @@ export function useModal() {
     message.value = opts.message || ''
     content.value = opts.content
     contentProps.value = opts.contentProps
-    confirmText.value = opts.confirmText || '确定'
+    confirmText.value = opts.confirmText !== undefined ? opts.confirmText : '确定'
     cancelText.value = opts.cancelText || '取消'
     danger.value = opts.danger || false
+    extra.value = opts.extra
     loading.value = false
     pendingConfirm = opts.onConfirm
     visible.value = true
@@ -81,5 +84,5 @@ export function useModal() {
     })
   }
 
-  return { visible, title, message, content, contentProps, confirmText, cancelText, danger, loading, show, hide, onConfirm, onCancel, confirm }
+  return { visible, title, message, content, contentProps, confirmText, cancelText, danger, extra, loading, show, hide, onConfirm, onCancel, confirm }
 }

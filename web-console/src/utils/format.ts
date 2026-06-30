@@ -15,8 +15,8 @@ export function formatCKB(shannons: number): string {
   return (shannons / 100_000_000).toFixed(2) + ' CKB'
 }
 
-/** Approximate CKB blocks per year (365.25 days × 24h × 3600s / ~10s block time) */
-const BLOCKS_PER_YEAR = 3_155_760
+/** CKB blocks per year (~12s block time). Matches opticrum-calculator config. */
+const BLOCKS_PER_YEAR = 2_629_800
 
 /**
  * Convert shannons per block to CKB per block, with 2 decimal places
@@ -26,16 +26,13 @@ export function formatCKBPerBlock(shannons: number): string {
 }
 
 /**
- * Calculate annualized yield rate from shannons_per_block and channel capacity (both in shannons)
- * APY = (CKB_per_block × blocks_per_year) / CKB_principal × 100%
- * First converts both values from shannons to CKB (÷ 100,000,000)
+ * Calculate annualized yield rate from shannons_per_block and channel capacity (both in shannons).
+ * Matches opticrum-calculator: rent_per_block_to_annual_yield
+ * Formula: (shannonsPerBlock × BLOCKS_PER_YEAR) / channelCapacity × 100%
  */
 export function formatAPY(shannonsPerBlock: number, channelCapacity: number): string {
   if (!channelCapacity || channelCapacity <= 0 || !shannonsPerBlock) return '—'
-  const ckbPerBlock = shannonsPerBlock / 100_000_000
-  const ckbPrincipal = channelCapacity / 100_000_000
-  if (ckbPrincipal <= 0) return '—'
-  const apy = (ckbPerBlock * BLOCKS_PER_YEAR) / ckbPrincipal * 100
+  const apy = (shannonsPerBlock * BLOCKS_PER_YEAR) / channelCapacity * 100
   if (apy < 0.01) return apy.toFixed(6) + '%'
   return apy.toFixed(2) + '%'
 }
