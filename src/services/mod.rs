@@ -15,6 +15,7 @@ pub mod keystore;
 pub mod match_service;
 pub mod real_chain_provider;
 pub mod rent_service;
+pub mod runtime_config;
 pub mod signer;
 pub mod transaction_assembler;
 pub mod wallet_service;
@@ -22,3 +23,4 @@ pub mod wallet_session;
 
 pub use chain_provider::MockChainProvider;
 pub use real_chain_provider::RealChainProvider;
+pub use runtime_config::RuntimeConfig;

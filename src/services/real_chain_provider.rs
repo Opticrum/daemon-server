@@ -412,7 +412,7 @@ impl ChainProvider for RealChainProvider {
         );
         let params = serde_json::json!({
             "pubkey": peer_pubkey,
-            "funding_amount": funding_amount.to_string(),
+            "funding_amount": format!("0x{:x}", funding_amount),
         });
         let value = self
             .fiber_rpc
@@ -437,6 +437,19 @@ impl ChainProvider for RealChainProvider {
                 address: p.address,
             })
             .collect())
+    }
+
+    async fn get_tx_block_number(&self, tx_hash: &str) -> Result<u64, AppError> {
+        use ckb_cinnabar_calculator::rpc::RPC;
+        let hash: ckb_cinnabar_calculator::re_exports::ckb_types::H256 =
+            tx_hash.parse().map_err(|_| AppError::ChainError("invalid tx hash".into()))?;
+        match self.rpc.get_transaction(&hash).await {
+            Ok(Some(tx)) => {
+                let block = tx.tx_status.block_number.unwrap_or_default();
+                Ok(block.value())
+            }
+            _ => Ok(0),
+        }
     }
 
     async fn connect_peer(&self, pubkey: &str) -> Result<(), AppError> {

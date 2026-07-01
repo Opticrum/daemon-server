@@ -11,6 +11,8 @@ use tracing::{error, info, warn};
 
 use rust_server::config::Config;
 use rust_server::services::chain_provider::ChainProvider;
+use rust_server::services::RuntimeConfig;
+use std::sync::RwLock;
 use rust_server::services::console::scheduler_state::{SchedulerState, SharedSchedulerState};
 use rust_server::services::hd_wallet_signer::HdWalletSigner;
 use rust_server::services::transaction_assembler::TransactionAssembler;
@@ -105,11 +107,33 @@ async fn main() -> std::io::Result<()> {
         .flatten()
         .map(|info| info.pubkey);
 
-    // Build application state
-    let keystore_path = config.keystore_path.clone();
+    // Resolve keystore path to absolute so restarts from a different
+    // working directory don't silently create a new keystore elsewhere.
+    let keystore_path = {
+        let p = std::path::Path::new(&config.keystore_path);
+        if p.is_relative() {
+            std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join(p)
+        } else {
+            p.to_path_buf()
+        }
+    };
+    // Ensure the parent directory exists (the keystore file itself is
+    // created on first use, but create_dir_all is idempotent at startup).
+    if let Some(parent) = keystore_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let keystore_path = keystore_path.display().to_string();
+
+    // Runtime-configurable settings — changes take effect immediately
+    // without a server restart.
+    let runtime_config = Arc::new(RwLock::new(RuntimeConfig::from_config(&config)));
+
     let state = api::AppState {
         db: pool.clone(),
         config: config.clone(),
+        runtime_config: runtime_config.clone(),
         chain_provider: chain_provider.clone(),
         signer,
         wallet_session: wallet_session.clone(),
@@ -123,7 +147,7 @@ async fn main() -> std::io::Result<()> {
     // Spawn background tasks
     scheduler::spawn_schedulers(
         pool,
-        config.clone(),
+        runtime_config,
         chain_provider,
         signer_bg,
         scheduler_state,

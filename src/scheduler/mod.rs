@@ -4,45 +4,47 @@
 //! for managed matches and automatically extracting rent.
 //! The auto-matcher scans for new on-chain orders and matches them
 //! against available Fiber channels when enabled.
+//!
+//! Both loops read `RuntimeConfig` from an `Arc<RwLock<>>` at the start of
+//! each cycle, so runtime config changes take effect without a restart.
 
 pub mod auto_matcher;
 pub mod rent_extractor;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use crate::config::Config;
 use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::{
     record_error, record_success, set_tip_block, SharedSchedulerState,
 };
 use crate::services::signer::Signer;
+use crate::services::RuntimeConfig;
 
 /// Spawn all background tasks: rent extractor and auto-matcher.
 pub fn spawn_schedulers(
     pool: DbPool,
-    config: Config,
+    runtime_config: Arc<RwLock<RuntimeConfig>>,
     chain_provider: Arc<dyn ChainProvider>,
     signer: Arc<dyn Signer>,
     scheduler_state: SharedSchedulerState,
 ) {
     // Rent extractor
     let pool_ext = pool.clone();
-    let _config_ext = config.clone();
+    let rc_ext = runtime_config.clone();
     let cp_ext = chain_provider.clone();
-    let interval_secs = config.scheduler_interval_secs;
-    let min_extraction = config.min_extraction_amount_shannons;
     let state_ext = scheduler_state.clone();
 
     actix_rt::spawn(async move {
-        tracing::info!(
-            "Rent extractor started (interval={}s, min_extraction={} shannons)",
-            interval_secs,
-            min_extraction
-        );
+        tracing::info!("Rent extractor started");
 
         loop {
+            let rc = rc_ext.read().unwrap();
+            let interval = rc.scheduler_interval_secs;
+            let min_extraction = rc.min_extraction_amount_shannons;
+            drop(rc);
+
             let started = Instant::now();
             match rent_extractor::run_extraction_cycle(&pool_ext, min_extraction, cp_ext.as_ref())
                 .await
@@ -53,7 +55,6 @@ pub fn spawn_schedulers(
                     if extracted > 0 {
                         tracing::debug!(extracted, "Extraction cycle");
                     }
-                    // Update tip block from chain (best effort)
                     if let Ok(tip) = cp_ext.get_tip_block_number().await {
                         set_tip_block(&state_ext, tip);
                     }
@@ -65,34 +66,28 @@ pub fn spawn_schedulers(
                 }
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
         }
     });
 
-    // Auto-matcher (spawned regardless; checks auto_match_enabled inside loop)
+    // Auto-matcher
     let pool_am = pool;
-    let config_am = config;
+    let rc_am = runtime_config;
     let cp_am = chain_provider;
     let signer_am = signer;
-    let am_interval = config_am.auto_match_interval_secs;
-    let am_enabled = config_am.auto_match_enabled;
     let state_am = scheduler_state;
 
     actix_rt::spawn(async move {
-        if !am_enabled {
-            tracing::info!("Auto-matcher disabled (set auto_match_enabled=true to enable)");
-        } else {
-            tracing::info!(
-                "Auto-matcher started (interval={}s, min_capacity={}, max_escrow={})",
-                am_interval,
-                config_am.auto_match_min_capacity,
-                config_am.auto_match_max_escrow_blocks
-            );
-        }
+        tracing::info!("Auto-matcher started");
 
         loop {
-            if !config_am.auto_match_enabled {
-                tokio::time::sleep(std::time::Duration::from_secs(am_interval)).await;
+            let rc = rc_am.read().unwrap();
+            let enabled = rc.auto_match_enabled;
+            let interval = rc.auto_match_interval_secs;
+            drop(rc);
+
+            if !enabled {
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
                 continue;
             }
 
@@ -101,7 +96,7 @@ pub fn spawn_schedulers(
                 &pool_am,
                 cp_am.as_ref(),
                 signer_am.as_ref(),
-                &config_am,
+                &rc_am,
             )
             .await
             {
@@ -119,7 +114,7 @@ pub fn spawn_schedulers(
                 }
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(am_interval)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
         }
     });
 }

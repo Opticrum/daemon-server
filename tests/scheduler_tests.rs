@@ -49,7 +49,8 @@ async fn extracts_when_above_threshold() {
         0,
         "seller_high",
         1000,
-        None::<&str>,
+        0,
+            None::<&str>,
     )
     .unwrap();
 
@@ -88,7 +89,8 @@ async fn skips_when_below_threshold() {
         0,
         "seller_low",
         1, // 1 shannon/block
-        None::<&str>,
+        0,
+            None::<&str>,
     )
     .unwrap();
 
@@ -126,7 +128,8 @@ async fn respects_min_extraction_different_levels() {
         0,
         "seller_mid",
         50, // 50 shannons/block
-        None::<&str>,
+        0,
+            None::<&str>,
     )
     .unwrap();
 
@@ -170,7 +173,8 @@ async fn only_processes_live_matches() {
         0,
         "dead_seller",
         1000,
-        None::<&str>,
+        0,
+            None::<&str>,
     )
     .unwrap();
     match_db::update_match_status(&mut conn, 1, "destroyed").unwrap();
@@ -208,6 +212,7 @@ async fn multiple_matches_all_processed() {
             0,
             &format!("seller_{i}"),
             200,
+            0,
             None::<&str>,
         )
         .unwrap();

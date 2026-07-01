@@ -1,5 +1,8 @@
 //! Auto-match engine — background task that scans on-chain orders and
-//! automatically matches qualified ones against available Fiber channels.
+//! automatically matches qualified ones by opening fresh Fiber channels.
+//!
+//! The contract requires `channel_block > order_block`, so a new channel
+//! must be opened for every match — existing channels can never be reused.
 //!
 //! Runs on a configurable interval, applies filters from `Config`, and
 //! matches each eligible order using the configured signer and wallet.
@@ -10,11 +13,16 @@ use opticrum_calculator::config::ORDER_TO_MATCH_CAPACITY_RESERVE;
 
 use crate::db::DbPool;
 
-use crate::config::Config;
+use std::sync::{Arc, RwLock};
+
 use crate::db::matches as match_db;
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
+use crate::services::match_service::{
+    wait_for_channel_ready, CHANNEL_CELL_OCCUPIED_RESERVE, CHANNEL_READY_TIMEOUT_SECS,
+};
 use crate::services::signer::{SignRequest, Signer};
+use crate::services::RuntimeConfig;
 
 /// Run one auto-match cycle.
 ///
@@ -25,11 +33,15 @@ pub async fn run_auto_match_cycle(
     pool: &DbPool,
     chain_provider: &(dyn ChainProvider + Send + Sync),
     signer: &(dyn Signer + Send + Sync),
-    config: &Config,
+    runtime_config: &Arc<RwLock<RuntimeConfig>>,
 ) -> Result<u64, AppError> {
-    if !config.auto_match_enabled {
+    let rc = runtime_config.read().unwrap();
+    if !rc.auto_match_enabled {
         return Ok(0);
     }
+    let min_capacity = rc.auto_match_min_capacity;
+    let max_escrow_blocks = rc.auto_match_max_escrow_blocks;
+    drop(rc);
 
     let mut conn = pool.get()?;
 
@@ -44,18 +56,7 @@ pub async fn run_auto_match_cycle(
         .map(|m| (m.order_tx_hash.clone(), m.order_output_index))
         .collect();
 
-    // Scan available Fiber channels
-    let channels = chain_provider.scan_fiber_channels(&[]).await?;
-    if channels.is_empty() {
-        debug!("Auto-match: no Fiber channels available, skipping cycle");
-        return Ok(0);
-    }
-    debug!(
-        available_channels = channels.len(),
-        "Auto-match: channels found"
-    );
-
-    // Filter and match
+    // Filter and match — each match gets a fresh channel (contract requirement).
     let mut matched_count = 0u64;
     let max_per_cycle = 10u64; // safety cap to avoid runaway matching
 
@@ -63,11 +64,6 @@ pub async fn run_auto_match_cycle(
         if matched_count >= max_per_cycle {
             break;
         }
-
-        let _order_outpoint = (
-            hex::encode(order.order_args.fiber_pubkey.to_bytes()),
-            order.order_outpoint.index as i32,
-        );
 
         // Skip if already matched
         if matched_outpoints.iter().any(|(h, i)| {
@@ -78,44 +74,80 @@ pub async fn run_auto_match_cycle(
         }
 
         // Apply config filters
-        if order.ckb_capacity < config.auto_match_min_capacity {
+        if order.ckb_capacity < min_capacity {
             debug!(
                 capacity = order.ckb_capacity,
-                min = config.auto_match_min_capacity,
+                min = min_capacity,
                 "Auto-match: skipped — capacity below minimum"
             );
             continue;
         }
         // Derive effective escrow blocks from capacity / rent rate.
-        // A low shannons_per_block means longer effective escrow duration.
         let effective_capacity = order
             .ckb_capacity
             .saturating_sub(ORDER_TO_MATCH_CAPACITY_RESERVE);
         if let Some(effective_escrow) =
             effective_capacity.checked_div(order.order_data.shannons_per_block)
         {
-            if effective_escrow > config.auto_match_max_escrow_blocks {
+            if effective_escrow > max_escrow_blocks {
                 debug!(
                     effective_escrow,
-                    max = config.auto_match_max_escrow_blocks,
+                    max = max_escrow_blocks,
                     "Auto-match: skipped — escrow blocks above maximum"
                 );
                 continue;
             }
         }
 
-        // Find a compatible channel (capacity >= order capacity)
-        let compatible_channel = channels.iter().find(|ch| ch.capacity >= order.ckb_capacity);
-        let channel = match compatible_channel {
-            Some(c) => c,
-            None => {
-                debug!(
-                    required_capacity = order.ckb_capacity,
-                    "Auto-match: no compatible channel found, skipping order"
+        // Open a fresh channel for this order (contract requires channel
+        // created AFTER the order).
+        let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
+        let required_capacity = order.ckb_capacity + CHANNEL_CELL_OCCUPIED_RESERVE;
+
+        // Fiber requires the peer to be connected before open_channel.
+        let _ = chain_provider.connect_peer(&fiber_pubkey_hex).await;
+
+        info!(
+            peer = %fiber_pubkey_hex,
+            amount = required_capacity,
+            "Auto-match: opening fresh channel"
+        );
+        if let Err(e) = chain_provider
+            .open_channel(&fiber_pubkey_hex, required_capacity)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                peer = %fiber_pubkey_hex,
+                "Auto-match: open_channel failed — skipping order"
+            );
+            continue;
+        }
+
+        // Poll until the new channel reaches ChannelReady
+        let channel = match wait_for_channel_ready(
+            chain_provider,
+            &fiber_pubkey_hex,
+            required_capacity,
+            CHANNEL_READY_TIMEOUT_SECS,
+        )
+        .await
+        {
+            Ok(ch) => ch,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    peer = %fiber_pubkey_hex,
+                    "Auto-match: channel did not become ready — skipping order"
                 );
                 continue;
             }
         };
+        info!(
+            channel_id = %channel.channel_id,
+            tx_hash = %channel.tx_hash,
+            "Auto-match: fresh channel ready"
+        );
 
         // Attempt to match
         let seller_address = "auto-matcher"; // Phase 6: derive from signer wallet
@@ -142,6 +174,7 @@ pub async fn run_auto_match_cycle(
                 },
                 "seller_address": seller_address,
             }),
+            signer_address: None, // TODO: set to the actual seller address when multi-address signing is needed
         };
 
         let sign_result = signer.sign(sign_request).await?;
@@ -169,6 +202,7 @@ pub async fn run_auto_match_cycle(
             order.order_outpoint.index as i32,
             seller_address,
             shannons_per_block,
+            order.ckb_capacity,
             None::<&str>,
         )?;
 

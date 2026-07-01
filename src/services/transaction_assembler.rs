@@ -21,7 +21,8 @@
 
 use ckb_cinnabar_calculator::{
     address::Address,
-    instruction::{predefined::balance_and_sign, TransactionCalculator},
+    instruction::{predefined::balance_and_sign, DefaultInstruction, TransactionCalculator},
+    operation::basic::AddSecp256k1SighashCellDep,
     rpc::RpcClient,
 };
 use opticrum_calculator::{
@@ -77,17 +78,16 @@ impl TransactionAssembler {
 
         let build_instruction =
             opticrum_calc::match_order(seller_addr.clone(), order_info, match_args);
+        let complete = DefaultInstruction::new(vec![Box::new(AddSecp256k1SighashCellDep {})]);
+        let balance = balance_and_sign(&seller_addr, *seller_secret_key, self.fee_rate);
 
-        let calc = TransactionCalculator::new(vec![build_instruction]);
-        let (mut skeleton, _log) = calc.new_skeleton(&self.rpc).await.map_err(Self::map_err)?;
-
-        let sign_instruction = balance_and_sign(&seller_addr, *seller_secret_key, self.fee_rate);
-        let calc = TransactionCalculator::new(vec![sign_instruction]);
-        calc.apply_skeleton(&self.rpc, &mut skeleton)
+        // For debug
+        let (tx, _) = TransactionCalculator::new(vec![build_instruction, complete, balance])
+            .new_skeleton(&self.rpc)
             .await
             .map_err(Self::map_err)?;
 
-        let tx_hash = skeleton
+        let tx_hash = tx
             .send_and_wait(&self.rpc, 0, None)
             .await
             .map_err(Self::map_err)?;

@@ -137,6 +137,7 @@ mod tests {
             operation: "create_order".into(),
             tx_hex: "deadbeef".into(),
             context: serde_json::json!({}),
+            signer_address: None,
         };
 
         let result = signer.sign(request).await.expect("should sign");

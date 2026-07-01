@@ -9,8 +9,9 @@ const props = withDefaults(defineProps<{
   visible: boolean
   title?: string
   confirmText?: string | null
-  cancelText?: string
+  cancelText?: string | null
   danger?: boolean
+  wide?: boolean
   loading?: boolean
   extra?: Component
 }>(), {
@@ -18,6 +19,7 @@ const props = withDefaults(defineProps<{
   confirmText: '',
   cancelText: '',
   danger: false,
+  wide: false,
   loading: false,
   extra: undefined,
 })
@@ -56,6 +58,7 @@ function onKeydown(e: KeyboardEvent) {
     >
       <div
         class="modal-card"
+        :class="{ 'modal-card--wide': wide }"
         role="dialog"
         aria-modal="true"
         :aria-label="title"
@@ -72,14 +75,16 @@ function onKeydown(e: KeyboardEvent) {
           <slot />
         </div>
         <div class="modal-footer">
-          <button
-            class="btn btn-default"
-            data-testid="modal-cancel"
-            :disabled="loading"
-            @click="emit('cancel')"
-          >
-            {{ cancelText || t('common.cancel') }}
-          </button>
+          <template v-if="cancelText !== null">
+            <button
+              class="btn btn-default"
+              data-testid="modal-cancel"
+              :disabled="loading"
+              @click="emit('cancel')"
+            >
+              {{ cancelText || t('common.cancel') }}
+            </button>
+          </template>
           <component
             :is="extra"
             v-if="extra"
@@ -130,6 +135,10 @@ function onKeydown(e: KeyboardEvent) {
   animation: scaleIn 0.2s cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
+.modal-card--wide {
+  max-width: 680px;
+}
+
 .modal-header {
   padding: var(--space-xl) var(--space-xl) var(--space-sm);
   border-bottom: 1px solid var(--border-light);
@@ -144,7 +153,9 @@ function onKeydown(e: KeyboardEvent) {
 .modal-body {
   padding: var(--space-xl);
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1;
+  min-width: 0;
 }
 
 .modal-footer {

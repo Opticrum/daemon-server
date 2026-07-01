@@ -18,6 +18,8 @@ use crate::services::console::scheduler_state::SharedSchedulerState;
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::transaction_assembler::TransactionAssembler;
 use crate::services::wallet_session::WalletSessionManager;
+use crate::services::RuntimeConfig;
+use std::sync::RwLock;
 
 mod admin;
 pub mod console;
@@ -31,8 +33,11 @@ mod wallet;
 pub struct AppState {
     /// SQLite connection pool (Diesel-backed).
     pub db: DbPool,
-    /// Server configuration.
+    /// Server configuration (immutable — restart required for changes).
     pub config: Config,
+    /// Runtime-configurable settings (fee rate, extraction, auto-match, etc.).
+    /// Backed by `Arc<RwLock<>>` so changes take effect immediately.
+    pub runtime_config: Arc<RwLock<RuntimeConfig>>,
     /// Chain provider for CKB RPC and indexer access.
     pub chain_provider: Arc<dyn ChainProvider>,
     /// HD wallet signing provider (unlock via admin panel).
@@ -134,6 +139,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             )
             .route("/console/orders", web::get().to(console::scan_orders))
             .route(
+                "/console/orders/{tx_hash}/match-readiness",
+                web::get().to(console::match_readiness),
+            )
+            .route(
+                "/console/orders/{tx_hash}/create-channel",
+                web::post().to(console::create_order_channel),
+            )
+            .route(
                 "/console/orders/{tx_hash}/match",
                 web::post().to(console::match_order),
             )
@@ -151,13 +164,15 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 "/console/channels/{channel_id}/close",
                 web::post().to(console::close_channel),
             )
-            .route("/console/config", web::get().to(console::get_config))
-            .route("/console/config", web::put().to(console::update_config))
             .route(
                 "/console/scheduler/status",
                 web::get().to(console::scheduler_status),
             )
             .route("/console/server-info", web::get().to(console::server_info))
+            // Runtime config (mutable at runtime)
+            .route("/console/runtime-config", web::get().to(console::get_runtime_config))
+            .route("/console/runtime-config", web::put().to(console::update_runtime_config))
+            .route("/console/runtime-config/reset", web::post().to(console::reset_runtime_config))
             .route(
                 "/console/fiber-node-info",
                 web::get().to(console::fiber_node_info),

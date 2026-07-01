@@ -57,6 +57,7 @@ provide('modal', modal)
       :confirm-text="modal.confirmText.value"
       :cancel-text="modal.cancelText.value"
       :danger="modal.danger.value"
+      :wide="modal.wide.value"
       :loading="modal.loading.value"
       :extra="modal.extra.value"
       @confirm="modal.onConfirm"

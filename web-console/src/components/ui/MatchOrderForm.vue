@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { MatchOrderRequest, SignerWalletItem } from '@/types/api'
 import { useI18n } from '@/composables/useI18n'
-import { truncateAddress } from '@/utils/format'
+import { truncateAddress, formatCKB } from '@/utils/format'
 
 const { t } = useI18n()
 
@@ -51,7 +51,7 @@ function update(field: string, value: string | number) {
           :key="w.id"
           :value="w.ckb_address"
         >
-          #{{ w.derivation_index }} &mdash; {{ truncateAddress(w.ckb_address, 14, 8) }}
+          #{{ w.derivation_index }} &mdash; {{ truncateAddress(w.ckb_address, 14, 8) }} &mdash; {{ formatCKB(w.balance_shannons) }}
         </option>
       </select>
       <!-- Fallback text input when no wallets available -->

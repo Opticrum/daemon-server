@@ -36,6 +36,10 @@ pub struct SignRequest {
     pub tx_hex: String,
     /// Additional context for external signers (e.g. expected outputs).
     pub context: serde_json::Value,
+    /// Which CKB address should sign this transaction.
+    /// When `None`, the signer uses its default key (first loaded).
+    /// When `Some(addr)`, the signer looks up the key for that address.
+    pub signer_address: Option<String>,
 }
 
 /// Pluggable signing provider.

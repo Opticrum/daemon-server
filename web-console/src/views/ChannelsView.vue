@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, inject, computed } from 'vue'
+import { ref, onMounted, inject, computed, h } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
 import { useFiber } from '@/composables/useFiber'
@@ -7,7 +7,8 @@ import { truncateAddress, formatCKB } from '@/utils/format'
 import DataTable, { type ColumnDef } from '@/components/ui/DataTable.vue'
 import StatusTag from '@/components/ui/StatusTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import type { ChannelWithMatch } from '@/types/api'
+import MatchDetailPanel, { type DetailSection } from '@/components/ui/MatchDetailPanel.vue'
+import type { ChannelWithMatch, ChannelMatchInfo } from '@/types/api'
 
 const api = useApi()
 const { t } = useI18n()
@@ -92,10 +93,6 @@ async function copyToClipboard(text: string) {
   }
 }
 
-function formatMatchRate(shannons: number): string {
-  return `${shannons} sh/block`
-}
-
 async function closeChannel(channel: ChannelWithMatch) {
   const channelId = channel.channel_id
   const confirmed = await modal.confirm(
@@ -115,6 +112,45 @@ async function closeChannel(channel: ChannelWithMatch) {
     console.error('Failed to close channel:', e);
     toast.error(e.message || t('channels.closeFailed'))
   }
+}
+
+function showMatchDetail(channel: ChannelWithMatch) {
+  if (!channel.match_info) return
+  const info: ChannelMatchInfo = channel.match_info
+
+  const sections: DetailSection[] = [
+    {
+      title: t('channels.matchTxInfo'),
+      fields: [
+        { label: t('common.txHash'), value: info.match_tx_hash, type: 'hash' },
+        { label: t('common.outputIndex'), value: String(info.match_output_index) },
+        { label: t('common.sellerLockHash'), value: info.seller_lock_hash, type: 'hash' },
+      ],
+    },
+    {
+      title: t('channels.matchEconomics'),
+      fields: [
+        { label: t('common.capacity'), value: formatCKB(info.ckb_capacity) },
+        { label: 'xUDT', value: info.xudt_amount > 0 ? `${info.xudt_amount} xUDT` : t('common.none') },
+        { label: t('common.ratePerBlock'), value: `${info.shannons_per_block} ${t('common.feeRateUnit')}` },
+        { label: t('matches.lastExtractionBlock'), value: String(info.last_extraction_block) },
+      ],
+    },
+  ]
+
+  modal.show({
+    title: t('channels.matchDetailTitle'),
+    wide: true,
+    content: {
+      components: { MatchDetailPanel },
+      setup() {
+        return () => h(MatchDetailPanel, { sections })
+      },
+    },
+    confirmText: null,
+    cancelText: t('common.close'),
+    onCancel: () => modal.hide(),
+  })
 }
 </script>
 
@@ -282,18 +318,15 @@ async function closeChannel(channel: ChannelWithMatch) {
         />
       </template>
       <template #cell-match_status="{ row }">
-        <div
+        <button
           v-if="row.match_info"
-          class="match-cell"
+          class="btn-match-status"
+          :title="t('channels.viewMatchDetail')"
+          @click="showMatchDetail(row)"
         >
-          <div class="match-tx">
-            <code class="font-mono match-hash">{{ truncateAddress(String(row.match_info.match_tx_hash), 10, 6) }}</code>
-          </div>
-          <div class="match-meta">
-            <span class="match-amount">{{ row.match_info.xudt_amount > 0 ? row.match_info.xudt_amount + ' xUDT' : formatCKB(row.match_info.ckb_capacity) }}</span>
-            <span class="match-rate">{{ formatMatchRate(row.match_info.shannons_per_block) }}</span>
-          </div>
-        </div>
+          <span class="match-status-dot" />
+          <span>{{ t('channels.matchFound') }}</span>
+        </button>
         <span
           v-else
           class="match-none"
@@ -301,7 +334,7 @@ async function closeChannel(channel: ChannelWithMatch) {
       </template>
       <template #cell-actions="{ row }">
         <button
-          v-if="row.state_name !== 'Closed'"
+          v-if="row.state_name === 'ChannelReady'"
           class="btn btn-sm btn-danger"
           @click="closeChannel(row)"
         >
@@ -347,23 +380,36 @@ async function closeChannel(channel: ChannelWithMatch) {
 .btn-primary { background: var(--primary-500); color: #fff; } .btn-primary:hover:not(:disabled) { background: var(--primary-400); } .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
 
-/* Match cell column */
-.match-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+/* Match status button */
+.btn-match-status {
+  display: inline-flex;
   align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--primary-500);
+  border-radius: var(--radius-full);
+  background: rgba(24, 144, 255, 0.06);
+  color: var(--primary-500);
+  font-size: var(--fs-caption);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  white-space: nowrap;
 }
-.match-tx { margin-bottom: 1px; }
-.match-hash { font-size: var(--fs-caption); color: var(--primary-500); }
-.match-meta {
-  display: flex;
-  gap: var(--space-sm);
-  font-size: var(--fs-small);
-  color: var(--text-secondary);
+.btn-match-status:hover {
+  background: var(--primary-500);
+  color: #fff;
 }
-.match-amount { color: var(--primary-500); }
-.match-rate { font-family: var(--font-mono); }
+.match-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-500);
+  flex-shrink: 0;
+}
+.btn-match-status:hover .match-status-dot {
+  background: #fff;
+}
 .match-none {
   color: var(--text-disabled);
   font-size: var(--fs-body);

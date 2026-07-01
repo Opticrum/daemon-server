@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::api::AppState;
 use crate::error::AppError;
 use crate::services::console::gateway_service::GatewayService;
+use crate::services::runtime_config::RuntimeConfigPartial;
 use crate::services::wallet_session::{SessionStatus, SESSION_COOKIE, SESSION_TTL_SECS};
 
 fn session_token(req: &HttpRequest) -> Option<String> {
@@ -139,14 +140,17 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/orders/{tx_hash}/match", web::post().to(match_order))
             // Matches
             .route("/matches", web::get().to(list_matches))
+            .route("/matches/{id}", web::get().to(match_detail))
             .route("/matches/{id}/extract", web::post().to(extract_rent))
             .route("/matches/{id}/destroy", web::post().to(destroy_match))
             // Channels
             .route("/channels", web::get().to(scan_channels))
             // Fiber node info
             .route("/fiber-node-info", web::get().to(fiber_node_info))
-            // Config
-            .route("/config", web::get().to(get_config))
+            // Runtime config (mutable at runtime)
+            .route("/runtime-config", web::get().to(get_runtime_config))
+            .route("/runtime-config", web::put().to(update_runtime_config))
+            .route("/runtime-config/reset", web::post().to(reset_runtime_config))
             // Scheduler
             .route("/scheduler/status", web::get().to(scheduler_status))
             // Server info
@@ -159,7 +163,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 // ═══════════════════════════════════════════════════════
 
 pub async fn server_info(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let info = GatewayService::get_server_info(&state.config, state.chain_provider.as_ref());
+    let rc = state.runtime_config.read().unwrap();
+    let info = GatewayService::get_server_info(&state.config, &rc, state.chain_provider.as_ref());
     Ok(HttpResponse::Ok().json(info))
 }
 
@@ -402,26 +407,33 @@ pub struct SignerWalletItem {
     pub id: i64,
     pub label: String,
     pub ckb_address: String,
+    pub lock_hash: String,
     pub derivation_index: Option<i32>,
     pub derivation_path: Option<String>,
+    pub balance_shannons: u64,
 }
 
-/// Return the currently loaded (unlocked) HD wallet addresses for the
-/// match-order address selector. Returns an empty array when the signer
-/// is locked or no HD wallet is configured.
+/// Return the currently loaded (unlocked) HD wallet addresses with CKB
+/// balances for the match-order address selector.
 pub async fn signer_wallets(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let wallets: Vec<SignerWalletItem> = state
-        .signer
-        .wallet_records()
-        .into_iter()
-        .map(|wr| SignerWalletItem {
+    let records = state.signer.wallet_records();
+    let mut wallets = Vec::with_capacity(records.len());
+    for wr in records {
+        let balance = state
+            .chain_provider
+            .get_balance_by_address(&wr.ckb_address)
+            .await
+            .unwrap_or(0);
+        wallets.push(SignerWalletItem {
             id: wr.id,
             label: wr.label,
-            ckb_address: wr.ckb_address,
+            ckb_address: wr.ckb_address.clone(),
+            lock_hash: hex::encode(&wr.lock_hash),
             derivation_index: wr.derivation_index,
-            derivation_path: wr.derivation_path,
-        })
-        .collect();
+            derivation_path: wr.derivation_path.clone(),
+            balance_shannons: balance,
+        });
+    }
     Ok(HttpResponse::Ok().json(wallets))
 }
 
@@ -478,12 +490,46 @@ pub async fn match_order(
     body: web::Json<MatchOrderBody>,
 ) -> Result<HttpResponse, AppError> {
     let tx_hash = path.into_inner();
+    let tx_assembler = state
+        .tx_assembler
+        .as_ref()
+        .ok_or_else(|| AppError::ChainError("Transaction assembler not configured".into()))?;
     let result = GatewayService::match_order(
         &state.db,
         state.chain_provider.as_ref(),
         &tx_hash,
         body.order_output_index,
         &body.seller_address,
+        &state.signer,
+        tx_assembler,
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(result))
+}
+
+/// Check match readiness for an order (peer connected + compatible channel).
+pub async fn match_readiness(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let tx_hash = path.into_inner();
+    let status = GatewayService::get_match_readiness(
+        state.chain_provider.as_ref(),
+        &tx_hash,
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(status))
+}
+
+/// Create a channel for a specific order.
+pub async fn create_order_channel(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let tx_hash = path.into_inner();
+    let result = GatewayService::create_order_channel(
+        state.chain_provider.as_ref(),
+        &tx_hash,
     )
     .await?;
     Ok(HttpResponse::Ok().json(result))
@@ -493,17 +539,57 @@ pub async fn match_order(
 // Matches
 // ═══════════════════════════════════════════════════════
 
+/// Get a single match with full extraction history.
+pub async fn match_detail(
+    state: web::Data<AppState>,
+    path: web::Path<i64>,
+) -> Result<HttpResponse, AppError> {
+    let match_id = path.into_inner();
+    let detail = GatewayService::get_match_detail(&state.db, match_id)?;
+    Ok(HttpResponse::Ok().json(detail))
+}
+
 #[derive(Deserialize)]
 pub struct ListMatchesQuery {
     status: Option<String>,
+    /// Comma-separated hex-encoded lock hashes. When provided, only matches
+    /// whose seller address maps to one of these lock hashes are returned.
+    lock_hashes: Option<String>,
 }
 
 pub async fn list_matches(
     state: web::Data<AppState>,
     query: web::Query<ListMatchesQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let matches = GatewayService::list_matches(&state.db, query.status.as_deref())?;
-    Ok(HttpResponse::Ok().json(matches))
+    let signer_lock_hashes: Option<Vec<String>> = query
+        .lock_hashes
+        .as_ref()
+        .map(|s| s.split(',').map(|h| h.trim().to_string()).collect());
+
+    let matches = GatewayService::list_matches(
+        &state.db,
+        query.status.as_deref(),
+        state.chain_provider.as_ref(),
+        signer_lock_hashes.as_deref(),
+    )
+    .await?;
+
+    // Enrich each match with its total extracted amount from extraction_history
+    let mut conn = state.db.get()?;
+    let enriched: Vec<serde_json::Value> = matches
+        .into_iter()
+        .map(|m| {
+            let extracted = crate::db::matches::extracted_for_match(
+                &mut conn, &m.tx_hash, m.output_index,
+            )
+            .unwrap_or(0) as u64;
+            let mut v = serde_json::to_value(&m).unwrap_or_default();
+            v["extracted_amount_shannons"] = serde_json::json!(extracted);
+            v
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(enriched))
 }
 
 pub async fn extract_rent(
@@ -597,39 +683,28 @@ pub async fn fiber_node_info(state: web::Data<AppState>) -> Result<HttpResponse,
 }
 
 // ═══════════════════════════════════════════════════════
-// Config
+// Runtime config
 // ═══════════════════════════════════════════════════════
 
-pub async fn get_config(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let cfg = GatewayService::get_config(&state.config);
+pub async fn get_runtime_config(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let rc = state.runtime_config.read().unwrap();
+    let cfg = GatewayService::get_runtime_config(&rc);
     Ok(HttpResponse::Ok().json(cfg))
 }
 
-#[derive(Deserialize)]
-pub struct UpdateConfigBody {
-    pub enabled: Option<bool>,
-    pub min_capacity_shannons: Option<u64>,
-    pub max_escrow_blocks: Option<u64>,
-    pub interval_secs: Option<u64>,
+pub async fn update_runtime_config(
+    state: web::Data<AppState>,
+    body: web::Json<RuntimeConfigPartial>,
+) -> Result<HttpResponse, AppError> {
+    let cfg = GatewayService::update_runtime_config(&state.runtime_config, body.into_inner());
+    Ok(HttpResponse::Ok().json(cfg))
 }
 
-pub async fn update_config(
+pub async fn reset_runtime_config(
     state: web::Data<AppState>,
-    body: web::Json<UpdateConfigBody>,
 ) -> Result<HttpResponse, AppError> {
-    let current = GatewayService::get_config(&state.config);
-    // Note: config changes require restart to take effect in scheduler loops.
-    // This endpoint acknowledges the request and returns the requested values.
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "message": "Config update received. Restart required for changes to take effect.",
-        "current": current,
-        "requested": {
-            "enabled": body.enabled,
-            "min_capacity_shannons": body.min_capacity_shannons,
-            "max_escrow_blocks": body.max_escrow_blocks,
-            "interval_secs": body.interval_secs,
-        }
-    })))
+    let cfg = GatewayService::reset_runtime_config(&state.runtime_config, &state.config);
+    Ok(HttpResponse::Ok().json(cfg))
 }
 
 // ═══════════════════════════════════════════════════════

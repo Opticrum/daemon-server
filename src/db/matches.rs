@@ -17,6 +17,7 @@ pub struct TrackedMatch {
     pub order_output_index: i32,
     pub seller_address: String,
     pub shannons_per_block: i64,
+    pub ckb_capacity: i64,
     pub last_extraction_block: i64,
     pub xudt_amount: Option<String>,
     pub status: String,
@@ -33,6 +34,7 @@ pub struct NewTrackedMatch<'a> {
     pub order_output_index: i32,
     pub seller_address: &'a str,
     pub shannons_per_block: i64,
+    pub ckb_capacity: i64,
     pub xudt_amount: Option<&'a str>,
 }
 
@@ -46,6 +48,7 @@ pub fn insert_match(
     order_output_index: i32,
     seller_address: &str,
     shannons_per_block: u64,
+    ckb_capacity: u64,
     xudt_amount: Option<&str>,
 ) -> Result<i64, AppError> {
     let new = NewTrackedMatch {
@@ -55,6 +58,7 @@ pub fn insert_match(
         order_output_index,
         seller_address,
         shannons_per_block: shannons_per_block as i64,
+        ckb_capacity: ckb_capacity as i64,
         xudt_amount,
     };
 
@@ -70,10 +74,20 @@ pub fn get_match_by_id(conn: &mut SqliteConnection, id: i64) -> Result<TrackedMa
     tracked_matches::table
         .filter(tracked_matches::id.eq(id))
         .first(conn)
-        .map_err(|e| match e {
-            diesel::result::Error::NotFound => AppError::NotFound(format!("Match id={id}")),
-            other => AppError::from(other),
-        })
+        .map_err(Into::into)
+}
+
+/// Find an existing match for the given order outpoint.
+pub fn get_match_by_order(
+    conn: &mut SqliteConnection,
+    order_tx_hash: &str,
+    order_output_index: i32,
+) -> Result<TrackedMatch, AppError> {
+    tracked_matches::table
+        .filter(tracked_matches::order_tx_hash.eq(order_tx_hash))
+        .filter(tracked_matches::order_output_index.eq(order_output_index))
+        .first(conn)
+        .map_err(Into::into)
 }
 
 /// Update a match's extraction state.
@@ -129,7 +143,7 @@ pub fn list_matches(
 // ---------------------------------------------------------------------------
 
 /// An extraction history record.
-#[derive(Clone, Debug, Queryable, Identifiable, Selectable)]
+#[derive(Clone, Debug, serde::Serialize, Queryable, Identifiable, Selectable)]
 #[diesel(table_name = extraction_history)]
 pub struct ExtractionRecord {
     pub id: i64,
@@ -174,6 +188,20 @@ pub fn insert_extraction(
         .get_result(conn)?;
 
     Ok(record.id)
+}
+
+/// Sum of extracted amounts for a single match (by tx_hash + output_index).
+pub fn extracted_for_match(
+    conn: &mut SqliteConnection,
+    match_tx_hash: &str,
+    match_output_index: i32,
+) -> Result<i64, AppError> {
+    let amounts: Vec<i64> = extraction_history::table
+        .filter(extraction_history::match_tx_hash.eq(match_tx_hash))
+        .filter(extraction_history::match_output_index.eq(match_output_index))
+        .select(extraction_history::extracted_amount)
+        .load(conn)?;
+    Ok(amounts.iter().sum())
 }
 
 /// Get total extracted amount across all matches (for admin stats).

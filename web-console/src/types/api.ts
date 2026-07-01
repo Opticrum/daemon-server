@@ -36,6 +36,16 @@ export interface AutoMatchConfig {
   interval_secs: number
 }
 
+export interface RuntimeConfig {
+  fee_rate: number
+  scheduler_interval_secs: number
+  min_extraction_amount_shannons: number
+  auto_match_enabled: boolean
+  auto_match_min_capacity: number
+  auto_match_max_escrow_blocks: number
+  auto_match_interval_secs: number
+}
+
 // ── Server Info ──
 export interface ServerInfo {
   network: string
@@ -125,8 +135,10 @@ export interface SignerWalletItem {
   id: number
   label: string
   ckb_address: string
+  lock_hash: string
   derivation_index: number | null
   derivation_path: string | null
+  balance_shannons: number
 }
 
 export interface RefreshHdWalletResponse {
@@ -149,6 +161,18 @@ export interface OrderScanItem {
   channel_capacity: number
   shannons_per_block: number
   ckb_capacity: number
+}
+
+export interface MatchReadiness {
+  peer_connected: boolean
+  compatible_channel: {
+    channel_id: string
+    tx_hash: string
+    state_name: string
+    capacity: number
+  } | null
+  fiber_pubkey: string
+  required_capacity: number
 }
 
 export interface PeerConnectionStatus {
@@ -176,10 +200,39 @@ export interface TrackedMatch {
   order_output_index: number
   seller_address: string
   shannons_per_block: number
+  ckb_capacity: number
   last_extraction_block: number
   xudt_amount: number
   status: string
   created_at: string
+  extracted_amount_shannons: number
+}
+
+export interface ExtractionHistoryItem {
+  id: number
+  match_tx_hash: string
+  match_output_index: number
+  extracted_amount: number
+  tip_block: number
+  tx_hash: string
+  timestamp: string
+}
+
+export interface MatchDetail {
+  id: number
+  tx_hash: string
+  output_index: number
+  order_tx_hash: string
+  order_output_index: number
+  seller_address: string
+  shannons_per_block: number
+  ckb_capacity: number
+  last_extraction_block: number
+  xudt_amount: number | null
+  status: string
+  created_at: string
+  extracted_total_shannons: number
+  extraction_history: ExtractionHistoryItem[]
 }
 
 export interface MatchScanItem {

@@ -1,10 +1,12 @@
 //! Match service — match on-chain orders with Fiber channels.
 //!
+//! The opticrum contract requires the channel to be created **after** the order
+//! (`channel_block > order_block`), so a fresh channel must be opened for every
+//! match — existing channels can never be reused.
+//!
 //! When a seller matches an order, the service:
-//! 1. Looks for an existing compatible channel (ChannelReady, same counterparty,
-//!    enough capacity). Reuses it if found.
-//! 2. If no compatible channel exists, calls `open_channel` on the Fiber RPC
-//!    and polls `list_channels` until the channel reaches ChannelReady.
+//! 1. Opens a new channel to the buyer's Fiber peer via `open_channel`.
+//! 2. Polls `list_channels` until the channel reaches ChannelReady.
 //! 3. Builds the match transaction with the channel outpoint and records the
 //!    result in the local database.
 //!
@@ -26,22 +28,23 @@ pub struct MatchOrderResult {
     pub match_id: i64,
 }
 
-/// Maximum time to wait for a newly-opened channel to reach ChannelReady.
-const CHANNEL_READY_TIMEOUT_SECS: u64 = 120;
 /// Initial polling interval.
 const POLL_INITIAL_SECS: u64 = 2;
 /// Polling interval after ramp-up.
 const POLL_LATER_SECS: u64 = 5;
 /// Switch to longer interval after this many seconds.
 const POLL_RAMP_SECS: u64 = 30;
+/// Hardcoded timeout for channel creation fallback path (auto-matcher etc.).
+pub const CHANNEL_READY_TIMEOUT_SECS: u64 = 300;
+/// Extra capacity (shannons) added when creating a channel to cover the
+/// occupied capacity of the channel cell itself (~100 CKB).
+pub const CHANNEL_CELL_OCCUPIED_RESERVE: u64 = 100 * 100_000_000;
 
-/// Match an on-chain order with a Fiber channel.
+/// Match an on-chain order with a **fresh** Fiber channel.
 ///
-/// The channel outpoint is resolved automatically:
-/// - If a compatible ChannelReady channel to the buyer's Fiber pubkey already
-///   exists, it is reused.
-/// - Otherwise a new channel is opened and the call blocks until it becomes
-///   ChannelReady (up to 120 seconds).
+/// The contract requires `channel_block > order_block`, so the channel must be
+/// created for this specific match. This function always opens a new channel
+/// and blocks until it reaches ChannelReady (up to 120 seconds).
 pub async fn match_order<P: ChainProvider + ?Sized>(
     provider: &P,
     pool: &DbPool,
@@ -65,16 +68,22 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
 
     let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
     let required_capacity = order.order_data.channel_capacity;
+    let order_block = provider.get_tx_block_number(order_tx_hash).await?;
     info!(
         order_tx = %order_tx_hash,
         peer = %fiber_pubkey_hex,
         capacity = required_capacity,
+        order_block = order_block,
         "Match: looking for compatible channel"
     );
 
-    // ── 2. Check for an existing compatible channel ────────────────────
-    let existing = find_compatible_channel(provider, &fiber_pubkey_hex, required_capacity).await?;
-    let (channel_tx_hash, channel_output_index) = if let Some(ch) = existing {
+    // ── 2. Ensure peer is connected ────────────────────────────────────
+    let _ = provider.connect_peer(&fiber_pubkey_hex).await;
+
+    // ── 3. Try to reuse an existing compatible channel ─────────────────
+    let (channel_tx_hash, channel_output_index) = if let Some(ch) =
+        find_compatible_channel(provider, &fiber_pubkey_hex, required_capacity, order_block).await?
+    {
         info!(
             channel_id = %ch.channel_id,
             tx_hash = %ch.tx_hash,
@@ -82,17 +91,18 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
         );
         (ch.tx_hash, ch.output_index)
     } else {
-        // ── 3. Open a new channel ──────────────────────────────────────
+        // ── 4. Open a new channel (add reserve for cell occupied capacity) ──
+        let funding_amount = required_capacity + CHANNEL_CELL_OCCUPIED_RESERVE;
         info!(
             peer = %fiber_pubkey_hex,
-            amount = required_capacity,
+            amount = funding_amount,
             "Match: opening new channel"
         );
         let _temp_id = provider
-            .open_channel(&fiber_pubkey_hex, required_capacity)
+            .open_channel(&fiber_pubkey_hex, funding_amount)
             .await?;
 
-        // ── 4. Poll until channel is ChannelReady ──────────────────────
+        // ── 5. Poll until channel has an outpoint (check against raw capacity) ──
         let channel = wait_for_channel_ready(
             provider,
             &fiber_pubkey_hex,
@@ -108,7 +118,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
         (channel.tx_hash, channel.output_index)
     };
 
-    // ── 5. Build match transaction ─────────────────────────────────────
+    // ── 4. Build match transaction ─────────────────────────────────────
     let tx_hex = format!(
         "match_order:{}:{}:{}:{}",
         order_tx_hash, order_output_index, channel_tx_hash, channel_output_index
@@ -116,7 +126,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     let tx_hash = provider.send_transaction(&tx_hex).await?;
     let output_index = 0; // Match Cell is output[0]
 
-    // ── 6. Persist tracked match ───────────────────────────────────────
+    // ── 5. Persist tracked match ───────────────────────────────────────
     let shannons_per_block = order.order_data.shannons_per_block;
     let mut conn = pool.get()?;
     let match_id = match_db::insert_match(
@@ -127,6 +137,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
         order_output_index as i32,
         seller_address,
         shannons_per_block,
+        order.order_data.channel_capacity,
         None::<&str>,
     )?;
 
@@ -147,26 +158,81 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     })
 }
 
+/// Find or create a channel for matching: try existing channels first,
+/// otherwise connect peer + open a new one + wait for outpoint.
+pub async fn ensure_channel<P: ChainProvider + ?Sized>(
+    provider: &P,
+    counterparty_pubkey: &str,
+    required_capacity: u64,
+    order_tx_hash: &str,
+) -> Result<crate::services::chain_provider::FiberChannelInfo, AppError> {
+    let order_block = provider
+        .get_tx_block_number(order_tx_hash)
+        .await
+        .unwrap_or(0);
+
+    // Try existing compatible channel first
+    if let Some(ch) = find_compatible_channel(
+        provider,
+        counterparty_pubkey,
+        required_capacity,
+        order_block,
+    )
+    .await?
+    {
+        Ok(ch)
+    } else {
+        Err(AppError::ChainError(format!(
+            "No compatible channel found for {counterparty_pubkey} with capacity {required_capacity}"
+        )))
+    }
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Find an existing ChannelReady channel that matches the given counterparty
-/// pubkey and has at least the required capacity.
+/// Find an existing channel that matches the counterparty pubkey, has enough
+/// capacity, and was created AFTER the order (contract requirement).
 async fn find_compatible_channel<P: ChainProvider + ?Sized>(
     provider: &P,
     counterparty_pubkey: &str,
     min_capacity: u64,
+    order_block: u64,
 ) -> Result<Option<crate::services::chain_provider::FiberChannelInfo>, AppError> {
     let channels = provider.scan_fiber_channels(&[]).await?;
-    Ok(channels.into_iter().find(|ch| {
-        ch.counterparty_fiber_key == counterparty_pubkey
-            && ch.state_name == "ChannelReady"
-            && ch.capacity >= min_capacity
-    }))
+    for ch in channels {
+        if ch.counterparty_fiber_key.trim_start_matches("0x")
+            != counterparty_pubkey.trim_start_matches("0x")
+        {
+            continue;
+        }
+        if ch.capacity < min_capacity {
+            continue;
+        }
+        if ch.tx_hash.is_empty() {
+            continue;
+        }
+        // Check contract requirement: channel_block > order_block
+        let channel_block = provider.get_tx_block_number(&ch.tx_hash).await?;
+        if channel_block > 0 && channel_block <= order_block {
+            debug!(
+                channel_block = channel_block,
+                order_block = order_block,
+                channel_id = %ch.channel_id,
+                "Match: channel created before order, skipping"
+            );
+            continue;
+        }
+        if channel_block > 0 && channel_block > order_block {
+            return Ok(Some(ch));
+        }
+        // channel_block == 0 means tx not yet confirmed — skip
+    }
+    Ok(None)
 }
 
-/// Poll `scan_fiber_channels` until a ChannelReady channel matching the
+/// Poll `scan_fiber_channels` until a channel matching the
 /// given counterparty pubkey and capacity appears, or the timeout is reached.
-async fn wait_for_channel_ready<P: ChainProvider + ?Sized>(
+pub async fn wait_for_channel_ready<P: ChainProvider + ?Sized>(
     provider: &P,
     counterparty_pubkey: &str,
     min_capacity: u64,
@@ -191,22 +257,63 @@ async fn wait_for_channel_ready<P: ChainProvider + ?Sized>(
         };
 
         let channels = provider.scan_fiber_channels(&[]).await?;
-        let found = channels.into_iter().find(|ch| {
-            ch.counterparty_fiber_key == counterparty_pubkey
-                && ch.state_name == "ChannelReady"
-                && ch.capacity >= min_capacity
-        });
 
-        match found {
-            Some(ch) => return Ok(ch),
-            None => {
-                debug!(
-                    elapsed = elapsed,
-                    "Match: channel not ready yet, retrying in {}s", delay
-                );
-                actix_rt::time::sleep(Duration::from_secs(delay)).await;
+        // Check for failed/terminal channels for this peer
+        let matching: Vec<_> = channels
+            .iter()
+            .filter(|ch| {
+                ch.counterparty_fiber_key.trim_start_matches("0x")
+                    == counterparty_pubkey.trim_start_matches("0x")
+            })
+            .collect();
+
+        for ch in &matching {
+            match ch.state_name.as_str() {
+                "Closed" | "ShuttingDown" => {
+                    return Err(AppError::ChainError(format!(
+                        "Channel to {counterparty_pubkey} entered terminal state '{}' (id={}). \
+                         The channel creation likely failed on the Fiber node side.",
+                        ch.state_name, ch.channel_id
+                    )));
+                }
+                _ if !ch.tx_hash.is_empty() && ch.capacity >= min_capacity => {
+                    info!(
+                        channel_id = %ch.channel_id,
+                        tx_hash = %ch.tx_hash,
+                        state = %ch.state_name,
+                        "Match: channel outpoint available, proceeding"
+                    );
+                    return Ok((*ch).clone());
+                }
+                _ => {}
             }
         }
+
+        // Log all states for this peer (info level so it's visible in production)
+        let state_summary: Vec<_> = matching
+            .iter()
+            .map(|ch| {
+                format!(
+                    "{}@{}",
+                    ch.state_name,
+                    &ch.channel_id[..8.min(ch.channel_id.len())]
+                )
+            })
+            .collect();
+        if !state_summary.is_empty() {
+            info!(
+                elapsed = started.elapsed().as_secs(),
+                channels = ?state_summary,
+                "Match: waiting for channel, current states"
+            );
+        } else {
+            debug!(
+                elapsed = started.elapsed().as_secs(),
+                "Match: no channels found for peer yet, retrying in {}s", delay
+            );
+        }
+
+        actix_rt::time::sleep(Duration::from_secs(delay)).await;
     }
 }
 

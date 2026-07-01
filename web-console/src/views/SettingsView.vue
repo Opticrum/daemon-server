@@ -3,31 +3,55 @@ import { ref, onMounted, inject } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
 import StatusTag from '@/components/ui/StatusTag.vue'
-import type { AutoMatchConfig, ServerInfo } from '@/types/api'
+import type { RuntimeConfig, ServerInfo } from '@/types/api'
 
 const api = useApi()
 const { t } = useI18n()
 const toast = inject<any>('toast')!
 
-const activeTab = ref<'auto-match' | 'network'>('auto-match')
+const activeTab = ref<'auto-match' | 'runtime' | 'network'>('auto-match')
 
-// Auto-Match Config
-const config = ref<AutoMatchConfig | null>(null)
+// Runtime Config (shared by auto-match and runtime tabs)
+const config = ref<RuntimeConfig | null>(null)
 const configLoading = ref(true)
 const editing = ref(false)
-const editForm = ref<AutoMatchConfig>({ enabled: false, min_capacity_shannons: 0, max_escrow_blocks: 0, interval_secs: 0 })
+const editForm = ref<RuntimeConfig>({
+  fee_rate: 0,
+  scheduler_interval_secs: 0,
+  min_extraction_amount_shannons: 0,
+  auto_match_enabled: false,
+  auto_match_min_capacity: 0,
+  auto_match_max_escrow_blocks: 0,
+  auto_match_interval_secs: 0,
+})
 
 async function loadConfig() {
   configLoading.value = true
-  try { config.value = await api.getAutoMatchConfig(); editForm.value = { ...config.value } }
-  catch (e: any) { console.error('Failed to load auto-match config:', e); toast.error(e.message || t('settings.configLoadFailed')) }
+  try { config.value = await api.getRuntimeConfig(); editForm.value = { ...config.value } }
+  catch (e: any) { console.error('Failed to load runtime config:', e); toast.error(e.message || t('settings.configLoadFailed')) }
   finally { configLoading.value = false }
 }
 function startEditing() { if (config.value) editForm.value = { ...config.value }; editing.value = true }
 async function saveConfig() {
-  try { await api.updateAutoMatchConfig(editForm.value); toast.success(t('settings.configSaved')); config.value = { ...editForm.value }; editing.value = false }
-  catch (e: any) { console.error('Failed to save auto-match config:', e); toast.error(e.message || t('settings.configSaveFailed')) }
+  try {
+    const updated = await api.updateRuntimeConfig(editForm.value)
+    toast.success(t('settings.configSaved'))
+    config.value = updated
+    editForm.value = { ...updated }
+    editing.value = false
+  }
+  catch (e: any) { console.error('Failed to save config:', e); toast.error(e.message || t('settings.configSaveFailed')) }
 }
+async function resetConfig() {
+  try {
+    const defaults = await api.resetRuntimeConfig()
+    config.value = defaults
+    if (editing.value) editForm.value = { ...defaults }
+    toast.success(t('settings.configSaved'))
+  }
+  catch (e: any) { console.error('Failed to reset config:', e); toast.error(e.message || t('settings.configResetFailed')) }
+}
+function cancelEditing() { editForm.value = { ...config.value! }; editing.value = false }
 
 // Network info
 const serverInfo = ref<ServerInfo | null>(null)
@@ -55,6 +79,13 @@ onMounted(() => { loadConfig(); loadServerInfo() })
       </button>
       <button
         class="sub-tab"
+        :class="{ active: activeTab === 'runtime' }"
+        @click="activeTab = 'runtime'"
+      >
+        {{ t('settings.runtime') }}
+      </button>
+      <button
+        class="sub-tab"
         :class="{ active: activeTab === 'network' }"
         @click="activeTab = 'network'"
       >
@@ -62,19 +93,29 @@ onMounted(() => { loadConfig(); loadServerInfo() })
       </button>
     </div>
 
+    <!-- Auto-Match Tab -->
     <div
       v-if="activeTab === 'auto-match'"
       class="card config-card"
     >
       <div class="card-header">
         <h3>{{ t('settings.autoMatchConfig') }}</h3>
-        <button
-          v-if="!editing"
-          class="btn btn-default btn-sm"
-          @click="startEditing"
-        >
-          {{ t('settings.edit') }}
-        </button>
+        <div class="card-header-actions">
+          <button
+            v-if="!editing"
+            class="btn btn-default btn-sm"
+            @click="resetConfig"
+          >
+            {{ t('settings.reset') }}
+          </button>
+          <button
+            v-if="!editing"
+            class="btn btn-default btn-sm"
+            @click="startEditing"
+          >
+            {{ t('settings.edit') }}
+          </button>
+        </div>
       </div>
       <div
         v-if="configLoading"
@@ -89,18 +130,18 @@ onMounted(() => { loadConfig(); loadServerInfo() })
         >
           <div class="config-row">
             <span class="config-label">{{ t('settings.enabled') }}</span><StatusTag
-              :status="config.enabled ? 'live' : 'destroyed'"
-              :label="config.enabled ? t('settings.enabledLabel') : t('settings.disabledLabel')"
+              :status="config.auto_match_enabled ? 'live' : 'destroyed'"
+              :label="config.auto_match_enabled ? t('settings.enabledLabel') : t('settings.disabledLabel')"
             />
           </div>
           <div class="config-row">
-            <span class="config-label">{{ t('settings.minCapacity') }}</span><span>{{ (config.min_capacity_shannons / 100_000_000).toFixed(0) }} {{ t('common.CKB') }}</span>
+            <span class="config-label">{{ t('settings.minCapacity') }}</span><span>{{ (config.auto_match_min_capacity / 100_000_000).toFixed(0) }} {{ t('common.CKB') }}</span>
           </div>
           <div class="config-row">
-            <span class="config-label">{{ t('settings.maxEscrow') }}</span><span>{{ config.max_escrow_blocks.toLocaleString() }} {{ t('settings.blocks') }}</span>
+            <span class="config-label">{{ t('settings.maxEscrow') }}</span><span>{{ config.auto_match_max_escrow_blocks.toLocaleString() }} {{ t('settings.blocks') }}</span>
           </div>
           <div class="config-row">
-            <span class="config-label">{{ t('settings.interval') }}</span><span>{{ config.interval_secs }} {{ t('settings.seconds') }}</span>
+            <span class="config-label">{{ t('settings.interval') }}</span><span>{{ config.auto_match_interval_secs }} {{ t('settings.seconds') }}</span>
           </div>
         </div>
         <div
@@ -109,27 +150,27 @@ onMounted(() => { loadConfig(); loadServerInfo() })
         >
           <div class="form-group">
             <label class="form-label"><input
-              v-model="editForm.enabled"
+              v-model="editForm.auto_match_enabled"
               type="checkbox"
             > {{ t('settings.enableAutoMatch') }}</label>
           </div>
           <div class="form-group">
             <label class="form-label">{{ t('settings.minCapacity') }} (shannons)</label><input
-              v-model.number="editForm.min_capacity_shannons"
+              v-model.number="editForm.auto_match_min_capacity"
               type="number"
               class="form-input"
             >
           </div>
           <div class="form-group">
             <label class="form-label">{{ t('settings.maxEscrow') }}</label><input
-              v-model.number="editForm.max_escrow_blocks"
+              v-model.number="editForm.auto_match_max_escrow_blocks"
               type="number"
               class="form-input"
             >
           </div>
           <div class="form-group">
             <label class="form-label">{{ t('settings.interval') }} ({{ t('settings.seconds') }})</label><input
-              v-model.number="editForm.interval_secs"
+              v-model.number="editForm.auto_match_interval_secs"
               type="number"
               class="form-input"
             >
@@ -137,7 +178,7 @@ onMounted(() => { loadConfig(); loadServerInfo() })
           <div class="form-actions">
             <button
               class="btn btn-default"
-              @click="editing = false"
+              @click="cancelEditing"
             >
               {{ t('settings.cancel') }}
             </button><button
@@ -147,9 +188,93 @@ onMounted(() => { loadConfig(); loadServerInfo() })
               {{ t('settings.save') }}
             </button>
           </div>
-          <p class="form-hint text-muted">
-            {{ t('settings.restartNote') }}
-          </p>
+        </div>
+      </template>
+    </div>
+
+    <!-- Runtime Tab -->
+    <div
+      v-if="activeTab === 'runtime'"
+      class="card config-card"
+    >
+      <div class="card-header">
+        <h3>{{ t('settings.runtimeConfig') }}</h3>
+        <div class="card-header-actions">
+          <button
+            v-if="!editing"
+            class="btn btn-default btn-sm"
+            @click="resetConfig"
+          >
+            {{ t('settings.reset') }}
+          </button>
+          <button
+            v-if="!editing"
+            class="btn btn-default btn-sm"
+            @click="startEditing"
+          >
+            {{ t('settings.edit') }}
+          </button>
+        </div>
+      </div>
+      <div
+        v-if="configLoading"
+        class="text-muted"
+      >
+        {{ t('common.loading') }}
+      </div>
+      <template v-else-if="config">
+        <div
+          v-if="!editing"
+          class="config-display"
+        >
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.feeRate') }}</span><span>{{ config.fee_rate.toLocaleString() }} shannons/KB</span>
+          </div>
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.schedulerInterval') }}</span><span>{{ config.scheduler_interval_secs }} {{ t('settings.seconds') }}</span>
+          </div>
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.minExtraction') }}</span><span>{{ (config.min_extraction_amount_shannons / 100_000_000).toFixed(2) }} {{ t('common.CKB') }}</span>
+          </div>
+        </div>
+        <div
+          v-else
+          class="config-form"
+        >
+          <div class="form-group">
+            <label class="form-label">{{ t('settings.feeRate') }}</label><input
+              v-model.number="editForm.fee_rate"
+              type="number"
+              class="form-input"
+            >
+          </div>
+          <div class="form-group">
+            <label class="form-label">{{ t('settings.schedulerInterval') }} ({{ t('settings.seconds') }})</label><input
+              v-model.number="editForm.scheduler_interval_secs"
+              type="number"
+              class="form-input"
+            >
+          </div>
+          <div class="form-group">
+            <label class="form-label">{{ t('settings.minExtraction') }} (shannons)</label><input
+              v-model.number="editForm.min_extraction_amount_shannons"
+              type="number"
+              class="form-input"
+            >
+          </div>
+          <div class="form-actions">
+            <button
+              class="btn btn-default"
+              @click="cancelEditing"
+            >
+              {{ t('settings.cancel') }}
+            </button><button
+              class="btn btn-primary"
+              @click="saveConfig"
+            >
+              {{ t('settings.save') }}
+            </button>
+          </div>
         </div>
       </template>
     </div>
@@ -218,6 +343,7 @@ onMounted(() => { loadConfig(); loadServerInfo() })
 .sub-tab:hover { color: var(--primary-500); } .sub-tab.active { color: var(--primary-500); border-bottom-color: var(--primary-500); font-weight: 500; }
 .card { background: var(--bg-card); border-radius: var(--radius-lg); border: 1px solid var(--border-light); box-shadow: var(--shadow-base); padding: var(--space-xl); }
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); } .card-header h3 { font-size: var(--fs-h3); font-weight: var(--fw-h3); }
+.card-header-actions { display: flex; gap: var(--space-xs); }
 .config-display { display: flex; flex-direction: column; gap: var(--space-md); }
 .config-row { display: flex; justify-content: space-between; align-items: center; padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-light); font-size: var(--fs-body); }
 .config-row:last-child { border-bottom: none; }

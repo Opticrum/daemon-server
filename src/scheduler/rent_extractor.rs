@@ -142,6 +142,7 @@ mod tests {
             0,
             "ckt1q...seller",
             1000,
+            0,
             None::<&str>,
         )
         .unwrap();
@@ -181,6 +182,7 @@ mod tests {
             0,
             "ckt1q...seller",
             1,
+            0,
             None::<&str>,
         )
         .unwrap();
@@ -220,6 +222,7 @@ mod tests {
             0,
             "low_seller",
             10,
+            0,
             None::<&str>,
         )
         .unwrap();

@@ -134,6 +134,7 @@ fn match_create_and_get() {
         0,
         "ckt1q...seller",
         150,
+        100,
         None::<&str>,
     )
     .unwrap();
@@ -151,8 +152,18 @@ fn match_update_extraction() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    let id = match_db::insert_match(&mut conn, "m_tx", 0, "o_tx", 0, "seller", 50, None::<&str>)
-        .unwrap();
+    let id = match_db::insert_match(
+        &mut conn,
+        "m_tx",
+        0,
+        "o_tx",
+        0,
+        "seller",
+        50,
+        100,
+        None::<&str>,
+    )
+    .unwrap();
 
     match_db::update_match_extraction(&mut conn, id, 5000).unwrap();
     let m = match_db::get_match_by_id(&mut conn, id).unwrap();
@@ -164,7 +175,8 @@ fn match_update_status() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    let id = match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 10, None::<&str>).unwrap();
+    let id =
+        match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 10, 100, None::<&str>).unwrap();
 
     match_db::update_match_status(&mut conn, id, "exhausted").unwrap();
     let m = match_db::get_match_by_id(&mut conn, id).unwrap();
@@ -176,8 +188,8 @@ fn match_list_by_status() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    match_db::insert_match(&mut conn, "m1", 0, "o1", 0, "s1", 1, None::<&str>).unwrap();
-    match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 2, None::<&str>).unwrap();
+    match_db::insert_match(&mut conn, "m1", 0, "o1", 0, "s1", 1, 100, None::<&str>).unwrap();
+    match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 2, 100, None::<&str>).unwrap();
     match_db::update_match_status(&mut conn, 1, "destroyed").unwrap();
 
     let live = match_db::list_matches(&mut conn, Some("live")).unwrap();

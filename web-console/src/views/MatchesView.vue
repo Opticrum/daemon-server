@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, inject } from 'vue'
+import { ref, onMounted, inject, h } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
-import { truncateAddress } from '@/utils/format'
+import { truncateAddress, formatCKB, explorerTxUrl } from '@/utils/format'
 import DataTable, { type ColumnDef } from '@/components/ui/DataTable.vue'
 import StatusTag from '@/components/ui/StatusTag.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import type { TrackedMatch } from '@/types/api'
+import MatchDetailPanel, { type DetailSection } from '@/components/ui/MatchDetailPanel.vue'
+import type { TrackedMatch, MatchDetail } from '@/types/api'
 
 const api = useApi()
 const { t } = useI18n()
@@ -17,6 +18,8 @@ const matches = ref<TrackedMatch[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
 const filterStatus = ref<string>('')
+const network = ref('testnet')
+const signerLockHashes = ref<string[]>([])
 
 const filters = [
   { labelKey: 'matches.all', value: '' },
@@ -26,36 +29,157 @@ const filters = [
 ]
 
 const columns: ColumnDef[] = [
-  { key: 'id', label: t('common.id'), sortable: true, align: 'right' },
-  { key: 'tx_hash', label: t('common.txHash') },
-  { key: 'seller_address', label: t('common.sellerAddr') },
-  { key: 'shannons_per_block', label: t('common.rate'), sortable: true, align: 'right' },
+  { key: 'tx_hash', label: t('common.txHash'), align: 'center' },
+  { key: 'seller_address', label: t('common.sellerAddr'), align: 'center' },
+  { key: 'rate', label: t('common.rate'), sortable: true, align: 'center' },
+  { key: 'rent', label: t('matches.rent'), align: 'center' },
   { key: 'status', label: t('common.status'), align: 'center' },
   { key: 'actions', label: t('common.actions'), align: 'center' },
 ]
 
+const totalRent = (m: TrackedMatch) => m.ckb_capacity || 0
+const extractedRent = (m: TrackedMatch) => m.extracted_amount_shannons ?? 0
+
+async function loadSignerLockHashes() {
+  try {
+    const wallets = await api.getSignerWallets()
+    signerLockHashes.value = wallets.map(w => w.lock_hash).filter(Boolean)
+  } catch {
+    signerLockHashes.value = []
+  }
+}
+
 async function loadMatches() {
   loading.value = true; error.value = null
-  try { matches.value = await api.listMatches(filterStatus.value || undefined) }
+  try {
+    const hashes = signerLockHashes.value.length > 0 ? signerLockHashes.value : undefined
+    matches.value = await api.listMatches(filterStatus.value || undefined, hashes)
+  }
   catch (e: any) { console.error('Failed to load matches:', e); error.value = e.message || t('matches.loadFailed') }
   finally { loading.value = false }
 }
 
 function setFilter(status: string) { filterStatus.value = status; loadMatches() }
 
-async function extractRent(match: TrackedMatch) {
-  try { await api.extractRent(match.id); toast.success(t('matches.extractSuccess')); await loadMatches() }
-  catch (e: any) { console.error('Failed to extract rent:', e); toast.error(e.message || 'Extract failed') }
+async function copyAddress(addr: string) {
+  try { await navigator.clipboard.writeText(addr); toast.success(t('common.copied')) }
+  catch { toast.success(t('common.copied')) }
 }
 
-async function destroyMatch(match: TrackedMatch) {
+async function extractRent(match: TrackedMatch) {
+  try { await api.extractRent(match.id); toast.success(t('matches.extractSuccess')); await loadMatches() }
+  catch (e: any) { toast.error(e.message || 'Extract failed') }
+}
+
+async function doDestroyMatch(match: TrackedMatch) {
   const ok = await modal.confirm(t('matches.destroyConfirm', { id: match.id }), { title: t('matches.destroyTitle'), danger: true, confirmText: t('matches.destroy') })
   if (!ok) return
   try { await api.destroyMatch(match.id); toast.success(t('matches.destroySuccess')); await loadMatches() }
-  catch (e: any) { console.error('Failed to destroy match:', e); toast.error(e.message || 'Destroy failed') }
+  catch (e: any) { toast.error(e.message || 'Destroy failed') }
 }
 
-onMounted(loadMatches)
+// ── Match Detail Modal ──
+
+const detailLoading = ref(false)
+
+async function showMatchDetail(match: TrackedMatch) {
+  detailLoading.value = true
+  let detail: MatchDetail | null = null
+  try {
+    detail = await api.getMatchDetail(match.id)
+  } catch (e: any) {
+    toast.error(e.message || 'Failed to load match detail')
+    return
+  } finally {
+    detailLoading.value = false
+  }
+
+  if (!detail) return
+
+  const sections: DetailSection[] = [
+    {
+      title: t('channels.matchTxInfo'),
+      fields: [
+        { label: t('common.txHash'), value: detail.tx_hash, type: 'hash', href: explorerTxUrl(detail.tx_hash, network.value) },
+        { label: t('common.outputIndex'), value: String(detail.output_index) },
+        { label: t('common.sellerAddr'), value: detail.seller_address, type: 'hash' },
+        { label: t('common.status'), value: detail.status, type: 'status' },
+        { label: t('common.createdAt'), value: detail.created_at },
+      ],
+    },
+    {
+      title: t('channels.matchEconomics'),
+      fields: [
+        { label: t('common.capacity'), value: formatCKB(detail.ckb_capacity) },
+        { label: t('common.ratePerBlock'), value: `${detail.shannons_per_block} ${t('common.feeRateUnit')}` },
+        { label: 'xUDT', value: detail.xudt_amount ? `${detail.xudt_amount}` : t('common.none') },
+        { label: t('matches.lastExtractionBlock'), value: String(detail.last_extraction_block) },
+        { label: t('matches.rent'), value: `${formatCKB(detail.extracted_total_shannons)} / ${formatCKB(detail.ckb_capacity)}` },
+      ],
+    },
+  ]
+
+  const extractionHistory = {
+    title: t('matches.extractionHistory'),
+    headers: [
+      t('matches.rent').split('/')[0].trim(),
+      t('matches.lastExtractionBlock'),
+      t('common.txHash'),
+      t('common.createdAt'),
+    ] as [string, string, string, string],
+    rows: detail.extraction_history.map(ex => ({
+      amount: formatCKB(ex.extracted_amount),
+      block: String(ex.tip_block),
+      txHash: ex.tx_hash,
+      timestamp: ex.timestamp ? new Date(ex.timestamp).toLocaleString() : '—',
+    })),
+    emptyText: t('matches.noExtractions'),
+  }
+
+  const FooterExtra = {
+    setup() {
+      return () => h('div', { class: 'md-footer-actions' }, [
+        detail!.status === 'live' && h('button', {
+          class: 'btn btn-primary', style: 'margin-right:8px',
+          onClick: async () => {
+            try { await api.extractRent(detail!.id); toast.success(t('matches.extractSuccess')); modal.hide(); await loadMatches() }
+            catch (e: any) { toast.error(e.message || 'Extract failed') }
+          }
+        }, t('matches.extract')),
+        detail!.status === 'exhausted' && h('button', {
+          class: 'btn btn-danger',
+          onClick: async () => {
+            const ok = await modal.confirm(t('matches.destroyConfirm', { id: detail!.id }), { title: t('matches.destroyTitle'), danger: true, confirmText: t('matches.destroy') })
+            if (!ok) return
+            try { await api.destroyMatch(detail!.id); toast.success(t('matches.destroySuccess')); modal.hide(); await loadMatches() }
+            catch (e: any) { toast.error(e.message || 'Destroy failed') }
+          }
+        }, t('matches.destroy')),
+      ])
+    }
+  }
+
+  modal.show({
+    title: t('matches.detailTitle'),
+    wide: true,
+    content: {
+      components: { MatchDetailPanel },
+      setup() {
+        return () => h(MatchDetailPanel, { sections, extractionHistory })
+      },
+    },
+    confirmText: null,
+    cancelText: t('common.close'),
+    extra: FooterExtra,
+    onCancel: () => modal.hide(),
+  })
+}
+
+onMounted(async () => {
+  try { const info = await api.getServerInfo(); network.value = info.network } catch { /* ignore */ }
+  await loadSignerLockHashes()
+  await loadMatches()
+})
 </script>
 
 <template>
@@ -101,36 +225,52 @@ onMounted(loadMatches)
       :loading="loading"
     >
       <template #cell-tx_hash="{ value }">
-        <code class="font-mono">{{ truncateAddress(String(value), 10, 8) }}</code>
+        <a
+          :href="explorerTxUrl(String(value), network)"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="tx-link font-mono"
+        >{{ truncateAddress(String(value), 12, 8) }}</a>
       </template>
       <template #cell-seller_address="{ value }">
-        <code class="font-mono">{{ truncateAddress(String(value), 8, 6) }}</code>
+        <code
+          class="font-mono copyable"
+          :title="String(value)"
+          @click="copyAddress(String(value))"
+        >{{ truncateAddress(String(value), 16, 10) }}</code>
       </template>
-      <template #cell-shannons_per_block="{ value }">
-        {{ value }} {{ t('common.feeRateUnit') }}
+      <template #cell-rate="{ row }">
+        {{ row.shannons_per_block }} {{ t('common.feeRateUnit') }}
+      </template>
+      <template #cell-rent="{ row }">
+        {{ formatCKB(extractedRent(row)) }} / {{ formatCKB(totalRent(row)) }}
       </template>
       <template #cell-status="{ value }">
         <StatusTag :status="String(value)" />
       </template>
       <template #cell-actions="{ row }">
-        <button
-          v-if="row.status === 'live'"
-          class="btn btn-sm btn-primary"
-          @click="extractRent(row)"
-        >
-          {{ t('matches.extract') }}
-        </button>
-        <button
-          v-else-if="row.status === 'exhausted'"
-          class="btn btn-sm btn-danger"
-          @click="destroyMatch(row)"
-        >
-          {{ t('matches.destroy') }}
-        </button>
-        <span
-          v-else
-          class="text-muted"
-        >—</span>
+        <div class="actions-group">
+          <button
+            class="btn btn-sm btn-default"
+            @click="showMatchDetail(row)"
+          >
+            {{ t('matches.detail') }}
+          </button>
+          <button
+            v-if="row.status === 'live'"
+            class="btn btn-sm btn-primary"
+            @click="extractRent(row)"
+          >
+            {{ t('matches.extract') }}
+          </button>
+          <button
+            v-else-if="row.status === 'exhausted'"
+            class="btn btn-sm btn-danger"
+            @click="doDestroyMatch(row)"
+          >
+            {{ t('matches.destroy') }}
+          </button>
+        </div>
       </template>
     </DataTable>
   </div>
@@ -143,9 +283,14 @@ onMounted(loadMatches)
 .filter-tabs { display: flex; gap: var(--space-xs); margin-bottom: var(--space-lg); }
 .filter-tab { padding: var(--space-xs) var(--space-md); border: 1px solid var(--border-dark); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-secondary); font-size: var(--fs-body); cursor: pointer; transition: all var(--transition-base); }
 .filter-tab:hover { color: var(--primary-500); border-color: var(--primary-500); } .filter-tab.active { background: var(--primary-500); border-color: var(--primary-500); color: #fff; }
+.tx-link { color: var(--primary-500); text-decoration: none; } .tx-link:hover { text-decoration: underline; }
+.copyable { cursor: pointer; transition: color var(--transition-base); }
+.copyable:hover { color: var(--primary-500); }
+.actions-group { display: flex; gap: 4px; justify-content: center; }
 .btn { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-md); height: 32px; border: none; border-radius: var(--radius-md); font-size: var(--fs-body); font-family: inherit; cursor: pointer; transition: all var(--transition-base); font-weight: 500; }
 .btn-default { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-dark); } .btn-default:hover { color: var(--primary-500); border-color: var(--primary-500); }
 .btn-primary { background: var(--primary-500); color: #fff; } .btn-primary:hover { background: var(--primary-400); }
 .btn-danger { background: var(--danger); color: #fff; } .btn-danger:hover { background: #ff7875; }
 .btn-sm { height: 28px; font-size: var(--fs-caption); padding: 0 var(--space-sm); }
+.md-footer-actions { display: flex; gap: 8px; }
 </style>

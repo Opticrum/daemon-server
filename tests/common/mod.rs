@@ -81,10 +81,14 @@ pub fn test_app_state() -> rust_server::api::AppState {
     let scheduler_state = std::sync::Arc::new(std::sync::RwLock::new(
         rust_server::services::console::scheduler_state::SchedulerState::new(),
     ));
+    let runtime_config = std::sync::Arc::new(std::sync::RwLock::new(
+        rust_server::services::runtime_config::RuntimeConfig::from_config(&config),
+    ));
 
     rust_server::api::AppState {
         db: test_db(),
         config,
+        runtime_config,
         chain_provider: std::sync::Arc::new(rust_server::services::MockChainProvider::new()),
         signer: std::sync::Arc::new(rust_server::services::hd_wallet_signer::HdWalletSigner::new()),
         wallet_session: std::sync::Arc::new(

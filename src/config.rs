@@ -117,6 +117,7 @@ pub struct Config {
     /// Auto-match cycle interval in seconds
     #[arg(long, env = "OPTICRUM_AUTO_MATCH_INTERVAL_SECS", default_value = "120")]
     pub auto_match_interval_secs: u64,
+
 }
 
 impl Default for Config {
@@ -282,7 +283,11 @@ impl Config {
             } else {
                 file.auto_match_interval_secs
             },
-            keystore_path: cli.keystore_path,
+            keystore_path: if cli.keystore_path != defaults.keystore_path {
+                cli.keystore_path
+            } else {
+                file.keystore_path
+            },
         }
     }
 

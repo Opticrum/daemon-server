@@ -1,4 +1,4 @@
-import { ApiError, type AutoMatchConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type TrackedMatch, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus } from '@/types/api'
+import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus } from '@/types/api'
 
 // ═══════════════════════════════════════════
 // Fetch wrapper
@@ -78,16 +78,27 @@ export function useApi() {
     // ── Orders ──
     scanOrders: (): Promise<OrderScanItem[]> =>
       request('/console/orders'),
+    getMatchReadiness: (txHash: string): Promise<MatchReadiness> =>
+      request(`/console/orders/${encodeURIComponent(txHash)}/match-readiness`),
+    createOrderChannel: (txHash: string): Promise<{ temporary_channel_id: string; peer: string; capacity: number }> =>
+      request(`/console/orders/${encodeURIComponent(txHash)}/create-channel`, { method: 'POST' }),
     matchOrder: (txHash: string, body: MatchOrderRequest): Promise<MatchOrderResult> =>
       request(`/console/orders/${encodeURIComponent(txHash)}/match`, {
         method: 'POST',
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(130_000), // 130s to cover 120s polling + overhead
+        signal: AbortSignal.timeout(300_000),
       }),
 
     // ── Matches ──
-    listMatches: (status?: string): Promise<TrackedMatch[]> =>
-      request('/console/matches' + (status ? `?status=${encodeURIComponent(status)}` : '')),
+    getMatchDetail: (id: number): Promise<MatchDetail> =>
+      request(`/console/matches/${id}`),
+    listMatches: (status?: string, lockHashes?: string[]): Promise<TrackedMatch[]> => {
+      const params = new URLSearchParams()
+      if (status) params.set('status', status)
+      if (lockHashes && lockHashes.length > 0) params.set('lock_hashes', lockHashes.join(','))
+      const qs = params.toString()
+      return request('/console/matches' + (qs ? `?${qs}` : ''))
+    },
     extractRent: (id: number): Promise<ExtractRentResult> =>
       request(`/console/matches/${id}/extract`, { method: 'POST' }),
     destroyMatch: (id: number): Promise<{ tx_hash: string; status: string }> =>
@@ -113,10 +124,12 @@ export function useApi() {
       request('/console/fiber-node-info'),
 
     // ── Config ──
-    getAutoMatchConfig: (): Promise<AutoMatchConfig> =>
-      request('/console/config'),
-    updateAutoMatchConfig: (body: Partial<AutoMatchConfig>): Promise<any> =>
-      request('/console/config', { method: 'PUT', body: JSON.stringify(body) }),
+    getRuntimeConfig: (): Promise<RuntimeConfig> =>
+      request('/console/runtime-config'),
+    updateRuntimeConfig: (body: Partial<RuntimeConfig>): Promise<RuntimeConfig> =>
+      request('/console/runtime-config', { method: 'PUT', body: JSON.stringify(body) }),
+    resetRuntimeConfig: (): Promise<RuntimeConfig> =>
+      request('/console/runtime-config/reset', { method: 'POST' }),
 
     // ── Server Info ──
     getServerInfo: (): Promise<ServerInfo> =>

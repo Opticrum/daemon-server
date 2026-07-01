@@ -6,6 +6,7 @@ export interface ColumnDef {
   label: string
   sortable?: boolean
   align?: 'left' | 'right' | 'center'
+  width?: string
 }
 
 import { useI18n } from '@/composables/useI18n'
@@ -90,6 +91,7 @@ const pageNumbers = computed(() => {
           <th
             v-for="col in columns"
             :key="col.key"
+            :style="col.width ? { width: col.width } : {}"
             :class="{ sortable: col.sortable, [`align-${col.align || 'left'}`]: true }"
             @click="col.sortable && toggleSort(col.key)"
           >
@@ -104,7 +106,7 @@ const pageNumbers = computed(() => {
         </tr>
       </thead>
       <tbody>
-        <tr v-if="loading">
+        <tr v-if="loading && rows.length === 0">
           <td
             :colspan="columns.length"
             class="loading-cell"

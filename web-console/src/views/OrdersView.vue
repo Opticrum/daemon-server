@@ -1,15 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted, inject, h, watch } from "vue";
+import { ref, reactive, onMounted, inject, h } from "vue";
+import { useRouter } from "vue-router";
 import { useApi } from "@/composables/useApi";
 import { useI18n } from "@/composables/useI18n";
-import { truncateAddress, formatCKB, formatAPY, explorerTxUrl } from "@/utils/format";
+import {
+  truncateAddress,
+  formatCKB,
+  formatAPY,
+  explorerTxUrl,
+} from "@/utils/format";
+import StatusTag from "@/components/ui/StatusTag.vue";
 import MatchOrderForm from "@/components/ui/MatchOrderForm.vue";
 import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
-import type { OrderScanItem, MatchOrderRequest, SignerWalletItem } from "@/types/api";
+import type {
+  OrderScanItem,
+  MatchOrderRequest,
+  SignerWalletItem,
+  MatchReadiness,
+} from "@/types/api";
 
 const api = useApi();
 const { t } = useI18n();
+const router = useRouter();
 const toast = inject<any>("toast")!;
 const modal = inject<any>("modal")!;
 
@@ -19,28 +32,55 @@ const scanned = ref(false);
 const error = ref<string | null>(null);
 const network = ref("testnet");
 const signerWallets = ref<SignerWalletItem[]>([]);
-const matchPhase = ref<'select' | 'opening' | 'waiting'>('select');
+const matchPhase = ref<"select" | "opening" | "waiting">("select");
 const matchForm = ref<MatchOrderRequest & { tx_hash: string }>({
   tx_hash: "",
   order_output_index: 0,
   seller_address: "",
 });
 
+// Per-order readiness state
+const readiness = reactive<Record<string, MatchReadiness | null>>({});
+const pollingTimers: Record<string, ReturnType<typeof setInterval>> = {};
+
 const columns: ColumnDef[] = [
-  { key: "tx_hash", label: t("common.txHash"), align: "center" },
-  { key: "fiber_pubkey", label: t("orders.buyerFiberPubkey"), align: "center" },
+  {
+    key: "tx_hash",
+    label: t("common.txHash"),
+    align: "center",
+    width: "155px",
+  },
+  {
+    key: "fiber_pubkey",
+    label: t("orders.buyerFiberPubkey"),
+    align: "center",
+    width: "130px",
+  },
   {
     key: "channel_capacity",
     label: t("common.capacity"),
     sortable: true,
     align: "center",
+    width: "120px",
   },
   {
     key: "annualized_yield",
     label: t("common.annualizedYield"),
     align: "center",
+    width: "65px",
   },
-  { key: "actions", label: t("common.actions"), align: "center" },
+  {
+    key: "match_status",
+    label: t("orders.matchStatus"),
+    align: "center",
+    width: "145px",
+  },
+  {
+    key: "actions",
+    label: t("common.actions"),
+    align: "center",
+    width: "95px",
+  },
 ];
 
 async function scanOrders() {
@@ -49,8 +89,12 @@ async function scanOrders() {
   try {
     orders.value = await api.scanOrders();
     scanned.value = true;
+    // Refresh readiness for all orders
+    for (const o of orders.value) {
+      fetchReadiness(o.tx_hash);
+    }
   } catch (e: any) {
-    console.error('Failed to scan orders:', e);
+    console.error("Failed to scan orders:", e);
     error.value = e.message || t("orders.scanFailed");
     toast.error(error.value!);
   } finally {
@@ -63,7 +107,7 @@ async function copyToClipboard(text: string) {
     await navigator.clipboard.writeText(text);
     toast.success(t("common.copied"));
   } catch {
-    console.warn('Clipboard API unavailable, using fallback');
+    console.warn("Clipboard API unavailable, using fallback");
     const ta = document.createElement("textarea");
     ta.value = text;
     ta.style.position = "fixed";
@@ -76,117 +120,97 @@ async function copyToClipboard(text: string) {
   }
 }
 
-function showProgressModal() {
-  modal.show({
-    title: t('orders.matchTitle'),
-    content: {
-      setup() {
-        return () =>
-          h('div', { class: 'match-progress' }, [
-            h('span', { class: 'spinner' }),
-            h('p', { class: 'progress-text' },
-              matchPhase.value === 'opening'
-                ? t('orders.matchStepChannel')
-                : t('orders.matchStepWaiting'),
-            ),
-          ])
-      },
-    },
-    confirmText: ' ', // truthy but invisible (prevents default '确定')
-    cancelText: ' ',  // truthy but invisible
-    onConfirm: () => {},
-    onCancel: () => {}, // no-op — prevents any close
-  })
+// ── Per-order readiness ────────────────────────────────────────────
+
+async function fetchReadiness(txHash: string) {
+  try {
+    readiness[txHash] = await api.getMatchReadiness(txHash);
+  } catch {
+    readiness[txHash] = null;
+  }
 }
 
-async function showConnectionCheck(order: OrderScanItem) {
-  const buyerPubkey = order.fiber_pubkey
-  const connected = ref(false)
-  const checking = ref(true)
+function startPolling(txHash: string) {
+  stopPolling(txHash);
+  fetchReadiness(txHash);
+  pollingTimers[txHash] = setInterval(() => fetchReadiness(txHash), 3000);
+}
 
-  async function doCheck() {
-    checking.value = true
-    try {
-      const status = await api.checkPeerConnection(buyerPubkey)
-      connected.value = status.connected
-    } catch (e) {
-      console.error('Failed to check peer connection:', e);
-      connected.value = false
-    } finally {
-      checking.value = false
-    }
+function stopPolling(txHash: string) {
+  if (pollingTimers[txHash]) {
+    clearInterval(pollingTimers[txHash]);
+    delete pollingTimers[txHash];
   }
+}
 
-  async function doConnect() {
-    checking.value = true
-    try {
-      await api.connectToPeer(buyerPubkey)
-      toast.success(t('orders.peerConnectSuccess'))
-      await doCheck()
-    } catch (e: any) {
-      console.error('Failed to connect to peer:', e);
-      toast.error(e.message || t('orders.peerConnectFailed'))
-      checking.value = false
-    }
+function isChannelBeingCreated(txHash: string): boolean {
+  const r = readiness[txHash];
+  if (!r?.compatible_channel) return false;
+  const s = r.compatible_channel.state_name;
+  return s !== "ChannelReady" && s !== "Closed" && s !== "ShuttingDown";
+}
+
+async function connectPeerForOrder(txHash: string, pubkey: string) {
+  const ok = await modal.confirm(
+    t("orders.confirmConnectPeer", { pubkey: truncateAddress(pubkey, 12, 8) }),
+    { title: t("orders.peerConnect"), confirmText: t("orders.peerConnect") },
+  );
+  if (!ok) return;
+  try {
+    await api.connectToPeer(pubkey);
+    toast.success(t("orders.peerConnectSuccess"));
+    startPolling(txHash);
+  } catch (e: any) {
+    toast.error(e.message || t("orders.peerConnectFailed"));
   }
+}
 
-  // Footer "连接" button component
-  const ConnectBtn = {
-    setup() {
-      return () =>
-        h('button', { class: 'btn btn-primary btn-sm', onClick: doConnect }, t('orders.peerConnect'))
-    },
+async function createChannelForOrder(txHash: string) {
+  const r = readiness[txHash];
+  const cap = r?.required_capacity
+    ? `${(r.required_capacity / 100_000_000).toFixed(0)} CKB`
+    : "—";
+  const ok = await modal.confirm(
+    t("orders.confirmCreateChannel", { peer: truncateAddress(r?.fiber_pubkey || "", 12, 8), capacity: cap }),
+    { title: t("orders.createChannel"), confirmText: t("orders.createChannel") },
+  );
+  if (!ok) return;
+  try {
+    const result = await api.createOrderChannel(txHash);
+    toast.success(
+      t("orders.channelCreating", {
+        id: result.temporary_channel_id.slice(0, 16),
+      }),
+    );
+    router.push("/channels");
+  } catch (e: any) {
+    toast.error(e.message || t("orders.channelCreateFailed"));
   }
+}
 
-  // Sync footer buttons with connection state
-  const stopWatch = watch([connected, checking], () => {
-    if (connected.value) {
-      modal.confirmText.value = t('orders.peerContinue')
-      modal.extra.value = undefined
-    } else if (!checking.value) {
-      modal.confirmText.value = null
-      modal.extra.value = ConnectBtn
-    } else {
-      modal.confirmText.value = null
-      modal.extra.value = undefined
-    }
-  })
-
+function showProgressModal() {
   modal.show({
-    title: t('orders.peerCheckTitle'),
+    title: t("orders.matchTitle"),
     content: {
       setup() {
         return () =>
-          h('div', { class: 'peer-check' }, [
-            h('p', { class: 'peer-pubkey' }, [
-              h('span', { class: 'peer-label' }, t('orders.buyerFiberPubkey') + ': '),
-              h('code', { class: 'font-mono peer-key' }, truncateAddress(buyerPubkey, 20, 16)),
-            ]),
-            h('div', { class: 'peer-status-row' }, [
-              checking.value
-                ? h('span', { class: 'spinner peer-spinner' })
-                : connected.value
-                  ? h('span', { class: 'peer-status connected' }, '✓ ' + t('orders.peerConnected'))
-                  : h('span', { class: 'peer-status disconnected' }, '✗ ' + t('orders.peerNotConnected')),
-            ]),
-          ])
+          h("div", { class: "match-progress" }, [
+            h("span", { class: "spinner" }),
+            h(
+              "p",
+              { class: "progress-text" },
+              matchPhase.value === "opening"
+                ? t("orders.matchStepChannel")
+                : t("orders.matchStepWaiting"),
+            ),
+          ]);
       },
     },
     confirmText: null,
-    cancelText: t('common.cancel'),
-    onConfirm: () => {
-      if (!connected.value) return
-      stopWatch()
-      modal.hide()
-      showMatchModal(order)
-    },
-    onCancel: () => {
-      stopWatch()
-      modal.hide()
-    },
-  })
-
-  doCheck()
+    cancelText: null,
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
 }
 
 async function showMatchModal(order: OrderScanItem) {
@@ -194,7 +218,7 @@ async function showMatchModal(order: OrderScanItem) {
   try {
     signerWallets.value = await api.getSignerWallets();
   } catch (e) {
-    console.error('Failed to load signer wallets:', e);
+    console.error("Failed to load signer wallets:", e);
     signerWallets.value = [];
   }
 
@@ -202,11 +226,9 @@ async function showMatchModal(order: OrderScanItem) {
     tx_hash: order.tx_hash,
     order_output_index: order.output_index,
     seller_address:
-      signerWallets.value.length > 0
-        ? signerWallets.value[0].ckb_address
-        : "",
+      signerWallets.value.length > 0 ? signerWallets.value[0].ckb_address : "",
   };
-  matchPhase.value = 'select';
+  matchPhase.value = "select";
 
   modal.show({
     title: t("orders.matchTitle"),
@@ -229,12 +251,12 @@ async function showMatchModal(order: OrderScanItem) {
       // Switch to progress modal (fixed, non-closable).
       modal.hide();
       await new Promise((r) => setTimeout(r, 200)); // let hide animation complete
-      matchPhase.value = 'opening';
+      matchPhase.value = "opening";
       showProgressModal();
 
       // Transition to "waiting" phase after a few seconds if still running.
       const phaseTimer = setTimeout(() => {
-        matchPhase.value = 'waiting';
+        matchPhase.value = "waiting";
       }, 5000);
 
       try {
@@ -249,7 +271,7 @@ async function showMatchModal(order: OrderScanItem) {
         );
         await scanOrders();
       } catch (e: any) {
-        console.error('Failed to match order:', e);
+        console.error("Failed to match order:", e);
         clearTimeout(phaseTimer);
         modal.hide();
         toast.error(e.message || t("orders.matchFailed"));
@@ -260,7 +282,14 @@ async function showMatchModal(order: OrderScanItem) {
 }
 
 onMounted(async () => {
-  api.getServerInfo().then((info) => { network.value = info.network; }).catch((e) => { console.error('Failed to get server info:', e); });
+  api
+    .getServerInfo()
+    .then((info) => {
+      network.value = info.network;
+    })
+    .catch((e) => {
+      console.error("Failed to get server info:", e);
+    });
   await scanOrders();
 });
 </script>
@@ -317,22 +346,83 @@ onMounted(async () => {
           class="font-mono copyable fiber-key-cell"
           :title="String(value)"
           @click="copyToClipboard(String(value))"
-        >{{ truncateAddress(String(value), 20, 16) }}</code>
+        >{{ truncateAddress(String(value), 12, 8) }}</code>
       </template>
       <template #cell-channel_capacity="{ value }">
-        {{
-          formatCKB(Number(value))
-        }}
+        {{ formatCKB(Number(value)) }}
       </template>
       <template #cell-annualized_yield="{ row }">
         {{
-          formatAPY(Number(row.shannons_per_block), Number(row.channel_capacity))
+          formatAPY(
+            Number(row.shannons_per_block),
+            Number(row.channel_capacity),
+          )
         }}
+      </template>
+      <template #cell-match_status="{ row }">
+        <div class="match-status-cell">
+          <StatusTag
+            v-if="readiness[row.tx_hash]?.peer_connected"
+            status="live"
+            :label="t('orders.peerConnected')"
+          />
+          <StatusTag
+            v-else-if="readiness[row.tx_hash] && !readiness[row.tx_hash]!.peer_connected"
+            status="destroyed"
+            :label="t('orders.peerNotConnected')"
+          />
+          <span
+            v-else
+            class="text-muted"
+          >...</span>
+          <span class="status-sep">/</span>
+          <StatusTag
+            v-if="readiness[row.tx_hash]?.compatible_channel"
+            status="live"
+            :label="t('orders.channelAvailable')"
+          />
+          <StatusTag
+            v-else-if="readiness[row.tx_hash] && !readiness[row.tx_hash]!.compatible_channel"
+            status="pending"
+            :label="t('orders.channelNone')"
+          />
+          <span
+            v-else
+            class="text-muted"
+          >...</span>
+        </div>
       </template>
       <template #cell-actions="{ row }">
         <button
+          v-if="!readiness[row.tx_hash]?.peer_connected"
+          class="btn btn-sm btn-outline"
+          @click="
+            connectPeerForOrder(
+              row.tx_hash,
+              readiness[row.tx_hash]?.fiber_pubkey || row.fiber_pubkey,
+            )
+          "
+        >
+          {{ t("orders.peerConnect") }}
+        </button>
+        <button
+          v-else-if="isChannelBeingCreated(row.tx_hash)"
           class="btn btn-sm btn-primary"
-          @click="showConnectionCheck(row)"
+          disabled
+        >
+          {{ t("orders.channelCreatingShort") }}
+        </button>
+        <button
+          v-else-if="!readiness[row.tx_hash]?.compatible_channel"
+          class="btn btn-sm btn-primary"
+          @click="createChannelForOrder(row.tx_hash)"
+        >
+          {{ t("orders.createChannel") }}
+        </button>
+        <button
+          v-else
+          class="btn btn-sm btn-primary"
+          @click="showMatchModal(row)"
         >
           {{ t("orders.match") }}
         </button>
@@ -342,6 +432,16 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.match-status-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.status-sep {
+  color: var(--text-disabled);
+  font-size: var(--fs-small);
+}
 .page-orders {
   max-width: 1200px;
   margin: 0 auto;
@@ -432,6 +532,14 @@ onMounted(async () => {
 .btn-primary:hover:not(:disabled) {
   background: var(--primary-400);
 }
+.btn-outline {
+  background: transparent;
+  color: var(--primary-500);
+  border: 1px solid var(--primary-500);
+}
+.btn-outline:hover {
+  background: var(--primary-50);
+}
 .btn-primary:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -468,7 +576,9 @@ onMounted(async () => {
   margin: 0;
 }
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Peer connection check modal */
@@ -503,8 +613,12 @@ onMounted(async () => {
   font-size: var(--fs-body);
   font-weight: 500;
 }
-.peer-status.connected { color: var(--success, #52c41a); }
-.peer-status.disconnected { color: var(--danger, #ff4d4f); }
+.peer-status.connected {
+  color: var(--success, #52c41a);
+}
+.peer-status.disconnected {
+  color: var(--danger, #ff4d4f);
+}
 .peer-actions {
   display: flex;
   gap: var(--space-sm);
@@ -518,9 +632,24 @@ onMounted(async () => {
   font-size: var(--fs-body);
   cursor: pointer;
 }
-.peer-actions .btn-primary { background: var(--primary-500); color: #fff; }
-.peer-actions .btn-primary:hover:not(:disabled) { background: var(--primary-400); }
-.peer-actions .btn-default { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-dark); }
-.peer-actions .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.peer-actions .btn-sm { height: 28px; font-size: var(--fs-small); }
+.peer-actions .btn-primary {
+  background: var(--primary-500);
+  color: #fff;
+}
+.peer-actions .btn-primary:hover:not(:disabled) {
+  background: var(--primary-400);
+}
+.peer-actions .btn-default {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-dark);
+}
+.peer-actions .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.peer-actions .btn-sm {
+  height: 28px;
+  font-size: var(--fs-small);
+}
 </style>

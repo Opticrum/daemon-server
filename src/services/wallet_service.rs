@@ -9,14 +9,15 @@
 
 use bip39::Mnemonic;
 use secp256k1::{PublicKey, SecretKey};
-use sha2::{Digest, Sha256};
 use std::path::Path;
 use tracing::{info, warn};
 
 use crate::db::wallets::{self, WalletRecord};
 use crate::db::DbPool;
 use crate::error::AppError;
-use crate::services::address::{ckb_address_from_pubkey, lock_arg_from_pubkey, script_lock_hash};
+use crate::services::address::{
+    blake160, ckb_address_from_pubkey, ckb_address_testnet, lock_arg_from_pubkey, script_lock_hash,
+};
 use crate::services::crypto;
 use crate::services::hd_wallet;
 use crate::services::keystore::{self, Keystore};
@@ -28,29 +29,22 @@ fn derive_pubkey(secret_key: &SecretKey) -> [u8; 33] {
     pubkey.serialize()
 }
 
-/// Derive the CKB lock hash from a secp256k1 public key.
+/// Derive the CKB lock hash from a secp256k1 public key (used for imported wallets).
 ///
-/// CKB secp256k1_blake160 sighash_all lock:
-///   lock_args = first 20 bytes of blake2b-256(pubkey_hash)
-/// But for simplicity, we use SHA-256 of the pubkey as the lock_hash here.
-/// In production, this should use the correct blake160 derivation.
+/// Uses the same CKB-compliant derivation as HD wallets:
+/// `lock_arg = blake2b-256(pubkey)[0..20]` with "ckb-default-hash" personalization,
+/// then Molecule-serializes the secp256k1_blake160_sighash_all lock script and hashes it.
 fn derive_lock_hash(pubkey: &[u8; 33]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(b"ckb-secp256k1:"); // domain separator
-    hasher.update(pubkey);
-    let result = hasher.finalize();
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    hash
+    let lock_arg = blake160(pubkey);
+    script_lock_hash(&lock_arg)
 }
 
 /// Derive a CKB testnet address from a pubkey.
 ///
-/// Generates a bech32m address. In production this should follow
-/// the full CKB address format (code_hash + hash_type + args).
-fn derive_address(_pubkey: &[u8; 33], lock_hash: &[u8; 32]) -> String {
-    let lock_hash_hex = hex::encode(lock_hash);
-    format!("ckt1q...{}", &lock_hash_hex[..8])
+/// Produces a CKB2021 bech32m full address, matching ckb-cli output.
+fn derive_address(pubkey: &[u8; 33]) -> String {
+    let lock_arg = blake160(pubkey);
+    ckb_address_testnet(&lock_arg)
 }
 
 // ---------------------------------------------------------------------------
@@ -82,10 +76,10 @@ pub fn import_wallet(
     let secret_key = SecretKey::from_slice(&private_key_bytes)
         .map_err(|e| AppError::WalletError(format!("Invalid private key: {e}")))?;
 
-    // Derive pubkey and lock hash
+    // Derive pubkey, lock hash, and CKB address
     let pubkey = derive_pubkey(&secret_key);
     let lock_hash = derive_lock_hash(&pubkey);
-    let address = derive_address(&pubkey, &lock_hash);
+    let address = derive_address(&pubkey);
 
     // Encrypt or store plaintext
     let encrypted_key = match encryption_password {
@@ -222,7 +216,7 @@ pub fn create_hd_wallet(
         let derivation_path = Some(path.as_str());
         let derivation_index = Some(i as i32);
 
-        wallets::insert_wallet(
+        let wallet_id = wallets::insert_wallet(
             &mut conn,
             &format!("{label} #{i}"),
             &encrypted_key,
@@ -234,24 +228,8 @@ pub fn create_hd_wallet(
             "hd_child",
         )?;
 
-        // Re-read to get the full record with created_at
-        let record = wallets::get_wallet_by_id(
-            &mut conn,
-            // Get the last inserted row — SQLite auto-increment gives us sequential IDs
-            i as i64 + 1, // approximate; better to use last_insert_rowid
-        )
-        .unwrap_or_else(|_| WalletRecord {
-            id: 0,
-            label: format!("{label} #{i}"),
-            encrypted_key,
-            lock_hash: lock_hash.to_vec(),
-            ckb_address: address,
-            created_at: String::new(),
-            parent_wallet_id: None,
-            derivation_path: derivation_path.map(|s| s.to_string()),
-            derivation_index,
-            wallet_type: "hd_child".to_string(),
-        });
+        // Re-read to get the full record with created_at (uses returned ID)
+        let record = wallets::get_wallet_by_id(&mut conn, wallet_id)?;
 
         children.push(record);
     }

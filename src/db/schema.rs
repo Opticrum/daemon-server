@@ -51,6 +51,7 @@ diesel::table! {
         order_output_index -> Integer,
         seller_address -> Text,
         shannons_per_block -> BigInt,
+        ckb_capacity -> BigInt,
         last_extraction_block -> BigInt,
         xudt_amount -> Nullable<Text>,
         status -> Text,

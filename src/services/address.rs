@@ -4,10 +4,25 @@
 //! 1. `lock_arg = blake2b-256(compressed_pubkey)[0..20]`
 //! 2. Address encodes secp256k1_blake160_sighash_all lock (code_hash + hash_type::Type + args)
 //! 3. Primary format is CKB2021 full address (bech32m, `is_new = true` in ckb-cli)
+//!
+//! **Important**: CKB's `blake2b-256` uses the "ckb-default-hash" personalization,
+//! which is different from raw blake2b-256. All hash computations MUST use this
+//! personalization to match ckb-cli and on-chain values.
 
 use bech32::{ToBase32, Variant};
 use blake2b_simd::Params as Blake2bParams;
 use secp256k1::PublicKey;
+
+/// CKB default hash personalization string (matching ckb-hash crate).
+const CKB_HASH_PERSONALIZATION: &[u8] = b"ckb-default-hash";
+
+/// Create a blake2b-256 hasher with CKB personalization.
+fn ckb_blake2b_hasher() -> blake2b_simd::State {
+    Blake2bParams::new()
+        .hash_length(32)
+        .personal(CKB_HASH_PERSONALIZATION)
+        .to_state()
+}
 
 /// CKB secp256k1_blake160 sighash_all type script hash (mainnet & testnet).
 pub const SIGHASH_TYPE_HASH: [u8; 32] = [
@@ -26,12 +41,11 @@ pub const HASH_TYPE_TYPE: u8 = 0x01;
 const CODE_HASH_INDEX_SIGHASH: u8 = 0x00;
 
 /// Compute lock_arg (blake160) from a 33-byte compressed public key.
+///
+/// Uses CKB's blake2b-256 with "ckb-default-hash" personalization,
+/// matching `ckb_hash::blake2b_256` in the ckb-hash crate.
 pub fn blake160(pubkey: &[u8; 33]) -> [u8; 20] {
-    let hash = Blake2bParams::new()
-        .hash_length(32)
-        .to_state()
-        .update(pubkey)
-        .finalize();
+    let hash = ckb_blake2b_hasher().update(pubkey).finalize();
     let mut result = [0u8; 20];
     result.copy_from_slice(&hash.as_bytes()[0..20]);
     result
@@ -58,9 +72,7 @@ pub fn script_lock_hash(lock_arg: &[u8; 20]) -> [u8; 32] {
     script.extend_from_slice(&20u32.to_le_bytes());
     script.extend_from_slice(lock_arg);
 
-    Blake2bParams::new()
-        .hash_length(32)
-        .to_state()
+    ckb_blake2b_hasher()
         .update(&script)
         .finalize()
         .as_bytes()
@@ -170,6 +182,42 @@ mod tests {
     use bech32::convert_bits;
     use secp256k1::Secp256k1;
 
+    // -----------------------------------------------------------------------
+    // Known test vectors — verified against ckb-cli 1.8.0
+    //
+    // Private key:
+    //   d00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc
+    // Derived via `ckb-cli util key-info --privkey-path <file>`:
+    //   pubkey:    03fe6c6d09d1a0f70255cddf25c5ed57d41b5c08822ae710dc10f8c88290e0acdf
+    //   lock_arg:  0xc8328aabcd9b9e8e64fbc566c4385c3bdeb219d7
+    //   lock_hash: 0x32e555f3ff8e135cece1351a6a2971518392c1e30375c1e006ad0ce8eac07947
+    //   testnet:   ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqwgx292hnvmn68xf779vmzrshpmm6epn4c0cgwga
+    //   mainnet:   ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqwgx292hnvmn68xf779vmzrshpmm6epn4cp2rpz9
+    // -----------------------------------------------------------------------
+
+    const REFERENCE_PRIVATE_KEY_HEX: &str =
+        "d00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc";
+    const REFERENCE_PUBKEY_HEX: &str =
+        "03fe6c6d09d1a0f70255cddf25c5ed57d41b5c08822ae710dc10f8c88290e0acdf";
+    const REFERENCE_LOCK_ARG_HEX: &str =
+        "c8328aabcd9b9e8e64fbc566c4385c3bdeb219d7";
+    const REFERENCE_LOCK_HASH_HEX: &str =
+        "32e555f3ff8e135cece1351a6a2971518392c1e30375c1e006ad0ce8eac07947";
+    const REFERENCE_TESTNET_ADDRESS: &str =
+        "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqwgx292hnvmn68xf779vmzrshpmm6epn4c0cgwga";
+    const REFERENCE_MAINNET_ADDRESS: &str =
+        "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqwgx292hnvmn68xf779vmzrshpmm6epn4cp2rpz9";
+
+    fn reference_secret_key() -> secp256k1::SecretKey {
+        let bytes = hex::decode(REFERENCE_PRIVATE_KEY_HEX).unwrap();
+        secp256k1::SecretKey::from_slice(&bytes).unwrap()
+    }
+
+    fn reference_public_key() -> PublicKey {
+        let secp = Secp256k1::new();
+        PublicKey::from_secret_key(&secp, &reference_secret_key())
+    }
+
     #[test]
     fn test_blake160_known() {
         let pubkey = [0u8; 33];
@@ -244,5 +292,89 @@ mod tests {
             hex::encode(lock_arg),
             "e0705e4dbbb9936f25751074157ba4c112a3bb5f"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // HD wallet lock_args & address tests — verified against ckb-cli
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pubkey_derivation_matches_ckb_cli() {
+        // Verify our secp256k1 impl produces the same pubkey as ckb-cli
+        let pk = reference_public_key();
+        assert_eq!(hex::encode(pk.serialize()), REFERENCE_PUBKEY_HEX);
+    }
+
+    #[test]
+    fn test_lock_arg_from_pubkey_matches_ckb_cli() {
+        // The critical test: lock_arg = blake160(compressed_pubkey)
+        let pk = reference_public_key();
+        let lock_arg = lock_arg_from_pubkey(&pk);
+        assert_eq!(
+            hex::encode(lock_arg),
+            REFERENCE_LOCK_ARG_HEX,
+            "lock_arg must match ckb-cli output"
+        );
+    }
+
+    #[test]
+    fn test_script_lock_hash_matches_ckb_cli() {
+        let lock_arg = hex::decode(REFERENCE_LOCK_ARG_HEX)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let lock_hash = script_lock_hash(&lock_arg);
+        assert_eq!(
+            hex::encode(lock_hash),
+            REFERENCE_LOCK_HASH_HEX,
+            "lock_hash must match ckb-cli output"
+        );
+    }
+
+    #[test]
+    fn test_mainnet_address_matches_ckb_cli() {
+        let pk = reference_public_key();
+        let addr = ckb_address_from_pubkey(&pk, false);
+        assert_eq!(
+            addr, REFERENCE_MAINNET_ADDRESS,
+            "mainnet address must match ckb-cli output"
+        );
+    }
+
+    #[test]
+    fn test_testnet_address_matches_ckb_cli() {
+        let pk = reference_public_key();
+        let addr = ckb_address_from_pubkey(&pk, true);
+        assert_eq!(
+            addr, REFERENCE_TESTNET_ADDRESS,
+            "testnet address must match ckb-cli output"
+        );
+    }
+
+    #[test]
+    fn test_lock_arg_from_address_roundtrip_ckb_cli() {
+        // Decode the ckb-cli-produced testnet address and verify lock_arg is
+        // properly extracted.
+        let lock_arg = lock_arg_from_address(REFERENCE_TESTNET_ADDRESS)
+            .expect("must decode valid ckb-cli address");
+        assert_eq!(hex::encode(lock_arg), REFERENCE_LOCK_ARG_HEX);
+
+        // Same for mainnet
+        let lock_arg2 = lock_arg_from_address(REFERENCE_MAINNET_ADDRESS)
+            .expect("must decode valid ckb-cli mainnet address");
+        assert_eq!(hex::encode(lock_arg2), REFERENCE_LOCK_ARG_HEX);
+    }
+
+    #[test]
+    fn test_blake160_deterministic() {
+        let mut pubkey = [0x03u8; 33];
+        pubkey[1] = 0xfe;
+        let h1 = blake160(&pubkey);
+        let h2 = blake160(&pubkey);
+        assert_eq!(h1, h2, "blake160 must be deterministic");
+        // Different pubkey → different hash
+        pubkey[31] ^= 1;
+        let h3 = blake160(&pubkey);
+        assert_ne!(h1, h3);
     }
 }

@@ -88,6 +88,12 @@ pub trait ChainProvider: Send + Sync {
         Ok(())
     }
 
+    /// Get the block number where a transaction was confirmed.
+    /// Returns 0 if the tx is not found or not yet confirmed.
+    async fn get_tx_block_number(&self, _tx_hash: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
+
     /// Query live cells locked by a given lock hash.
     /// Returns the cell outputs with their capacities.
     /// Default: no-op (MockChainProvider overrides with in-memory filter,

@@ -13,6 +13,7 @@
 port = 8080
 bind_address = "0.0.0.0"
 database_url = "data/opticrum.db"
+keystore_path = "data/keystore.json"
 
 # ---- CKB Chain ----
 # The network (testnet/mainnet) is auto-detected from the RPC URL.
@@ -36,3 +37,5 @@ auto_match_enabled = false
 auto_match_min_capacity = 10000000000        # 100 CKB
 auto_match_max_escrow_blocks = 432000        # ~30 days
 auto_match_interval_secs = 120
+
+# ---- Channel Ready Timeout ----

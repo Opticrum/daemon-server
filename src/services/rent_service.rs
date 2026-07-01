@@ -164,6 +164,7 @@ mod tests {
             0,
             "ckt1q...seller",
             100, // shannons_per_block: 100 shannons/block
+            0,   // ckb_capacity: test value
             None::<&str>,
         )
         .unwrap()

@@ -25,9 +25,11 @@ use crate::services::chain_provider::{
 };
 use crate::services::match_service::{self, MatchOrderResult};
 use crate::services::rent_service;
+use crate::services::runtime_config::{RuntimeConfig, RuntimeConfigPartial};
 use crate::services::signer::Signer;
 use opticrum_calculator::types::MatchInfo;
 use opticrum_protocol::CompressedPubkey;
+use std::sync::{Arc, RwLock};
 
 use super::scheduler_state::SchedulerState;
 
@@ -135,14 +137,20 @@ impl GatewayService {
     // Server info
     // ═══════════════════════════════════════════════════════
 
-    /// Return server metadata: network, RPC endpoints, version.
-    pub fn get_server_info(config: &Config, provider: &dyn ChainProvider) -> serde_json::Value {
+    /// Return server metadata: network, RPC endpoints, version, plus
+    /// current runtime-config values so the frontend always sees the
+    /// effective settings (not just config.toml defaults).
+    pub fn get_server_info(
+        config: &Config,
+        runtime_config: &RuntimeConfig,
+        provider: &dyn ChainProvider,
+    ) -> serde_json::Value {
         serde_json::json!({
             "network": provider.network(),
             "ckb_rpc_url": config.ckb_rpc_url,
             "ckb_indexer_url": config.ckb_indexer_url,
             "fiber_rpc_url": config.fiber_rpc_url,
-            "fee_rate": config.fee_rate,
+            "fee_rate": runtime_config.fee_rate,
             "version": env!("CARGO_PKG_VERSION"),
         })
     }
@@ -514,27 +522,402 @@ impl GatewayService {
         order_tx_hash: &str,
         order_output_index: u32,
         seller_address: &str,
+        signer: &crate::services::hd_wallet_signer::HdWalletSigner,
+        tx_assembler: &crate::services::transaction_assembler::TransactionAssembler,
     ) -> Result<MatchOrderResult, AppError> {
-        match_service::match_order(
+        // Verify seller has on-chain CKB to pay tx fees
+        let balance = provider
+            .get_balance_by_address(seller_address)
+            .await
+            .unwrap_or(0);
+        if balance < 10_000_000 {
+            // Need at least ~0.1 CKB for fees
+            return Err(AppError::BadRequest(format!(
+                "Seller address has insufficient balance: {} CKB. Need at least 0.1 CKB for transaction fees.",
+                balance as f64 / 100_000_000.0
+            )));
+        }
+
+        // Look up the seller's secret key
+        let secret_key = signer.find_key_by_address(seller_address).ok_or_else(|| {
+            AppError::BadRequest(
+                "Seller address not found in unlocked HD wallet. Unlock the wallet first.".into(),
+            )
+        })?;
+
+        // Scan the order to get OrderInfo
+        let orders = provider.scan_orders().await?;
+        let order = orders
+            .into_iter()
+            .find(|o| {
+                hex::encode(o.order_outpoint.tx_hash) == order_tx_hash
+                    && o.order_outpoint.index == order_output_index
+            })
+            .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
+
+        // Find or create a compatible channel
+        let channel = match_service::ensure_channel(
             provider,
-            pool,
+            &hex::encode(order.order_args.fiber_pubkey.to_bytes()),
+            order.order_data.channel_capacity,
             order_tx_hash,
-            order_output_index,
-            seller_address,
         )
-        .await
+        .await?;
+
+        // Build match args with the channel outpoint
+        let mut tx_hash_bytes = [0u8; 32];
+        let tx_hash_decoded = hex::decode(&channel.tx_hash)
+            .map_err(|_| AppError::BadRequest("Invalid channel tx_hash".into()))?;
+        tx_hash_bytes.copy_from_slice(&tx_hash_decoded);
+        let channel_outpoint = opticrum_protocol::OutPoint {
+            tx_hash: tx_hash_bytes,
+            index: channel.output_index,
+        };
+        let seller_lock_hash = {
+            let lock_arg = crate::services::address::lock_arg_from_address(seller_address)?;
+            crate::services::address::script_lock_hash(&lock_arg)
+        };
+        let order_args = order.order_args.clone();
+        let order_data = order.order_data.clone();
+        let match_args = opticrum_protocol::MatchArgs {
+            order_args,
+            channel_outpoint,
+            seller_lock_hash,
+        };
+
+        let tx_hash = tx_assembler
+            .match_order(seller_address, &secret_key, order, match_args)
+            .await?;
+        let output_index: i32 = 0;
+
+        // Check for existing match (avoid unique constraint on retry)
+        let mut conn = pool.get()?;
+        if let Ok(existing) =
+            match_db::get_match_by_order(&mut conn, order_tx_hash, order_output_index as i32)
+        {
+            return Ok(MatchOrderResult {
+                tx_hash: existing.tx_hash,
+                output_index: existing.output_index,
+                match_id: existing.id,
+            });
+        }
+
+        // Persist tracked match
+        let shannons_per_block = order_data.shannons_per_block;
+        let match_id = match_db::insert_match(
+            &mut conn,
+            &tx_hash,
+            output_index,
+            order_tx_hash,
+            order_output_index as i32,
+            seller_address,
+            shannons_per_block,
+            order_data.channel_capacity,
+            None::<&str>,
+        )?;
+
+        tracing::info!(
+            match_id = match_id,
+            tx_hash = %tx_hash,
+            seller = %seller_address,
+            channel_tx = %channel.tx_hash,
+            "Order matched on-chain"
+        );
+
+        Ok(MatchOrderResult {
+            tx_hash,
+            output_index,
+            match_id,
+        })
+    }
+
+    /// Check whether an order is ready to match: peer is connected and a
+    /// compatible channel exists. Used by the frontend to show per-order status.
+    pub async fn get_match_readiness(
+        provider: &dyn ChainProvider,
+        order_tx_hash: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        let orders = provider.scan_orders().await?;
+        let order = orders
+            .into_iter()
+            .find(|o| hex::encode(o.order_outpoint.tx_hash) == order_tx_hash)
+            .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
+
+        let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
+        let required_capacity = order.order_data.channel_capacity;
+        let order_block = provider
+            .get_tx_block_number(order_tx_hash)
+            .await
+            .unwrap_or(0);
+
+        // Check peer connectivity (tolerant of 0x prefix)
+        let peers = provider.list_peers().await?;
+        let peer_connected = peers.iter().any(|p| {
+            p.pubkey.trim_start_matches("0x") == fiber_pubkey_hex.trim_start_matches("0x")
+        });
+
+        // Check for compatible channel: matching peer + capacity + tx on-chain
+        // + created after the order (contract requires channel_block > order_block).
+        let channels = provider.scan_fiber_channels(&[]).await?;
+        let mut compatible = None;
+        for ch in &channels {
+            if ch.counterparty_fiber_key.trim_start_matches("0x")
+                != fiber_pubkey_hex.trim_start_matches("0x")
+                || ch.capacity < required_capacity
+                || ch.tx_hash.is_empty()
+            {
+                continue;
+            }
+            let channel_block = provider.get_tx_block_number(&ch.tx_hash).await.unwrap_or(0);
+            if channel_block > 0 && channel_block > order_block {
+                compatible = Some(ch);
+                break;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "peer_connected": peer_connected,
+            "compatible_channel": compatible.map(|ch| serde_json::json!({
+                "channel_id": ch.channel_id,
+                "tx_hash": ch.tx_hash,
+                "state_name": ch.state_name,
+                "capacity": ch.capacity,
+            })),
+            "fiber_pubkey": fiber_pubkey_hex,
+            "required_capacity": required_capacity,
+        }))
+    }
+
+    /// Open a channel for a specific order (connect peer + open_channel).
+    pub async fn create_order_channel(
+        provider: &dyn ChainProvider,
+        order_tx_hash: &str,
+    ) -> Result<serde_json::Value, AppError> {
+        let orders = provider.scan_orders().await?;
+        let order = orders
+            .into_iter()
+            .find(|o| hex::encode(o.order_outpoint.tx_hash) == order_tx_hash)
+            .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
+
+        let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
+        let required_capacity =
+            order.order_data.channel_capacity + match_service::CHANNEL_CELL_OCCUPIED_RESERVE;
+
+        // Connect peer first (required by Fiber)
+        let _ = provider.connect_peer(&fiber_pubkey_hex).await;
+
+        let temp_id = provider
+            .open_channel(&fiber_pubkey_hex, required_capacity)
+            .await?;
+
+        Ok(serde_json::json!({
+            "temporary_channel_id": temp_id,
+            "peer": fiber_pubkey_hex,
+            "capacity": required_capacity,
+        }))
     }
 
     // ═══════════════════════════════════════════════════════
     // Matches
     // ═══════════════════════════════════════════════════════
 
-    pub fn list_matches(
+    /// List tracked matches, optionally filtered by status and by signer
+    /// lock hashes. Syncs with on-chain data first so recently-created
+    /// matches are visible even if local persistence failed.
+    pub async fn list_matches(
         pool: &DbPool,
         status: Option<&str>,
+        provider: &dyn ChainProvider,
+        signer_lock_hashes: Option<&[String]>,
     ) -> Result<Vec<match_db::TrackedMatch>, AppError> {
+        // Sync on-chain matches into the local DB first
+        if let Err(e) = Self::sync_matches_from_chain(pool, provider).await {
+            tracing::warn!("Failed to sync matches from chain (non-fatal): {e}");
+        }
         let mut conn = pool.get()?;
-        match_db::list_matches(&mut conn, status)
+        let all = match_db::list_matches(&mut conn, status)?;
+
+        // Filter by signer lock hashes if provided
+        let mut filtered: Vec<match_db::TrackedMatch> = match signer_lock_hashes {
+            Some(hashes) if !hashes.is_empty() => all
+                .into_iter()
+                .filter(|m| {
+                    let seller_lh = Self::seller_lock_hash_from_address(&m.seller_address);
+                    hashes.iter().any(|h| h.eq_ignore_ascii_case(&seller_lh))
+                })
+                .collect(),
+            _ => all,
+        };
+
+        // Resolve "lock_hash:<hex>" placeholders to proper CKB addresses
+        // by looking up matching wallets in the database.
+        for m in &mut filtered {
+            if m.seller_address.starts_with("lock_hash:") {
+                if let Some(addr) = Self::resolve_lock_hash_to_address(&mut conn, &m.seller_address)
+                {
+                    m.seller_address = addr;
+                }
+            }
+        }
+
+        Ok(filtered)
+    }
+
+    /// Try to resolve a `"lock_hash:<hex>"` placeholder to a proper CKB address
+    /// by looking up the wallet with that lock_hash in the database.
+    fn resolve_lock_hash_to_address(
+        conn: &mut diesel::SqliteConnection,
+        seller_address: &str,
+    ) -> Option<String> {
+        let hex_part = seller_address.strip_prefix("lock_hash:")?;
+        let lock_hash_bytes = hex::decode(hex_part).ok()?;
+        match wallet_db::get_wallet_by_lock_hash(conn, &lock_hash_bytes) {
+            Ok(wallet) => Some(wallet.ckb_address),
+            Err(_) => None,
+        }
+    }
+
+    /// Extract the seller's lock_hash hex from a seller_address field.
+    /// Handles two formats:
+    /// - `"lock_hash:<hex>"` — placeholder from chain sync
+    /// - CKB bech32m address — decode and compute script_lock_hash
+    fn seller_lock_hash_from_address(seller_address: &str) -> String {
+        if let Some(hex_part) = seller_address.strip_prefix("lock_hash:") {
+            return hex_part.to_string();
+        }
+        // Try to decode as a CKB address and extract lock_hash
+        match crate::services::address::lock_arg_from_address(seller_address) {
+            Ok(lock_arg) => {
+                let lock_hash = crate::services::address::script_lock_hash(&lock_arg);
+                hex::encode(lock_hash)
+            }
+            Err(_) => {
+                // Can't decode — return as-is for substring match
+                seller_address.to_string()
+            }
+        }
+    }
+
+    /// Scan on-chain match cells and ensure each one exists in the local DB.
+    /// Inserts any missing matches. Safe to call repeatedly — uses the
+    /// `(tx_hash, output_index)` unique constraint to avoid duplicates.
+    pub async fn sync_matches_from_chain(
+        pool: &DbPool,
+        provider: &dyn ChainProvider,
+    ) -> Result<usize, AppError> {
+        let on_chain = match provider.scan_matches().await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("sync_matches_from_chain: scan failed: {e}");
+                return Err(e);
+            }
+        };
+
+        let mut conn = pool.get()?;
+        let all = match_db::list_matches(&mut conn, None)?;
+        let mut inserted = 0usize;
+
+        for m in &on_chain {
+            let tx_hash = hex::encode(m.match_outpoint.tx_hash);
+            let output_index = m.match_outpoint.index as i32;
+
+            let already_tracked = all
+                .iter()
+                .any(|tm| tm.tx_hash == tx_hash && tm.output_index == output_index);
+
+            if already_tracked {
+                continue;
+            }
+
+            // Try to resolve the seller_lock_hash to a known wallet address.
+            // Falls back to "lock_hash:<hex>" placeholder if no wallet matches.
+            let seller_lock_hash_hex = hex::encode(m.match_args.seller_lock_hash);
+            let seller_address = Self::resolve_lock_hash_to_address(
+                &mut conn,
+                &format!("lock_hash:{seller_lock_hash_hex}"),
+            )
+            .unwrap_or_else(|| format!("lock_hash:{seller_lock_hash_hex}"));
+            // channel_outpoint is the only related identifier available
+            let order_tx_hash = hex::encode(m.match_args.channel_outpoint.tx_hash);
+            let order_output_index = m.match_args.channel_outpoint.index as i32;
+
+            let xudt_str = m.xudt.as_ref().map(|_| "");
+
+            match match_db::insert_match(
+                &mut conn,
+                &tx_hash,
+                output_index,
+                &order_tx_hash,
+                order_output_index,
+                &seller_address,
+                m.match_data.shannons_per_block,
+                m.ckb_capacity,
+                xudt_str,
+            ) {
+                Ok(id) => {
+                    tracing::info!(
+                        id = id,
+                        tx_hash = %tx_hash,
+                        "Synced match from chain into local DB"
+                    );
+                    inserted += 1;
+                }
+                Err(e) => {
+                    // Unique constraint violation is expected for existing records
+                    tracing::debug!("Sync match {tx_hash}:{output_index} skipped: {e}");
+                }
+            }
+        }
+
+        if inserted > 0 {
+            tracing::info!(inserted, total = on_chain.len(), "Synced matches from chain");
+        }
+
+        Ok(inserted)
+    }
+
+    /// Get full match detail with extraction history.
+    pub fn get_match_detail(
+        pool: &DbPool,
+        match_id: i64,
+    ) -> Result<serde_json::Value, AppError> {
+        let mut conn = pool.get()?;
+        let m = match_db::get_match_by_id(&mut conn, match_id)?;
+        let extracted_total = match_db::extracted_for_match(
+            &mut conn, &m.tx_hash, m.output_index,
+        )
+        .unwrap_or(0) as u64;
+        let history = match_db::get_extractions_for_match(
+            &mut conn, &m.tx_hash, m.output_index,
+        )
+        .unwrap_or_default();
+
+        // Resolve placeholder seller addresses
+        let mut seller_address = m.seller_address.clone();
+        if seller_address.starts_with("lock_hash:") {
+            if let Some(addr) =
+                Self::resolve_lock_hash_to_address(&mut conn, &seller_address)
+            {
+                seller_address = addr;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "id": m.id,
+            "tx_hash": m.tx_hash,
+            "output_index": m.output_index,
+            "order_tx_hash": m.order_tx_hash,
+            "order_output_index": m.order_output_index,
+            "seller_address": seller_address,
+            "shannons_per_block": m.shannons_per_block,
+            "ckb_capacity": m.ckb_capacity,
+            "last_extraction_block": m.last_extraction_block,
+            "xudt_amount": m.xudt_amount,
+            "status": m.status,
+            "created_at": m.created_at,
+            "extracted_total_shannons": extracted_total,
+            "extraction_history": history,
+        }))
     }
 
     pub async fn extract_rent(
@@ -657,13 +1040,29 @@ impl GatewayService {
     // Config
     // ═══════════════════════════════════════════════════════
 
-    pub fn get_config(config: &Config) -> serde_json::Value {
-        serde_json::json!({
-            "enabled": config.auto_match_enabled,
-            "min_capacity_shannons": config.auto_match_min_capacity,
-            "max_escrow_blocks": config.auto_match_max_escrow_blocks,
-            "interval_secs": config.auto_match_interval_secs,
-        })
+    /// Snapshot of the runtime-configurable settings.
+    pub fn get_runtime_config(rc: &RuntimeConfig) -> serde_json::Value {
+        serde_json::to_value(rc).unwrap_or_default()
+    }
+
+    /// Apply partial updates to the runtime config.
+    pub fn update_runtime_config(
+        rc: &Arc<RwLock<RuntimeConfig>>,
+        partial: RuntimeConfigPartial,
+    ) -> serde_json::Value {
+        let mut cfg = rc.write().unwrap();
+        cfg.apply_partial(&partial);
+        serde_json::to_value(&*cfg).unwrap_or_default()
+    }
+
+    /// Reset runtime config to config.toml values.
+    pub fn reset_runtime_config(
+        rc: &Arc<RwLock<RuntimeConfig>>,
+        config: &Config,
+    ) -> serde_json::Value {
+        let mut cfg = rc.write().unwrap();
+        cfg.reset_from_config(config);
+        serde_json::to_value(&*cfg).unwrap_or_default()
     }
 
     // ═══════════════════════════════════════════════════════

@@ -81,6 +81,9 @@ const typeIcons: Record<string, string> = {
   flex: 1;
   color: var(--text-primary);
   line-height: var(--lh-body);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: hidden;
 }
 
 /* Transition */

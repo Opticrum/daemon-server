@@ -114,21 +114,37 @@ impl Signer for HdWalletSigner {
             .lock()
             .map_err(|e| AppError::Internal(format!("HD signer lock: {e}")))?;
 
-        let (wallet, secret_key) = inner.keys.first().ok_or_else(|| {
-            AppError::WalletError(
-                "HD wallet is locked — unlock it in Wallet Management first".into(),
-            )
-        })?;
+        // When signer_address is provided, look up the specific key.
+        // Otherwise fall back to the first loaded key (backward compat).
+        let (wallet, secret_key) = if let Some(ref addr) = request.signer_address {
+            let idx = inner
+                .keys
+                .iter()
+                .position(|(wr, _)| wr.ckb_address == *addr)
+                .ok_or_else(|| {
+                    AppError::WalletError(format!(
+                        "Address {addr} not found in unlocked HD wallet — unlock the wallet first"
+                    ))
+                })?;
+            &inner.keys[idx]
+        } else {
+            inner.keys.first().ok_or_else(|| {
+                AppError::WalletError(
+                    "HD wallet is locked — unlock it in Wallet Management first".into(),
+                )
+            })?
+        };
 
         let message = format!("{}:{}", request.operation, request.tx_hex);
         let signature = Self::sign_bytes(secret_key, message.as_bytes());
         let signed_tx_hex = format!("{}:sig={}", request.tx_hex, hex::encode(signature));
 
         tracing::info!(
-            "HdWalletSigner signed {} (wallet_id={}, label={})",
+            "HdWalletSigner signed {} (wallet_id={}, label={}, address={})",
             request.operation,
             wallet.id,
-            wallet.label
+            wallet.label,
+            wallet.ckb_address,
         );
 
         Ok(SignResult::Signed {

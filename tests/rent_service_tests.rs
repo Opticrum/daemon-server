@@ -23,6 +23,7 @@ async fn extract_and_destroy_flow() {
         0,
         "seller_flow",
         100,
+        100,
         None::<&str>,
     )
     .unwrap();
