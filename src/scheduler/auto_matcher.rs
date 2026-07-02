@@ -6,20 +6,22 @@
 //!
 //! Runs on a configurable interval, applies filters from `Config`, and
 //! matches each eligible order using the configured signer and wallet.
+//!
+//! After the chain-first refactor, deduplication uses on-chain match scans
+//! instead of a database table. No match records are written to DB.
 
 use tracing::{debug, info};
 
 use opticrum_calculator::config::ORDER_TO_MATCH_CAPACITY_RESERVE;
 
-use crate::db::DbPool;
-
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-use crate::db::matches as match_db;
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::match_service::{
-    wait_for_channel_ready, CHANNEL_CELL_OCCUPIED_RESERVE, CHANNEL_READY_TIMEOUT_SECS,
+    wait_for_channel_ready, CHANNEL_CELL_OCCUPIED_RESERVE,
+    CHANNEL_READY_TIMEOUT_SECS,
 };
 use crate::services::signer::{SignRequest, Signer};
 use crate::services::RuntimeConfig;
@@ -30,33 +32,36 @@ use crate::services::RuntimeConfig;
 /// and attempts to match each eligible order. Returns the number
 /// of orders matched in this cycle.
 pub async fn run_auto_match_cycle(
-    pool: &DbPool,
     chain_provider: &(dyn ChainProvider + Send + Sync),
     signer: &(dyn Signer + Send + Sync),
     runtime_config: &Arc<RwLock<RuntimeConfig>>,
 ) -> Result<u64, AppError> {
-    let rc = runtime_config.read().unwrap();
-    if !rc.auto_match_enabled {
-        return Ok(0);
-    }
-    let min_capacity = rc.auto_match_min_capacity;
-    let max_escrow_blocks = rc.auto_match_max_escrow_blocks;
-    drop(rc);
+    let (min_capacity, max_escrow_blocks) = {
+        let rc = runtime_config.read().unwrap();
+        if !rc.auto_match_enabled {
+            return Ok(0);
+        }
+        (rc.auto_match_min_capacity, rc.auto_match_max_escrow_blocks)
+    };
 
-    let mut conn = pool.get()?;
-
-    // Scan all live orders on chain
+    // Scan all live orders and matches on chain
     let orders = chain_provider.scan_orders().await?;
     debug!(on_chain_orders = orders.len(), "Auto-match: scanned chain");
 
-    // Get already-matched order outpoints from local DB to skip them
-    let existing_matches = match_db::list_matches(&mut conn, None)?;
-    let matched_outpoints: Vec<(String, i32)> = existing_matches
+    // Build dedup set from on-chain match cells (order outpoint matching)
+    let on_chain_matches = chain_provider.scan_matches().await?;
+
+    // Build set of already-matched order outpoints from on-chain match data
+    // Each MatchInfo has the order_args which can identify the order
+    let matched_order_keys: HashSet<(String,)> = on_chain_matches
         .iter()
-        .map(|m| (m.order_tx_hash.clone(), m.order_output_index))
+        .map(|m| {
+            // Match cells reference orders by fiber_pubkey + buyer_lock_hash + shannons_per_block
+            // Use order fiber_pubkey as the dedup key (each buyer has one active order)
+            (hex::encode(m.match_args.order_args.fiber_pubkey.to_bytes()),)
+        })
         .collect();
 
-    // Filter and match — each match gets a fresh channel (contract requirement).
     let mut matched_count = 0u64;
     let max_per_cycle = 10u64; // safety cap to avoid runaway matching
 
@@ -65,11 +70,9 @@ pub async fn run_auto_match_cycle(
             break;
         }
 
-        // Skip if already matched
-        if matched_outpoints.iter().any(|(h, i)| {
-            h == &hex::encode(order.order_outpoint.tx_hash)
-                && *i == order.order_outpoint.index as i32
-        }) {
+        // Skip if already matched (dedup by fiber_pubkey)
+        let order_key = (hex::encode(order.order_args.fiber_pubkey.to_bytes()),);
+        if matched_order_keys.contains(&order_key) {
             continue;
         }
 
@@ -174,7 +177,7 @@ pub async fn run_auto_match_cycle(
                 },
                 "seller_address": seller_address,
             }),
-            signer_address: None, // TODO: set to the actual seller address when multi-address signing is needed
+            signer_address: None,
         };
 
         let sign_result = signer.sign(sign_request).await?;
@@ -192,21 +195,6 @@ pub async fn run_auto_match_cycle(
         // Submit to chain
         let tx_hash = chain_provider.send_transaction(&signed_tx_hex).await?;
 
-        // Record in local DB
-        let shannons_per_block = order.order_data.shannons_per_block;
-        match_db::insert_match(
-            &mut conn,
-            &tx_hash,
-            0,
-            &hex::encode(order.order_outpoint.tx_hash),
-            order.order_outpoint.index as i32,
-            seller_address,
-            shannons_per_block,
-            order.ckb_capacity,
-            None::<&str>,
-            Some(&channel.channel_id),
-        )?;
-
         info!(
             order_tx = %hex::encode(order.order_outpoint.tx_hash),
             channel = %channel.tx_hash,
@@ -216,6 +204,7 @@ pub async fn run_auto_match_cycle(
         );
 
         matched_count += 1;
+        // The match cell is now on-chain — no DB write needed.
     }
 
     if matched_count > 0 {

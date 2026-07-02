@@ -5,9 +5,8 @@
 #
 # Priority: CLI flags > env vars > this file > built-in defaults
 #
-# Signing is always external by default (JoyID, UTXOGlobal, etc.).
-# Use the admin panel (http://localhost:8080/admin) to submit a raw
-# private key and switch to automated signing mode — no config needed.
+# Signing uses the built-in HD wallet. Unlock the keystore in the admin
+# panel to load signing keys into memory.
 
 # ---- Network ----
 port = 8080
@@ -17,8 +16,6 @@ keystore_path = "data/keystore.json"
 
 # ---- CKB Chain ----
 # The network (testnet/mainnet) is auto-detected from the RPC URL.
-# Use a URL containing "testnet" or "mainnet" to disambiguate.
-# Standard ports: testnet 28114, mainnet 8114.
 ckb_rpc_url = "https://testnet.ckb.dev"
 ckb_indexer_url = "https://testnet.ckb.dev/indexer"
 
@@ -26,16 +23,18 @@ ckb_indexer_url = "https://testnet.ckb.dev/indexer"
 fiber_rpc_url = "http://localhost:8227"
 
 # ---- Fees ----
-fee_rate = 1000                              # shannons per KB
+fee_rate = 2000                              # shannons per KB
 
 # ---- Rent Extraction ----
-scheduler_interval_secs = 60
-min_extraction_amount_shannons = 100000000   # 1 CKB
+rent_extraction_enabled = false               # enable background extraction scheduler
+scheduler_interval_secs = 3600                # seconds between extraction cycles
+min_extraction_amount_shannons = 1000000000   # 10 CKB dust threshold
 
 # ---- Auto-Match ----
 auto_match_enabled = false
-auto_match_min_capacity = 10000000000        # 100 CKB
-auto_match_max_escrow_blocks = 432000        # ~30 days
-auto_match_interval_secs = 120
+auto_match_min_capacity = 100000000000       # 1000 CKB
+auto_match_max_escrow_blocks = 432000        # ~30 days at 6s/block
+auto_match_interval_secs = 300
 
-# ---- Channel Ready Timeout ----
+# ---- Logging ----
+log_level = "info"                           # trace, debug, info, warn, error

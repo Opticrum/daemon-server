@@ -367,7 +367,10 @@ mod tests {
         let lock_arg = address::lock_arg_from_pubkey(&pk);
 
         assert_eq!(lock_arg.len(), 20);
-        assert!(!lock_arg.iter().all(|&b| b == 0), "lock_arg must not be zero");
+        assert!(
+            !lock_arg.iter().all(|&b| b == 0),
+            "lock_arg must not be zero"
+        );
     }
 
     /// The full CKB address derived from the BIP44 child key must be valid bech32m.
@@ -380,7 +383,10 @@ mod tests {
         let addr = ckb_address_from_pubkey(&pk, true);
 
         // Must start with testnet HRP
-        assert!(addr.starts_with("ckt1"), "testnet address must start with ckt1, got: {addr}");
+        assert!(
+            addr.starts_with("ckt1"),
+            "testnet address must start with ckt1, got: {addr}"
+        );
 
         // Must decode as valid bech32m
         bech32::decode(&addr).expect("address must be valid bech32m");
@@ -400,8 +406,7 @@ mod tests {
 
         // Encode as address, then decode lock_arg back
         let addr = ckb_address_from_pubkey(&pk, true);
-        let lock_arg_decoded = lock_arg_from_address(&addr)
-            .expect("must decode own address");
+        let lock_arg_decoded = lock_arg_from_address(&addr).expect("must decode own address");
 
         assert_eq!(
             lock_arg_direct, lock_arg_decoded,
@@ -460,9 +465,8 @@ mod tests {
             let addr = ckb_address_from_pubkey(&pk, true);
 
             // Verify roundtrip: address decodes back to same lock_arg
-            let decoded_la = lock_arg_from_address(&addr).unwrap_or_else(|_| {
-                panic!("address must decode at index {i}: {addr}")
-            });
+            let decoded_la = lock_arg_from_address(&addr)
+                .unwrap_or_else(|_| panic!("address must decode at index {i}: {addr}"));
             assert_eq!(lock_arg, decoded_la,
                 "lock_arg mismatch at index {i}: stored address doesn't decode to expected lock_arg");
 

@@ -43,24 +43,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    tracked_matches (id) {
-        id -> BigInt,
-        tx_hash -> Text,
-        output_index -> Integer,
-        order_tx_hash -> Text,
-        order_output_index -> Integer,
-        seller_address -> Text,
-        shannons_per_block -> BigInt,
-        ckb_capacity -> BigInt,
-        last_extraction_block -> BigInt,
-        xudt_amount -> Nullable<Text>,
-        status -> Text,
-        created_at -> Text,
-        channel_id -> Nullable<Text>,
-    }
-}
-
-diesel::table! {
     unsigned_transactions (id) {
         id -> Text,
         operation -> Text,
@@ -81,12 +63,5 @@ diesel::table! {
         tip_block -> BigInt,
         tx_hash -> Text,
         timestamp -> Text,
-    }
-}
-
-diesel::table! {
-    dismissed_fiber_channels (channel_id) {
-        channel_id -> Text,
-        dismissed_at -> Text,
     }
 }

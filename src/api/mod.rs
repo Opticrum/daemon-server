@@ -67,8 +67,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/orders/{tx_hash}/match", web::post().to(orders::do_match))
             .route("/matches/scan", web::get().to(matches::scan_chain))
             .route("/matches", web::get().to(matches::list))
-            .route("/matches/{id}/extract", web::post().to(matches::extract))
-            .route("/matches/{id}/destroy", web::post().to(matches::destroy))
+            .route(
+                "/matches/{tx_hash}/{output_index}/extract",
+                web::post().to(matches::extract),
+            )
+            .route(
+                "/matches/{tx_hash}/{output_index}/destroy",
+                web::post().to(matches::destroy),
+            )
             .route("/fiber/channels", web::get().to(fiber::list_channels))
             .route("/admin/stats", web::get().to(admin::stats))
             .route(
@@ -129,6 +135,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 web::delete().to(console::delete_hd_wallet),
             )
             .route(
+                "/console/wallets/reveal-mnemonic",
+                web::post().to(console::reveal_mnemonic),
+            )
+            .route(
                 "/console/signer/wallets",
                 web::get().to(console::signer_wallets),
             )
@@ -152,15 +162,15 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             )
             .route("/console/matches", web::get().to(console::list_matches))
             .route(
-                "/console/matches/{id}",
+                "/console/matches/{tx_hash}/{output_index}",
                 web::get().to(console::match_detail),
             )
             .route(
-                "/console/matches/{id}/extract",
+                "/console/matches/{tx_hash}/{output_index}/extract",
                 web::post().to(console::extract_rent),
             )
             .route(
-                "/console/matches/{id}/destroy",
+                "/console/matches/{tx_hash}/{output_index}/destroy",
                 web::post().to(console::destroy_match),
             )
             .route("/console/channels", web::get().to(console::scan_channels))
@@ -178,9 +188,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             )
             .route("/console/server-info", web::get().to(console::server_info))
             // Runtime config (mutable at runtime)
-            .route("/console/runtime-config", web::get().to(console::get_runtime_config))
-            .route("/console/runtime-config", web::put().to(console::update_runtime_config))
-            .route("/console/runtime-config/reset", web::post().to(console::reset_runtime_config))
+            .route(
+                "/console/runtime-config",
+                web::get().to(console::get_runtime_config),
+            )
+            .route(
+                "/console/runtime-config",
+                web::put().to(console::update_runtime_config),
+            )
+            .route(
+                "/console/runtime-config/reset",
+                web::post().to(console::reset_runtime_config),
+            )
             .route(
                 "/console/fiber-node-info",
                 web::get().to(console::fiber_node_info),

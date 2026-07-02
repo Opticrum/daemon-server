@@ -30,7 +30,7 @@ const filters = [
 
 const columns: ColumnDef[] = [
   { key: 'tx_hash', label: t('common.txHash'), align: 'center' },
-  { key: 'seller_address', label: t('common.sellerAddr'), align: 'center' },
+  { key: 'created_at', label: t('matches.matchTime'), align: 'center' },
   { key: 'rate', label: t('common.rate'), sortable: true, align: 'center' },
   { key: 'rent', label: t('matches.rent'), align: 'center' },
   { key: 'status', label: t('common.status'), align: 'center' },
@@ -38,7 +38,7 @@ const columns: ColumnDef[] = [
 ]
 
 const totalRent = (m: TrackedMatch) => m.ckb_capacity || 0
-const extractedRent = (m: TrackedMatch) => m.extracted_amount_shannons ?? 0
+const extractedRent = (m: TrackedMatch) => m.extracted_total ?? 0
 
 async function loadSignerLockHashes() {
   try {
@@ -61,55 +61,42 @@ async function loadMatches() {
 
 function setFilter(status: string) { filterStatus.value = status; loadMatches() }
 
-async function copyAddress(addr: string) {
-  try { await navigator.clipboard.writeText(addr); toast.success(t('common.copied')) }
-  catch { toast.success(t('common.copied')) }
-}
-
 async function extractRent(match: TrackedMatch) {
-  try { await api.extractRent(match.id); toast.success(t('matches.extractSuccess')); await loadMatches() }
+  try { await api.extractRent(match.tx_hash, match.output_index); toast.success(t('matches.extractSuccess')); await loadMatches() }
   catch (e: any) { toast.error(e.message || 'Extract failed') }
 }
 
 async function doDestroyMatch(match: TrackedMatch) {
-  const ok = await modal.confirm(t('matches.destroyConfirm', { id: match.id }), { title: t('matches.destroyTitle'), danger: true, confirmText: t('matches.destroy') })
+  const label = truncateAddress(match.tx_hash, 8, 6)
+  const ok = await modal.confirm(t('matches.destroyConfirm', { id: label }), { title: t('matches.destroyTitle'), danger: true, confirmText: t('matches.destroy') })
   if (!ok) return
-  try { await api.destroyMatch(match.id); toast.success(t('matches.destroySuccess')); await loadMatches() }
+  try { await api.destroyMatch(match.tx_hash, match.output_index); toast.success(t('matches.destroySuccess')); await loadMatches() }
   catch (e: any) { toast.error(e.message || 'Destroy failed') }
 }
 
 // ── Match Detail Modal ──
 
-const detailLoading = ref(false)
-
 async function showMatchDetail(match: TrackedMatch) {
-  detailLoading.value = true
-  let detail: MatchDetail | null = null
+  let detail: MatchDetail | null
   try {
-    detail = await api.getMatchDetail(match.id)
+    detail = await api.getMatchDetail(match.tx_hash, match.output_index)
   } catch (e: any) {
     toast.error(e.message || 'Failed to load match detail')
     return
-  } finally {
-    detailLoading.value = false
   }
 
   if (!detail) return
 
+  const createdStr = detail.created_at
+    ? new Date(detail.created_at).toLocaleString()
+    : '—'
+
   const sections: DetailSection[] = [
-    {
-      title: t('channels.matchTxInfo'),
-      fields: [
-        { label: t('common.txHash'), value: detail.tx_hash, type: 'hash', href: explorerTxUrl(detail.tx_hash, network.value) },
-        { label: t('common.outputIndex'), value: String(detail.output_index) },
-        { label: t('common.sellerAddr'), value: detail.seller_address, type: 'hash' },
-        { label: t('common.status'), value: detail.status, type: 'status' },
-        { label: t('common.createdAt'), value: detail.created_at },
-      ],
-    },
     {
       title: t('channels.matchEconomics'),
       fields: [
+        { label: t('matches.matchTime'), value: createdStr },
+        { label: t('common.status'), value: detail.status, type: 'status' },
         { label: t('common.capacity'), value: formatCKB(detail.ckb_capacity) },
         { label: t('common.ratePerBlock'), value: `${detail.shannons_per_block} ${t('common.feeRateUnit')}` },
         { label: 'xUDT', value: detail.xudt_amount ? `${detail.xudt_amount}` : t('common.none') },
@@ -136,29 +123,6 @@ async function showMatchDetail(match: TrackedMatch) {
     emptyText: t('matches.noExtractions'),
   }
 
-  const FooterExtra = {
-    setup() {
-      return () => h('div', { class: 'md-footer-actions' }, [
-        detail!.status === 'live' && h('button', {
-          class: 'btn btn-primary', style: 'margin-right:8px',
-          onClick: async () => {
-            try { await api.extractRent(detail!.id); toast.success(t('matches.extractSuccess')); modal.hide(); await loadMatches() }
-            catch (e: any) { toast.error(e.message || 'Extract failed') }
-          }
-        }, t('matches.extract')),
-        detail!.status === 'exhausted' && h('button', {
-          class: 'btn btn-danger',
-          onClick: async () => {
-            const ok = await modal.confirm(t('matches.destroyConfirm', { id: detail!.id }), { title: t('matches.destroyTitle'), danger: true, confirmText: t('matches.destroy') })
-            if (!ok) return
-            try { await api.destroyMatch(detail!.id); toast.success(t('matches.destroySuccess')); modal.hide(); await loadMatches() }
-            catch (e: any) { toast.error(e.message || 'Destroy failed') }
-          }
-        }, t('matches.destroy')),
-      ])
-    }
-  }
-
   modal.show({
     title: t('matches.detailTitle'),
     wide: true,
@@ -170,7 +134,6 @@ async function showMatchDetail(match: TrackedMatch) {
     },
     confirmText: null,
     cancelText: t('common.close'),
-    extra: FooterExtra,
     onCancel: () => modal.hide(),
   })
 }
@@ -232,12 +195,8 @@ onMounted(async () => {
           class="tx-link font-mono"
         >{{ truncateAddress(String(value), 12, 8) }}</a>
       </template>
-      <template #cell-seller_address="{ value }">
-        <code
-          class="font-mono copyable"
-          :title="String(value)"
-          @click="copyAddress(String(value))"
-        >{{ truncateAddress(String(value), 16, 10) }}</code>
+      <template #cell-created_at="{ value }">
+        <span class="match-time">{{ value ? new Date(Number(value)).toLocaleString() : '—' }}</span>
       </template>
       <template #cell-rate="{ row }">
         {{ row.shannons_per_block }} {{ t('common.feeRateUnit') }}

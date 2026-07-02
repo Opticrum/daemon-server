@@ -1,54 +1,9 @@
-//! Rent service integration tests.
-//!
-//! The rent service has inline #[cfg(test)] tests in src/services/rent_service.rs.
+//! Rent service integration tests (chain-first architecture).
 
 mod common;
 
 use common::test_db;
-use rust_server::db::matches as match_db;
 use rust_server::services::{rent_service, MockChainProvider};
-
-#[actix_rt::test]
-async fn extract_and_destroy_flow() {
-    let pool = test_db();
-    let provider = MockChainProvider::new();
-    provider.set_tip_block(2000);
-
-    let mut conn = pool.get().unwrap();
-    let match_id = match_db::insert_match(
-        &mut conn,
-        "m_extract_flow",
-        0,
-        "o_extract_flow",
-        0,
-        "seller_flow",
-        100,
-        1_000_000_000,
-        None::<&str>,
-        None::<&str>,
-    )
-    .unwrap();
-    match_db::update_match_extraction(&mut conn, match_id, 1000).unwrap();
-
-    // Extract rent
-    let result = rent_service::extract_rent(
-        &provider,
-        &pool,
-        match_id,
-        &rent_service::ExtractRentOptions::mock(),
-    )
-        .await
-        .expect("extract should succeed");
-    assert!(result.extracted_amount > 0);
-    assert!(!result.is_exhausted);
-
-    // Destroy
-    provider.set_tip_block(5000);
-    let tx_hash = rent_service::destroy_match(&provider, &pool, match_id)
-        .await
-        .expect("destroy should succeed");
-    assert!(!tx_hash.is_empty());
-}
 
 #[actix_rt::test]
 async fn extract_nonexistent_match_fails() {
@@ -58,6 +13,7 @@ async fn extract_nonexistent_match_fails() {
     let result = rent_service::extract_rent(
         &provider,
         &pool,
+        "nonexistent_tx",
         9999,
         &rent_service::ExtractRentOptions::mock(),
     )
@@ -67,9 +23,8 @@ async fn extract_nonexistent_match_fails() {
 
 #[actix_rt::test]
 async fn destroy_nonexistent_match_fails() {
-    let pool = test_db();
     let provider = MockChainProvider::new();
 
-    let result = rent_service::destroy_match(&provider, &pool, 9999).await;
+    let result = rent_service::destroy_match(&provider, "nonexistent_tx", 9999).await;
     assert!(result.is_err());
 }

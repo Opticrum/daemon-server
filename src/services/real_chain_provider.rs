@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::error::AppError;
 use crate::fiber::rpc_client::FiberRpcExt;
 use crate::services::chain_provider::{
-    CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo, PeerInfo,
+    CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo, PeerInfo, TransactionInfo,
 };
 use fiber_json_types::channel::{ListChannelsResult, OpenChannelResult};
 use opticrum_protocol::OutPoint as ProtocolOutPoint;
@@ -441,14 +441,63 @@ impl ChainProvider for RealChainProvider {
 
     async fn get_tx_block_number(&self, tx_hash: &str) -> Result<u64, AppError> {
         use ckb_cinnabar_calculator::rpc::RPC;
-        let hash: ckb_cinnabar_calculator::re_exports::ckb_types::H256 =
-            tx_hash.parse().map_err(|_| AppError::ChainError("invalid tx hash".into()))?;
+        let hash: ckb_cinnabar_calculator::re_exports::ckb_types::H256 = tx_hash
+            .parse()
+            .map_err(|_| AppError::ChainError("invalid tx hash".into()))?;
         match self.rpc.get_transaction(&hash).await {
             Ok(Some(tx)) => {
                 let block = tx.tx_status.block_number.unwrap_or_default();
                 Ok(block.value())
             }
             _ => Ok(0),
+        }
+    }
+
+    async fn get_block_timestamp(&self, block_number: u64) -> Result<u64, AppError> {
+        use ckb_cinnabar_calculator::rpc::RPC;
+        let number: ckb_cinnabar_calculator::re_exports::ckb_jsonrpc_types::Uint64 =
+            block_number.into();
+        match self.rpc.get_block_by_number(number).await {
+            Ok(Some(block)) => Ok(block.header.inner.timestamp.value()),
+            _ => Ok(0),
+        }
+    }
+
+    async fn get_transaction(&self, tx_hash: &str) -> Result<TransactionInfo, AppError> {
+        use ckb_cinnabar_calculator::rpc::RPC;
+        let hash: ckb_cinnabar_calculator::re_exports::ckb_types::H256 = tx_hash
+            .parse()
+            .map_err(|_| AppError::ChainError("invalid tx hash".into()))?;
+        match self
+            .rpc
+            .get_transaction(&hash)
+            .await
+            .map_err(Self::map_err)?
+        {
+            Some(tx) => {
+                let block = tx.tx_status.block_number.unwrap_or_default();
+                // Serialize the full transaction view as JSON for the hex field
+                // (extraction walker uses block_number, tx_hex is for debugging).
+                let tx_hex = tx
+                    .transaction
+                    .as_ref()
+                    .map(|t| {
+                        hex::encode(
+                            serde_json::to_string(&t.inner)
+                                .unwrap_or_default()
+                                .as_bytes(),
+                        )
+                    })
+                    .unwrap_or_default();
+                Ok(TransactionInfo {
+                    tx_hash: tx_hash.to_string(),
+                    block_number: block.value(),
+                    tx_hex,
+                })
+            }
+            None => Err(AppError::NotFound(format!(
+                "Transaction {tx_hash} not found"
+            ))),
         }
     }
 

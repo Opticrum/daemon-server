@@ -45,6 +45,9 @@ export interface RuntimeConfig {
   auto_match_min_capacity: number
   auto_match_max_escrow_blocks: number
   auto_match_interval_secs: number
+  ckb_rpc_url: string
+  ckb_indexer_url: string
+  fiber_rpc_url: string
 }
 
 // ── Server Info ──
@@ -216,7 +219,6 @@ export interface MatchOrderResult {
 
 // ── Matches ──
 export interface TrackedMatch {
-  id: number
   tx_hash: string
   output_index: number
   order_tx_hash: string
@@ -227,8 +229,10 @@ export interface TrackedMatch {
   last_extraction_block: number
   xudt_amount: number
   status: string
-  created_at: string
-  extracted_amount_shannons: number
+  /** Unix milliseconds timestamp of the block where the match tx was confirmed, or null if unavailable. */
+  created_at: number | null
+  /** Total extracted shannons for this match. */
+  extracted_total: number
 }
 
 export interface ExtractionHistoryItem {
@@ -242,7 +246,6 @@ export interface ExtractionHistoryItem {
 }
 
 export interface MatchDetail {
-  id: number
   tx_hash: string
   output_index: number
   order_tx_hash: string
@@ -253,7 +256,8 @@ export interface MatchDetail {
   last_extraction_block: number
   xudt_amount: number | null
   status: string
-  created_at: string
+  /** Unix milliseconds timestamp of the block where the match tx was confirmed, or null if unavailable. */
+  created_at: number | null
   extracted_total_shannons: number
   extraction_history: ExtractionHistoryItem[]
 }

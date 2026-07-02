@@ -156,7 +156,12 @@ fn test_hd_import_re_derive_consistency() {
     let count = 3;
 
     let (_keystore, children) = wallet_service::import_hd_from_mnemonic(
-        &pool, &keystore_path, &phrase, "test-hd", password, count,
+        &pool,
+        &keystore_path,
+        &phrase,
+        "test-hd",
+        password,
+        count,
     )
     .unwrap();
 
@@ -204,24 +209,30 @@ fn test_hd_unlock_re_produces_same_addresses() {
 
     // Create the HD wallet
     let (_keystore1, created) = wallet_service::import_hd_from_mnemonic(
-        &pool, &keystore_path, &phrase, "hd-unlock-test", password, count,
+        &pool,
+        &keystore_path,
+        &phrase,
+        "hd-unlock-test",
+        password,
+        count,
     )
     .unwrap();
 
     // Now unlock it via unlock_keystore
-    let (_keystore2, unlocked) = wallet_service::unlock_keystore(
-        &pool, &keystore_path, password,
-    )
-    .unwrap();
+    let (_keystore2, unlocked) =
+        wallet_service::unlock_keystore(&pool, &keystore_path, password).unwrap();
 
     assert_eq!(created.len(), unlocked.len());
     for (original, re_derived) in created.iter().zip(unlocked.iter()) {
-        assert_eq!(original.ckb_address, re_derived.ckb_address,
+        assert_eq!(
+            original.ckb_address, re_derived.ckb_address,
             "unlock address {} differs from import address {}",
             re_derived.ckb_address, original.ckb_address
         );
-        assert_eq!(original.lock_hash, re_derived.lock_hash,
-            "unlock lock_hash for {} differs from import lock_hash", original.label
+        assert_eq!(
+            original.lock_hash, re_derived.lock_hash,
+            "unlock lock_hash for {} differs from import lock_hash",
+            original.label
         );
         assert_eq!(original.derivation_path, re_derived.derivation_path);
         assert_eq!(original.derivation_index, re_derived.derivation_index);
@@ -240,7 +251,12 @@ fn test_signer_find_key_by_address() {
     let count = 3;
 
     let (_keystore, children) = wallet_service::import_hd_from_mnemonic(
-        &pool, &keystore_path, &phrase, "signer-test", password, count,
+        &pool,
+        &keystore_path,
+        &phrase,
+        "signer-test",
+        password,
+        count,
     )
     .unwrap();
 
@@ -252,8 +268,10 @@ fn test_signer_find_key_by_address() {
     // Each child address must map to the correct private key
     for child in &children {
         let found = signer.find_key_by_address(&child.ckb_address);
-        assert!(found.is_some(),
-            "signer must find key for address: {}", child.ckb_address
+        assert!(
+            found.is_some(),
+            "signer must find key for address: {}",
+            child.ckb_address
         );
 
         let found_sk = found.unwrap();
@@ -262,11 +280,12 @@ fn test_signer_find_key_by_address() {
         let found_lock_arg = rust_server::services::address::lock_arg_from_pubkey(&found_pk);
 
         // Verify the found key produces the correct lock_arg
-        let expected_lock_arg =
-            hex::decode(rust_server::services::address::lock_arg_from_address(&child.ckb_address)
+        let expected_lock_arg = hex::decode(
+            rust_server::services::address::lock_arg_from_address(&child.ckb_address)
                 .map(|la| hex::encode(la))
-                .unwrap_or_default())
-            .unwrap_or_default();
+                .unwrap_or_default(),
+        )
+        .unwrap_or_default();
         if !expected_lock_arg.is_empty() {
             assert_eq!(
                 found_lock_arg.as_slice(),
@@ -278,7 +297,8 @@ fn test_signer_find_key_by_address() {
     }
 
     // Non-existent address must return None
-    let not_found = signer.find_key_by_address("ckt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq");
+    let not_found =
+        signer.find_key_by_address("ckt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq");
     assert!(not_found.is_none(), "bogus address must not match");
 
     // Clear and verify signer is locked
@@ -299,20 +319,26 @@ fn test_lock_hash_consistent_with_address() {
     let count = 5;
 
     let (_keystore, children) = wallet_service::import_hd_from_mnemonic(
-        &pool, &keystore_path, &phrase, "consistency", password, count,
+        &pool,
+        &keystore_path,
+        &phrase,
+        "consistency",
+        password,
+        count,
     )
     .unwrap();
 
     for child in &children {
         // Extract lock_arg from the stored address
-        let lock_arg = rust_server::services::address::lock_arg_from_address(
-            &child.ckb_address,
-        )
-        .unwrap_or_else(|e| panic!("must decode stored address '{}': {e}", child.ckb_address));
+        let lock_arg = rust_server::services::address::lock_arg_from_address(&child.ckb_address)
+            .unwrap_or_else(|e| panic!("must decode stored address '{}': {e}", child.ckb_address));
 
         // Re-compute lock_hash
         let computed_lock_hash = rust_server::services::address::script_lock_hash(&lock_arg);
-        let stored_lock_hash: [u8; 32] = child.lock_hash.as_slice().try_into()
+        let stored_lock_hash: [u8; 32] = child
+            .lock_hash
+            .as_slice()
+            .try_into()
             .unwrap_or_else(|_| panic!("lock_hash wrong length for {}", child.label));
 
         assert_eq!(
@@ -336,15 +362,17 @@ fn test_derive_more_addresses_consistency() {
 
     // Create with 3 addresses
     let (_keystore, _first_batch) = wallet_service::import_hd_from_mnemonic(
-        &pool, &keystore_path, &phrase, "derive-more", password, 3,
+        &pool,
+        &keystore_path,
+        &phrase,
+        "derive-more",
+        password,
+        3,
     )
     .unwrap();
 
     // Derive 2 more
-    let more = wallet_service::derive_more_addresses(
-        &pool, &keystore_path, password, 2,
-    )
-    .unwrap();
+    let more = wallet_service::derive_more_addresses(&pool, &keystore_path, password, 2).unwrap();
 
     assert_eq!(more.len(), 2);
     assert_eq!(more[0].derivation_index, Some(3));

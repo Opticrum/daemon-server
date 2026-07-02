@@ -45,9 +45,9 @@ pub async fn scan_chain(state: web::Data<AppState>) -> Result<HttpResponse, AppE
     let items: Vec<OrderScanItem> = orders
         .into_iter()
         .filter(|o| {
-            own_pubkey.as_ref().is_none_or(|pk| {
-                hex::encode(o.order_args.fiber_pubkey.to_bytes()) != *pk
-            })
+            own_pubkey
+                .as_ref()
+                .is_none_or(|pk| hex::encode(o.order_args.fiber_pubkey.to_bytes()) != *pk)
         })
         .map(|o| OrderScanItem {
             tx_hash: hex::encode(o.order_outpoint.tx_hash),
@@ -78,7 +78,6 @@ pub async fn do_match(
 
     let result = match_service::match_order(
         state.chain_provider.as_ref(),
-        &state.db,
         &order_tx_hash,
         body.order_output_index,
         &body.seller_address,

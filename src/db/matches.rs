@@ -1,176 +1,17 @@
-//! Tracked matches persistence — CRUD operations for matched positions.
+//! Extraction history persistence — statistics cache for the admin dashboard.
+//!
+//! After the chain-first refactor, `tracked_matches` has been removed.
+//! This module now only contains `extraction_history` operations for
+//! aggregate statistics (total extracted, per-match sums, monthly stats).
 
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 
-use crate::db::schema::{extraction_history, tracked_matches};
+use crate::db::schema::extraction_history;
 use crate::error::AppError;
 
-/// A tracked match record as stored in the database.
-#[derive(Clone, Debug, serde::Serialize, Queryable, Identifiable, Selectable)]
-#[diesel(table_name = tracked_matches)]
-pub struct TrackedMatch {
-    pub id: i64,
-    pub tx_hash: String,
-    pub output_index: i32,
-    pub order_tx_hash: String,
-    pub order_output_index: i32,
-    pub seller_address: String,
-    pub shannons_per_block: i64,
-    pub ckb_capacity: i64,
-    pub last_extraction_block: i64,
-    pub xudt_amount: Option<String>,
-    pub status: String,
-    pub created_at: String,
-    pub channel_id: Option<String>,
-}
-
-/// Data needed to insert a new tracked match.
-#[derive(Insertable)]
-#[diesel(table_name = tracked_matches)]
-pub struct NewTrackedMatch<'a> {
-    pub tx_hash: &'a str,
-    pub output_index: i32,
-    pub order_tx_hash: &'a str,
-    pub order_output_index: i32,
-    pub seller_address: &'a str,
-    pub shannons_per_block: i64,
-    pub ckb_capacity: i64,
-    pub xudt_amount: Option<&'a str>,
-    pub channel_id: Option<&'a str>,
-}
-
-/// Insert a tracked match. Returns the new row ID.
-#[allow(clippy::too_many_arguments)]
-pub fn insert_match(
-    conn: &mut SqliteConnection,
-    tx_hash: &str,
-    output_index: i32,
-    order_tx_hash: &str,
-    order_output_index: i32,
-    seller_address: &str,
-    shannons_per_block: u64,
-    ckb_capacity: u64,
-    xudt_amount: Option<&str>,
-    channel_id: Option<&str>,
-) -> Result<i64, AppError> {
-    let new = NewTrackedMatch {
-        tx_hash,
-        output_index,
-        order_tx_hash,
-        order_output_index,
-        seller_address,
-        shannons_per_block: shannons_per_block as i64,
-        ckb_capacity: ckb_capacity as i64,
-        xudt_amount,
-        channel_id,
-    };
-
-    let record: TrackedMatch = diesel::insert_into(tracked_matches::table)
-        .values(&new)
-        .get_result(conn)?;
-
-    Ok(record.id)
-}
-
-/// Get a match by its database ID.
-pub fn get_match_by_id(conn: &mut SqliteConnection, id: i64) -> Result<TrackedMatch, AppError> {
-    tracked_matches::table
-        .filter(tracked_matches::id.eq(id))
-        .first(conn)
-        .map_err(Into::into)
-}
-
-/// Find an existing match for the given order outpoint.
-pub fn get_match_by_order(
-    conn: &mut SqliteConnection,
-    order_tx_hash: &str,
-    order_output_index: i32,
-) -> Result<TrackedMatch, AppError> {
-    tracked_matches::table
-        .filter(tracked_matches::order_tx_hash.eq(order_tx_hash))
-        .filter(tracked_matches::order_output_index.eq(order_output_index))
-        .first(conn)
-        .map_err(Into::into)
-}
-
-/// Update a match's extraction state.
-pub fn update_match_extraction(
-    conn: &mut SqliteConnection,
-    id: i64,
-    last_extraction_block: u64,
-) -> Result<(), AppError> {
-    let affected = diesel::update(tracked_matches::table.filter(tracked_matches::id.eq(id)))
-        .set(tracked_matches::last_extraction_block.eq(last_extraction_block as i64))
-        .execute(conn)?;
-
-    if affected == 0 {
-        return Err(AppError::NotFound(format!("Match id={id}")));
-    }
-    Ok(())
-}
-
-/// Update a match's status.
-pub fn update_match_status(
-    conn: &mut SqliteConnection,
-    id: i64,
-    status: &str,
-) -> Result<(), AppError> {
-    let affected = diesel::update(tracked_matches::table.filter(tracked_matches::id.eq(id)))
-        .set(tracked_matches::status.eq(status))
-        .execute(conn)?;
-
-    if affected == 0 {
-        return Err(AppError::NotFound(format!("Match id={id}")));
-    }
-    Ok(())
-}
-
-/// List tracked matches, optionally filtered by status.
-pub fn list_matches(
-    conn: &mut SqliteConnection,
-    status_filter: Option<&str>,
-) -> Result<Vec<TrackedMatch>, AppError> {
-    let mut query = tracked_matches::table
-        .order(tracked_matches::id.desc())
-        .into_boxed();
-
-    if let Some(s) = status_filter {
-        query = query.filter(tracked_matches::status.eq(s));
-    }
-
-    query.load(conn).map_err(AppError::from)
-}
-
-/// Delete a tracked match and its extraction history by on-chain outpoint.
-pub fn delete_match_by_outpoint(
-    conn: &mut SqliteConnection,
-    tx_hash: &str,
-    output_index: i32,
-) -> Result<bool, AppError> {
-    diesel::delete(
-        extraction_history::table.filter(
-            extraction_history::match_tx_hash
-                .eq(tx_hash)
-                .and(extraction_history::match_output_index.eq(output_index)),
-        ),
-    )
-    .execute(conn)?;
-
-    let affected = diesel::delete(
-        tracked_matches::table.filter(
-            tracked_matches::tx_hash
-                .eq(tx_hash)
-                .and(tracked_matches::output_index.eq(output_index)),
-        ),
-    )
-    .execute(conn)?;
-
-    Ok(affected > 0)
-}
-
 // ---------------------------------------------------------------------------
-// Extraction history
+// Extraction history (kept for statistics)
 // ---------------------------------------------------------------------------
 
 /// An extraction history record.
@@ -197,7 +38,7 @@ pub struct NewExtraction<'a> {
     pub tx_hash: &'a str,
 }
 
-/// Record an extraction event.
+/// Record an extraction event (statistics only).
 pub fn insert_extraction(
     conn: &mut SqliteConnection,
     match_tx_hash: &str,
@@ -241,22 +82,6 @@ pub fn total_extracted(conn: &mut SqliteConnection) -> Result<i64, AppError> {
         .select(extraction_history::extracted_amount)
         .load(conn)?;
     Ok(amounts.iter().sum())
-}
-
-/// Return all non-null channel IDs from tracked matches that are still active
-/// (live or exhausted). Used to prevent the same Fiber channel from being
-/// matched to multiple orders.
-pub fn get_used_channel_ids(conn: &mut SqliteConnection) -> Result<Vec<String>, AppError> {
-    tracked_matches::table
-        .filter(
-            tracked_matches::channel_id
-                .is_not_null()
-                .and(tracked_matches::status.eq_any(vec!["live", "exhausted"])),
-        )
-        .select(tracked_matches::channel_id)
-        .load::<Option<String>>(conn)
-        .map(|rows| rows.into_iter().flatten().collect())
-        .map_err(AppError::from)
 }
 
 /// Get extraction history for a specific match.

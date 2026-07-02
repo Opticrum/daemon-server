@@ -10,25 +10,25 @@ use tracing::info;
 
 use crate::api::AppState;
 use crate::error::AppError;
-use crate::services::match_service;
 
-/// GET /api/admin/stats — dashboard statistics (seller-side only).
+/// GET /api/admin/stats — dashboard statistics from on-chain data.
 pub async fn stats(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let matches = match_service::list_matches(&state.db, None)?;
+    let on_chain = state.chain_provider.scan_matches().await?;
 
-    let live_matches = matches.iter().filter(|m| m.status == "live").count();
-    let exhausted_matches = matches.iter().filter(|m| m.status == "exhausted").count();
-    let destroyed_matches = matches.iter().filter(|m| m.status == "destroyed").count();
+    let total = on_chain.len();
+    let live = on_chain.iter().filter(|m| m.ckb_capacity > 0).count();
+    let exhausted = on_chain.iter().filter(|m| m.ckb_capacity == 0).count();
+    let destroyed: usize = 0; // destroyed cells are consumed, not in scan
 
     let mut conn = state.db.get()?;
     let total_extracted = crate::db::matches::total_extracted(&mut conn)?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "matches": {
-            "total": matches.len(),
-            "live": live_matches,
-            "exhausted": exhausted_matches,
-            "destroyed": destroyed_matches,
+            "total": total,
+            "live": live,
+            "exhausted": exhausted,
+            "destroyed": destroyed,
         },
         "total_extracted_shannons": total_extracted,
     })))

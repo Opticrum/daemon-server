@@ -45,11 +45,14 @@ pub fn spawn_schedulers(
         tracing::info!("Rent extractor started");
 
         loop {
-            let rc = rc_ext.read().unwrap();
-            let enabled = rc.rent_extraction_enabled;
-            let interval = rc.scheduler_interval_secs;
-            let min_extraction = rc.min_extraction_amount_shannons;
-            drop(rc);
+            let (enabled, interval, min_extraction) = {
+                let rc = rc_ext.read().unwrap();
+                (
+                    rc.rent_extraction_enabled,
+                    rc.scheduler_interval_secs,
+                    rc.min_extraction_amount_shannons,
+                )
+            };
 
             if !enabled {
                 tracing::debug!("Rent extraction disabled, sleeping");
@@ -89,7 +92,6 @@ pub fn spawn_schedulers(
     });
 
     // Auto-matcher
-    let pool_am = pool;
     let rc_am = runtime_config;
     let cp_am = chain_provider;
     let signer_am: Arc<dyn Signer> = signer;
@@ -99,10 +101,10 @@ pub fn spawn_schedulers(
         tracing::info!("Auto-matcher started");
 
         loop {
-            let rc = rc_am.read().unwrap();
-            let enabled = rc.auto_match_enabled;
-            let interval = rc.auto_match_interval_secs;
-            drop(rc);
+            let (enabled, interval) = {
+                let rc = rc_am.read().unwrap();
+                (rc.auto_match_enabled, rc.auto_match_interval_secs)
+            };
 
             if !enabled {
                 tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
@@ -110,13 +112,8 @@ pub fn spawn_schedulers(
             }
 
             let started = Instant::now();
-            match auto_matcher::run_auto_match_cycle(
-                &pool_am,
-                cp_am.as_ref(),
-                signer_am.as_ref(),
-                &rc_am,
-            )
-            .await
+            match auto_matcher::run_auto_match_cycle(cp_am.as_ref(), signer_am.as_ref(), &rc_am)
+                .await
             {
                 Ok(n) => {
                     let elapsed = started.elapsed();

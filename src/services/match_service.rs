@@ -7,16 +7,17 @@
 //! When a seller matches an order, the service:
 //! 1. Opens a new channel to the buyer's Fiber peer via `open_channel`.
 //! 2. Polls `list_channels` until the channel reaches ChannelReady.
-//! 3. Builds the match transaction with the channel outpoint and records the
-//!    result in the local database.
+//! 3. Builds the match transaction with the channel outpoint and broadcasts it.
 //!
 //! Transaction assembly is delegated to `TransactionAssembler` when available.
+//!
+//! After the chain-first refactor, this module no longer writes to the database.
+//! All match data is derived from on-chain scans.
 
+use std::collections::HashSet;
 use std::time::Duration;
 use tracing::{debug, info};
 
-use crate::db::matches as match_db;
-use crate::db::DbPool;
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
 
@@ -25,7 +26,6 @@ use crate::services::chain_provider::ChainProvider;
 pub struct MatchOrderResult {
     pub tx_hash: String,
     pub output_index: i32,
-    pub match_id: i64,
 }
 
 /// Initial polling interval.
@@ -55,6 +55,27 @@ pub fn is_channel_pending(state_name: &str) -> bool {
     !is_channel_ready(state_name) && !is_channel_terminal(state_name)
 }
 
+/// Build the set of channel outpoints already used by on-chain match cells.
+/// This replaces the old `get_used_channel_ids()` DB query.
+pub async fn get_used_channel_outpoints<P: ChainProvider + ?Sized>(
+    provider: &P,
+) -> Result<HashSet<(String, u32)>, AppError> {
+    let matches = provider.scan_matches().await?;
+    let used: HashSet<(String, u32)> = matches
+        .iter()
+        .filter_map(|m| {
+            let tx = hex::encode(m.match_args.channel_outpoint.tx_hash);
+            let idx = m.match_args.channel_outpoint.index;
+            if tx.is_empty() {
+                None
+            } else {
+                Some((tx, idx))
+            }
+        })
+        .collect();
+    Ok(used)
+}
+
 /// Match an on-chain order with a **fresh** Fiber channel.
 ///
 /// The contract requires `channel_block > order_block`, so the channel must be
@@ -62,7 +83,6 @@ pub fn is_channel_pending(state_name: &str) -> bool {
 /// and blocks until it reaches ChannelReady (up to 120 seconds).
 pub async fn match_order<P: ChainProvider + ?Sized>(
     provider: &P,
-    pool: &DbPool,
     order_tx_hash: &str,
     order_output_index: u32,
     seller_address: &str,
@@ -95,32 +115,27 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     // ── 2. Ensure peer is connected ────────────────────────────────────
     let _ = provider.connect_peer(&fiber_pubkey_hex).await;
 
-    // ── 3. Try to reuse an existing compatible channel ─────────────────
-    let used_channel_ids = {
-        let mut conn = pool.get()?;
-        match_db::get_used_channel_ids(&mut conn).unwrap_or_default()
-    };
-    let used_channels_set: std::collections::HashSet<String> =
-        used_channel_ids.into_iter().collect();
+    // ── 3. Build used channel set from on-chain match scan ─────────────
+    let used_channel_outpoints = get_used_channel_outpoints(provider).await?;
 
-    let (channel_tx_hash, channel_output_index, channel_id) = if let Some(ch) =
-        find_compatible_channel(
-            provider,
-            &fiber_pubkey_hex,
-            required_capacity,
-            order_block,
-            &used_channels_set,
-        )
-        .await?
+    // ── 4. Try to reuse an existing compatible channel ─────────────────
+    let (channel_tx_hash, channel_output_index) = if let Some(ch) = find_compatible_channel(
+        provider,
+        &fiber_pubkey_hex,
+        required_capacity,
+        order_block,
+        &used_channel_outpoints,
+    )
+    .await?
     {
         info!(
             channel_id = %ch.channel_id,
             tx_hash = %ch.tx_hash,
             "Match: reusing existing channel"
         );
-        (ch.tx_hash, ch.output_index, Some(ch.channel_id.clone()))
+        (ch.tx_hash, ch.output_index)
     } else {
-        // ── 4. Open a new channel (add reserve for cell occupied capacity) ──
+        // ── 5. Open a new channel (add reserve for cell occupied capacity) ──
         let funding_amount = required_capacity + CHANNEL_CELL_OCCUPIED_RESERVE;
         info!(
             peer = %fiber_pubkey_hex,
@@ -131,7 +146,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
             .open_channel(&fiber_pubkey_hex, funding_amount)
             .await?;
 
-        // ── 5. Poll until channel has an outpoint (check against raw capacity) ──
+        // ── 6. Poll until channel has an outpoint ──────────────────────
         let channel = wait_for_channel_ready(
             provider,
             &fiber_pubkey_hex,
@@ -144,10 +159,10 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
             tx_hash = %channel.tx_hash,
             "Match: new channel ready"
         );
-        (channel.tx_hash, channel.output_index, Some(channel.channel_id.clone()))
+        (channel.tx_hash, channel.output_index)
     };
 
-    // ── 4. Build match transaction ─────────────────────────────────────
+    // ── 7. Build and send match transaction ────────────────────────────
     let tx_hex = format!(
         "match_order:{}:{}:{}:{}",
         order_tx_hash, order_output_index, channel_tx_hash, channel_output_index
@@ -155,24 +170,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     let tx_hash = provider.send_transaction(&tx_hex).await?;
     let output_index = 0; // Match Cell is output[0]
 
-    // ── 5. Persist tracked match ───────────────────────────────────────
-    let shannons_per_block = order.order_data.shannons_per_block;
-    let mut conn = pool.get()?;
-    let match_id = match_db::insert_match(
-        &mut conn,
-        &tx_hash,
-        output_index,
-        order_tx_hash,
-        order_output_index as i32,
-        seller_address,
-        shannons_per_block,
-        order.order_data.channel_capacity,
-        None::<&str>,
-        channel_id.as_deref(),
-    )?;
-
     info!(
-        match_id = match_id,
         tx_hash = %tx_hash,
         seller = %seller_address,
         channel_tx = %channel_tx_hash,
@@ -184,7 +182,6 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     Ok(MatchOrderResult {
         tx_hash,
         output_index,
-        match_id,
     })
 }
 
@@ -195,7 +192,7 @@ pub async fn ensure_channel<P: ChainProvider + ?Sized>(
     counterparty_pubkey: &str,
     required_capacity: u64,
     order_tx_hash: &str,
-    used_channel_ids: &std::collections::HashSet<String>,
+    used_channel_outpoints: &HashSet<(String, u32)>,
 ) -> Result<crate::services::chain_provider::FiberChannelInfo, AppError> {
     let order_block = provider
         .get_tx_block_number(order_tx_hash)
@@ -208,7 +205,7 @@ pub async fn ensure_channel<P: ChainProvider + ?Sized>(
         counterparty_pubkey,
         required_capacity,
         order_block,
-        used_channel_ids,
+        used_channel_outpoints,
     )
     .await?
     {
@@ -224,13 +221,13 @@ pub async fn ensure_channel<P: ChainProvider + ?Sized>(
 
 /// Find an existing channel that matches the counterparty pubkey, has enough
 /// capacity, was created AFTER the order (contract requirement), and has not
-/// already been used in another match.
+/// already been used in another match (checked via on-chain match scan).
 async fn find_compatible_channel<P: ChainProvider + ?Sized>(
     provider: &P,
     counterparty_pubkey: &str,
     min_capacity: u64,
     order_block: u64,
-    used_channel_ids: &std::collections::HashSet<String>,
+    used_channel_outpoints: &HashSet<(String, u32)>,
 ) -> Result<Option<crate::services::chain_provider::FiberChannelInfo>, AppError> {
     let channels = provider.scan_fiber_channels(&[]).await?;
     for ch in channels {
@@ -248,10 +245,12 @@ async fn find_compatible_channel<P: ChainProvider + ?Sized>(
         if !is_channel_ready(&ch.state_name) {
             continue;
         }
-        // Exclude channels already used in another match
-        if used_channel_ids.contains(&ch.channel_id) {
+        // Exclude channels already used in another match (checked against on-chain data)
+        let chan_key = (ch.tx_hash.clone(), ch.output_index);
+        if used_channel_outpoints.contains(&chan_key) {
             debug!(
                 channel_id = %ch.channel_id,
+                tx_hash = %ch.tx_hash,
                 "Match: channel already used in another match, skipping"
             );
             continue;
@@ -365,39 +364,16 @@ pub async fn wait_for_channel_ready<P: ChainProvider + ?Sized>(
     }
 }
 
-/// List tracked matches.
-pub fn list_matches(
-    pool: &DbPool,
-    status_filter: Option<&str>,
-) -> Result<Vec<match_db::TrackedMatch>, AppError> {
-    let mut conn = pool.get()?;
-    let matches = match_db::list_matches(&mut conn, status_filter)?;
-    debug!(
-        count = matches.len(),
-        filter = status_filter.unwrap_or("all"),
-        "Matches listed"
-    );
-    Ok(matches)
-}
-
-/// Get a single tracked match by ID.
-pub fn get_match(pool: &DbPool, match_id: i64) -> Result<match_db::TrackedMatch, AppError> {
-    let mut conn = pool.get()?;
-    match_db::get_match_by_id(&mut conn, match_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db;
     use crate::services::MockChainProvider;
 
     #[actix_rt::test]
     async fn match_order_fails_when_order_not_on_chain() {
-        let pool = db::init_test_db();
         let provider = MockChainProvider::new();
 
-        let result = match_order(&provider, &pool, "order_not_found", 0, "ckt1q...seller").await;
+        let result = match_order(&provider, "order_not_found", 0, "ckt1q...seller").await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found on chain"));
@@ -414,11 +390,10 @@ mod tests {
 
     #[actix_rt::test]
     async fn match_order_no_channels_attempts_open() {
-        let pool = db::init_test_db();
         let provider = MockChainProvider::new();
 
         // No orders on chain, no channels → fails at order lookup first.
-        let result = match_order(&provider, &pool, "any_order", 0, "ckt1q...seller").await;
+        let result = match_order(&provider, "any_order", 0, "ckt1q...seller").await;
         assert!(result.is_err());
 
         // open_channel was never called because order lookup fails first.

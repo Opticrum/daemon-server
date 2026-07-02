@@ -199,8 +199,7 @@ mod tests {
         "d00c06bfd800d27397002dca6fb0993d5ba6399b4238b2f29ee9deb97593d2bc";
     const REFERENCE_PUBKEY_HEX: &str =
         "03fe6c6d09d1a0f70255cddf25c5ed57d41b5c08822ae710dc10f8c88290e0acdf";
-    const REFERENCE_LOCK_ARG_HEX: &str =
-        "c8328aabcd9b9e8e64fbc566c4385c3bdeb219d7";
+    const REFERENCE_LOCK_ARG_HEX: &str = "c8328aabcd9b9e8e64fbc566c4385c3bdeb219d7";
     const REFERENCE_LOCK_HASH_HEX: &str =
         "32e555f3ff8e135cece1351a6a2971518392c1e30375c1e006ad0ce8eac07947";
     const REFERENCE_TESTNET_ADDRESS: &str =

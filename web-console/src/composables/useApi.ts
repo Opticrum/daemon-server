@@ -74,6 +74,8 @@ export function useApi() {
       request('/console/wallets/import-mnemonic', { method: 'POST', body: JSON.stringify(body) }),
     deleteHdWallet: (): Promise<{ deleted: boolean }> =>
       request('/console/wallets/delete-hd', { method: 'DELETE' }),
+    revealMnemonic: (password: string): Promise<{ mnemonic: string }> =>
+      request('/console/wallets/reveal-mnemonic', { method: 'POST', body: JSON.stringify({ password }) }),
 
     // ── Orders ──
     scanOrders: (): Promise<OrderScanItem[]> =>
@@ -90,8 +92,8 @@ export function useApi() {
       }),
 
     // ── Matches ──
-    getMatchDetail: (id: number): Promise<MatchDetail> =>
-      request(`/console/matches/${id}`),
+    getMatchDetail: (txHash: string, outputIndex: number): Promise<MatchDetail> =>
+      request(`/console/matches/${encodeURIComponent(txHash)}/${outputIndex}`),
     listMatches: (status?: string, lockHashes?: string[]): Promise<TrackedMatch[]> => {
       const params = new URLSearchParams()
       if (status) params.set('status', status)
@@ -99,10 +101,10 @@ export function useApi() {
       const qs = params.toString()
       return request('/console/matches' + (qs ? `?${qs}` : ''))
     },
-    extractRent: (id: number): Promise<ExtractRentResult> =>
-      request(`/console/matches/${id}/extract`, { method: 'POST' }),
-    destroyMatch: (id: number): Promise<{ tx_hash: string; status: string }> =>
-      request(`/console/matches/${id}/destroy`, { method: 'POST' }),
+    extractRent: (txHash: string, outputIndex: number): Promise<ExtractRentResult> =>
+      request(`/console/matches/${encodeURIComponent(txHash)}/${outputIndex}/extract`, { method: 'POST' }),
+    destroyMatch: (txHash: string, outputIndex: number): Promise<{ tx_hash: string; status: string }> =>
+      request(`/console/matches/${encodeURIComponent(txHash)}/${outputIndex}/destroy`, { method: 'POST' }),
 
     // ── Channels ──
     scanChannels: (): Promise<ChannelWithMatch[]> =>
@@ -137,9 +139,6 @@ export function useApi() {
     getServerInfo: (): Promise<ServerInfo> =>
       request('/console/server-info'),
 
-    // ── Scheduler ──
-    getSchedulerStatus: (): Promise<SchedulerStatusResponse> =>
-      request('/console/scheduler/status'),
   }
 }
 

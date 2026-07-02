@@ -23,8 +23,8 @@ use crate::error::AppError;
 use crate::services::chain_provider::{
     ChainProvider, ChannelMatchInfo, ChannelWithMatch, FiberChannelInfo,
 };
-use crate::services::match_service::{self, MatchOrderResult};
 use crate::services::hd_wallet_signer::HdWalletSigner;
+use crate::services::match_service::{self, get_used_channel_outpoints, MatchOrderResult};
 use crate::services::rent_service;
 use crate::services::runtime_config::{RuntimeConfig, RuntimeConfigPartial};
 use crate::services::signer::Signer;
@@ -145,15 +145,15 @@ impl GatewayService {
     /// current runtime-config values so the frontend always sees the
     /// effective settings (not just config.toml defaults).
     pub fn get_server_info(
-        config: &Config,
+        _config: &Config,
         runtime_config: &RuntimeConfig,
         provider: &dyn ChainProvider,
     ) -> serde_json::Value {
         serde_json::json!({
             "network": provider.network(),
-            "ckb_rpc_url": config.ckb_rpc_url,
-            "ckb_indexer_url": config.ckb_indexer_url,
-            "fiber_rpc_url": config.fiber_rpc_url,
+            "ckb_rpc_url": runtime_config.ckb_rpc_url,
+            "ckb_indexer_url": runtime_config.ckb_indexer_url,
+            "fiber_rpc_url": runtime_config.fiber_rpc_url,
             "fee_rate": runtime_config.fee_rate,
             "version": env!("CARGO_PKG_VERSION"),
         })
@@ -171,10 +171,24 @@ impl GatewayService {
         let started = Instant::now();
         let mut conn = pool.get()?;
 
-        let matches = match_db::list_matches(&mut conn, None)?;
-        let live = match_db::list_matches(&mut conn, Some("live"))?;
-        let exhausted = match_db::list_matches(&mut conn, Some("exhausted"))?;
-        let destroyed = match_db::list_matches(&mut conn, Some("destroyed"))?;
+        // Match counts from on-chain scan (single query instead of 4 DB queries)
+        let (on_chain_matches, _) = match provider.scan_matches().await {
+            Ok(m) => (m, false),
+            Err(e) => {
+                warn!(error = %e, "Dashboard: scan_matches failed");
+                (vec![], true)
+            }
+        };
+        let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
+        let live = on_chain_matches.len() as u64;
+        // "exhausted" = match cells with zero capacity remaining
+        let exhausted = on_chain_matches
+            .iter()
+            .filter(|m| m.ckb_capacity == 0)
+            .count() as u64;
+        let total_matches = on_chain_matches.len() as u64;
+        let destroyed: u64 = 0; // destroyed cells are consumed and not in scan_matches()
+
         let total_extracted = match_db::total_extracted(&mut conn)? as u64;
         let wallets = wallet_db::list_wallets(&mut conn)?;
 
@@ -183,13 +197,6 @@ impl GatewayService {
             Err(e) => {
                 warn!(error = %e, "Dashboard: scan_orders failed");
                 (vec![], true)
-            }
-        };
-        let (tip_block, _) = match provider.get_tip_block_number().await {
-            Ok(t) => (t, false),
-            Err(e) => {
-                warn!(error = %e, "Dashboard: get_tip_block failed");
-                (0u64, true)
             }
         };
         let (channels, _) = match provider.scan_fiber_channels(&[]).await {
@@ -201,7 +208,7 @@ impl GatewayService {
         };
 
         debug!(
-            matches = matches.len(),
+            matches = total_matches,
             orders = orders.len(),
             channels = channels.len(),
             wallets = wallets.len(),
@@ -215,17 +222,17 @@ impl GatewayService {
         let distribution = vec![
             DistributionItem {
                 label: "进行中".into(),
-                value: live.len() as u64,
+                value: live,
                 color: "#52c41a".into(),
             },
             DistributionItem {
                 label: "已耗尽".into(),
-                value: exhausted.len() as u64,
+                value: exhausted,
                 color: "#1890ff".into(),
             },
             DistributionItem {
                 label: "已销毁".into(),
-                value: destroyed.len() as u64,
+                value: destroyed,
                 color: "#ff4d4f".into(),
             },
         ];
@@ -243,7 +250,7 @@ impl GatewayService {
         let trends = vec![
             KpiTrend {
                 key: "matches".into(),
-                current: matches.len() as u64,
+                current: total_matches,
                 previous: 0,
                 delta_pct: 12.0,
                 delta_label: "较上月".into(),
@@ -282,10 +289,10 @@ impl GatewayService {
         let m = state.matcher.clone();
 
         Ok(DashboardResponse {
-            total_matches: matches.len() as u64,
-            live_matches: live.len() as u64,
-            exhausted_matches: exhausted.len() as u64,
-            destroyed_matches: destroyed.len() as u64,
+            total_matches,
+            live_matches: live,
+            exhausted_matches: exhausted,
+            destroyed_matches: destroyed,
             total_extracted_shannons: total_extracted,
             active_orders_count: orders.len() as u32,
             wallet_count: wallets.len() as u32,
@@ -516,12 +523,23 @@ impl GatewayService {
         crate::services::wallet_service::delete_hd_wallet(pool, keystore_path)
     }
 
+    /// Reveal the mnemonic phrase from the keystore. Requires password verification.
+    /// This is a read-only operation — no session is started, no signer is loaded.
+    pub fn reveal_mnemonic(
+        keystore_path: &std::path::Path,
+        password: &str,
+    ) -> Result<String, AppError> {
+        let keystore = crate::services::keystore::load_keystore(keystore_path)?;
+        let mnemonic = crate::services::keystore::decrypt_mnemonic(&keystore, password)?;
+        Ok(mnemonic.to_string())
+    }
+
     // ═══════════════════════════════════════════════════════
     // Orders
     // ═══════════════════════════════════════════════════════
 
     pub async fn match_order(
-        pool: &DbPool,
+        _pool: &DbPool,
         provider: &dyn ChainProvider,
         order_tx_hash: &str,
         order_output_index: u32,
@@ -560,19 +578,13 @@ impl GatewayService {
             .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
 
         // Find or create a compatible channel (exclude already-matched channels)
-        let used_channel_ids: std::collections::HashSet<String> = {
-            let mut conn = pool.get()?;
-            match_db::get_used_channel_ids(&mut conn)
-                .unwrap_or_default()
-                .into_iter()
-                .collect()
-        };
+        let used_channel_outpoints = get_used_channel_outpoints(provider).await?;
         let channel = match_service::ensure_channel(
             provider,
             &hex::encode(order.order_args.fiber_pubkey.to_bytes()),
             order.order_data.channel_capacity,
             order_tx_hash,
-            &used_channel_ids,
+            &used_channel_outpoints,
         )
         .await?;
 
@@ -590,7 +602,6 @@ impl GatewayService {
             crate::services::address::script_lock_hash(&lock_arg)
         };
         let order_args = order.order_args.clone();
-        let order_data = order.order_data.clone();
         let match_args = opticrum_protocol::MatchArgs {
             order_args,
             channel_outpoint,
@@ -602,35 +613,7 @@ impl GatewayService {
             .await?;
         let output_index: i32 = 0;
 
-        // Check for existing match (avoid unique constraint on retry)
-        let mut conn = pool.get()?;
-        if let Ok(existing) =
-            match_db::get_match_by_order(&mut conn, order_tx_hash, order_output_index as i32)
-        {
-            return Ok(MatchOrderResult {
-                tx_hash: existing.tx_hash,
-                output_index: existing.output_index,
-                match_id: existing.id,
-            });
-        }
-
-        // Persist tracked match
-        let shannons_per_block = order_data.shannons_per_block;
-        let match_id = match_db::insert_match(
-            &mut conn,
-            &tx_hash,
-            output_index,
-            order_tx_hash,
-            order_output_index as i32,
-            seller_address,
-            shannons_per_block,
-            order_data.channel_capacity,
-            None::<&str>,
-            Some(channel.channel_id.as_str()),
-        )?;
-
         tracing::info!(
-            match_id = match_id,
             tx_hash = %tx_hash,
             seller = %seller_address,
             channel_tx = %channel.tx_hash,
@@ -640,7 +623,6 @@ impl GatewayService {
         Ok(MatchOrderResult {
             tx_hash,
             output_index,
-            match_id,
         })
     }
 
@@ -648,7 +630,7 @@ impl GatewayService {
     /// compatible channel exists. Used by the frontend to show per-order status.
     pub async fn get_match_readiness(
         provider: &dyn ChainProvider,
-        pool: &crate::db::DbPool,
+        _pool: &crate::db::DbPool,
         order_tx_hash: &str,
     ) -> Result<serde_json::Value, AppError> {
         let orders = provider.scan_orders().await?;
@@ -676,13 +658,7 @@ impl GatewayService {
         // Only ChannelReady counts as usable; in-progress channels are reported
         // separately as pending_channel.
         let channels = provider.scan_fiber_channels(&[]).await?;
-        let used_ids: std::collections::HashSet<String> = {
-            let mut conn = pool.get()?;
-            match_db::get_used_channel_ids(&mut conn)
-                .unwrap_or_default()
-                .into_iter()
-                .collect()
-        };
+        let used_outpoints = get_used_channel_outpoints(provider).await?;
         let mut compatible = None;
         let mut pending = None;
         for ch in &channels {
@@ -693,8 +669,8 @@ impl GatewayService {
             {
                 continue;
             }
-            // Exclude channels already used in another match
-            if used_ids.contains(&ch.channel_id) {
+            // Exclude channels already used in another match (check against on-chain data)
+            if used_outpoints.contains(&(ch.tx_hash.clone(), ch.output_index)) {
                 continue;
             }
             let channel_block = provider.get_tx_block_number(&ch.tx_hash).await.unwrap_or(0);
@@ -763,46 +739,82 @@ impl GatewayService {
     // Matches
     // ═══════════════════════════════════════════════════════
 
-    /// List tracked matches, optionally filtered by status and by signer
-    /// lock hashes. Syncs with on-chain data first so recently-created
-    /// matches are visible even if local persistence failed.
+    /// List matches directly from on-chain data.
+    /// No longer syncs to/from a database table — the chain is the source of truth.
     pub async fn list_matches(
         pool: &DbPool,
         status: Option<&str>,
         provider: &dyn ChainProvider,
         signer_lock_hashes: Option<&[String]>,
-    ) -> Result<Vec<match_db::TrackedMatch>, AppError> {
-        // Sync on-chain matches into the local DB first
-        if let Err(e) = Self::sync_matches_from_chain(pool, provider).await {
-            tracing::warn!("Failed to sync matches from chain (non-fatal): {e}");
-        }
+    ) -> Result<Vec<serde_json::Value>, AppError> {
+        let _tip_block = provider.get_tip_block_number().await.unwrap_or(0);
+        let on_chain = provider.scan_matches().await?;
+
         let mut conn = pool.get()?;
-        let all = match_db::list_matches(&mut conn, status)?;
+        let mut results: Vec<serde_json::Value> = Vec::new();
 
-        // Filter by signer lock hashes if provided
-        let mut filtered: Vec<match_db::TrackedMatch> = match signer_lock_hashes {
-            Some(hashes) if !hashes.is_empty() => all
-                .into_iter()
-                .filter(|m| {
-                    let seller_lh = Self::seller_lock_hash_from_address(&m.seller_address);
-                    hashes.iter().any(|h| h.eq_ignore_ascii_case(&seller_lh))
-                })
-                .collect(),
-            _ => all,
-        };
+        for m in &on_chain {
+            let tx_hash = hex::encode(m.match_outpoint.tx_hash);
+            let output_index = m.match_outpoint.index;
 
-        // Resolve "lock_hash:<hex>" placeholders to proper CKB addresses
-        // by looking up matching wallets in the database.
-        for m in &mut filtered {
-            if m.seller_address.starts_with("lock_hash:") {
-                if let Some(addr) = Self::resolve_lock_hash_to_address(&mut conn, &m.seller_address)
-                {
-                    m.seller_address = addr;
+            // Status filter
+            let is_exhausted = m.ckb_capacity == 0;
+            if let Some(s) = status {
+                match s {
+                    "live" if is_exhausted => continue,
+                    "exhausted" if !is_exhausted => continue,
+                    "destroyed" => continue, // destroyed cells aren't in scan_matches
+                    _ => {}
                 }
             }
+
+            // Signer lock hash filter
+            let seller_lh = hex::encode(m.match_args.seller_lock_hash);
+            if let Some(hashes) = signer_lock_hashes {
+                if !hashes.is_empty() && !hashes.iter().any(|h| h.eq_ignore_ascii_case(&seller_lh))
+                {
+                    continue;
+                }
+            }
+
+            // Resolve seller address from wallet DB
+            let seller_address =
+                Self::resolve_lock_hash_to_address(&mut conn, &format!("lock_hash:{seller_lh}"))
+                    .unwrap_or_else(|| format!("lock_hash:{seller_lh}"));
+
+            // Get extraction totals from statistics cache
+            let extracted_total = match_db::extracted_for_match(
+                &mut conn,
+                &tx_hash,
+                output_index as i32,
+            )
+            .unwrap_or(0) as u64;
+
+            // Get match creation timestamp (Unix milliseconds) from the match tx's block
+            let created_at: Option<u64> = match provider.get_tx_block_number(&tx_hash).await {
+                Ok(block_number) if block_number > 0 => {
+                    provider.get_block_timestamp(block_number).await.ok().filter(|&ts| ts > 0)
+                }
+                _ => None,
+            };
+
+            results.push(serde_json::json!({
+                "tx_hash": tx_hash,
+                "output_index": output_index,
+                "order_tx_hash": hex::encode(m.match_args.order_args.fiber_pubkey.to_bytes()),
+                "order_output_index": 0,
+                "seller_address": seller_address,
+                "shannons_per_block": m.match_data.shannons_per_block,
+                "ckb_capacity": m.ckb_capacity,
+                "last_extraction_block": m.match_data.last_extraction_block,
+                "xudt_amount": m.match_data.xudt_amount,
+                "status": if is_exhausted { "exhausted" } else { "live" },
+                "extracted_total": extracted_total,
+                "created_at": created_at,
+            }));
         }
 
-        Ok(filtered)
+        Ok(results)
     }
 
     /// Try to resolve a `"lock_hash:<hex>"` placeholder to a proper CKB address
@@ -819,145 +831,60 @@ impl GatewayService {
         }
     }
 
-    /// Extract the seller's lock_hash hex from a seller_address field.
-    /// Handles two formats:
-    /// - `"lock_hash:<hex>"` — placeholder from chain sync
-    /// - CKB bech32m address — decode and compute script_lock_hash
-    fn seller_lock_hash_from_address(seller_address: &str) -> String {
-        if let Some(hex_part) = seller_address.strip_prefix("lock_hash:") {
-            return hex_part.to_string();
-        }
-        // Try to decode as a CKB address and extract lock_hash
-        match crate::services::address::lock_arg_from_address(seller_address) {
-            Ok(lock_arg) => {
-                let lock_hash = crate::services::address::script_lock_hash(&lock_arg);
-                hex::encode(lock_hash)
-            }
-            Err(_) => {
-                // Can't decode — return as-is for substring match
-                seller_address.to_string()
-            }
-        }
-    }
-
-    /// Scan on-chain match cells and ensure each one exists in the local DB.
-    /// Inserts any missing matches. Safe to call repeatedly — uses the
-    /// `(tx_hash, output_index)` unique constraint to avoid duplicates.
-    pub async fn sync_matches_from_chain(
+    /// Get full match detail with extraction history from on-chain data.
+    pub async fn get_match_detail(
         pool: &DbPool,
+        tx_hash: &str,
+        output_index: u32,
         provider: &dyn ChainProvider,
-    ) -> Result<usize, AppError> {
-        let on_chain = match provider.scan_matches().await {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!("sync_matches_from_chain: scan failed: {e}");
-                return Err(e);
-            }
-        };
-
-        let mut conn = pool.get()?;
-        let all = match_db::list_matches(&mut conn, None)?;
-        let mut inserted = 0usize;
-
-        for m in &on_chain {
-            let tx_hash = hex::encode(m.match_outpoint.tx_hash);
-            let output_index = m.match_outpoint.index as i32;
-
-            let already_tracked = all
-                .iter()
-                .any(|tm| tm.tx_hash == tx_hash && tm.output_index == output_index);
-
-            if already_tracked {
-                continue;
-            }
-
-            // Try to resolve the seller_lock_hash to a known wallet address.
-            // Falls back to "lock_hash:<hex>" placeholder if no wallet matches.
-            let seller_lock_hash_hex = hex::encode(m.match_args.seller_lock_hash);
-            let seller_address = Self::resolve_lock_hash_to_address(
-                &mut conn,
-                &format!("lock_hash:{seller_lock_hash_hex}"),
-            )
-            .unwrap_or_else(|| format!("lock_hash:{seller_lock_hash_hex}"));
-            // channel_outpoint is the only related identifier available
-            let order_tx_hash = hex::encode(m.match_args.channel_outpoint.tx_hash);
-            let order_output_index = m.match_args.channel_outpoint.index as i32;
-
-            let xudt_str = m.xudt.as_ref().map(|_| "");
-
-            match match_db::insert_match(
-                &mut conn,
-                &tx_hash,
-                output_index,
-                &order_tx_hash,
-                order_output_index,
-                &seller_address,
-                m.match_data.shannons_per_block,
-                m.ckb_capacity,
-                xudt_str,
-                None::<&str>,
-            ) {
-                Ok(id) => {
-                    tracing::info!(
-                        id = id,
-                        tx_hash = %tx_hash,
-                        "Synced match from chain into local DB"
-                    );
-                    inserted += 1;
-                }
-                Err(e) => {
-                    // Unique constraint violation is expected for existing records
-                    tracing::debug!("Sync match {tx_hash}:{output_index} skipped: {e}");
-                }
-            }
-        }
-
-        if inserted > 0 {
-            tracing::info!(inserted, total = on_chain.len(), "Synced matches from chain");
-        }
-
-        Ok(inserted)
-    }
-
-    /// Get full match detail with extraction history.
-    pub fn get_match_detail(
-        pool: &DbPool,
-        match_id: i64,
     ) -> Result<serde_json::Value, AppError> {
         let mut conn = pool.get()?;
-        let m = match_db::get_match_by_id(&mut conn, match_id)?;
-        let extracted_total = match_db::extracted_for_match(
-            &mut conn, &m.tx_hash, m.output_index,
-        )
-        .unwrap_or(0) as u64;
-        let history = match_db::get_extractions_for_match(
-            &mut conn, &m.tx_hash, m.output_index,
-        )
-        .unwrap_or_default();
 
-        // Resolve placeholder seller addresses
-        let mut seller_address = m.seller_address.clone();
-        if seller_address.starts_with("lock_hash:") {
-            if let Some(addr) =
-                Self::resolve_lock_hash_to_address(&mut conn, &seller_address)
-            {
-                seller_address = addr;
+        // Find the match on chain
+        let on_chain = provider.scan_matches().await?;
+        let m = on_chain
+            .iter()
+            .find(|mi| {
+                hex::encode(mi.match_outpoint.tx_hash) == tx_hash
+                    && mi.match_outpoint.index == output_index
+            })
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Match {tx_hash}:{output_index} not found on chain"))
+            })?;
+
+        let extracted_total = match_db::extracted_for_match(&mut conn, tx_hash, output_index as i32)
+            .unwrap_or(0) as u64;
+        let history = match_db::get_extractions_for_match(&mut conn, tx_hash, output_index as i32)
+            .unwrap_or_default();
+
+        let seller_lh = hex::encode(m.match_args.seller_lock_hash);
+        let seller_address =
+            Self::resolve_lock_hash_to_address(&mut conn, &format!("lock_hash:{seller_lh}"))
+                .unwrap_or_else(|| format!("lock_hash:{seller_lh}"));
+
+        let is_exhausted = m.ckb_capacity == 0;
+        let status = if is_exhausted { "exhausted" } else { "live" };
+
+        // Get match creation timestamp (Unix milliseconds) from the match tx's block
+        let created_at: Option<u64> = match provider.get_tx_block_number(tx_hash).await {
+            Ok(block_number) if block_number > 0 => {
+                provider.get_block_timestamp(block_number).await.ok().filter(|&ts| ts > 0)
             }
-        }
+            _ => None,
+        };
 
         Ok(serde_json::json!({
-            "id": m.id,
-            "tx_hash": m.tx_hash,
-            "output_index": m.output_index,
-            "order_tx_hash": m.order_tx_hash,
-            "order_output_index": m.order_output_index,
+            "tx_hash": tx_hash,
+            "output_index": output_index,
+            "order_tx_hash": hex::encode(m.match_args.order_args.fiber_pubkey.to_bytes()),
+            "order_output_index": 0,
             "seller_address": seller_address,
-            "shannons_per_block": m.shannons_per_block,
+            "shannons_per_block": m.match_data.shannons_per_block,
             "ckb_capacity": m.ckb_capacity,
-            "last_extraction_block": m.last_extraction_block,
-            "xudt_amount": m.xudt_amount,
-            "status": m.status,
-            "created_at": m.created_at,
+            "last_extraction_block": m.match_data.last_extraction_block,
+            "xudt_amount": m.match_data.xudt_amount,
+            "status": status,
+            "created_at": created_at,
             "extracted_total_shannons": extracted_total,
             "extraction_history": history,
         }))
@@ -966,14 +893,16 @@ impl GatewayService {
     pub async fn extract_rent(
         pool: &DbPool,
         provider: &dyn ChainProvider,
-        match_id: i64,
+        tx_hash: &str,
+        output_index: u32,
         tx_assembler: Option<&TransactionAssembler>,
         signer: &HdWalletSigner,
     ) -> Result<rent_service::ExtractRentResult, AppError> {
         rent_service::extract_rent(
             provider,
             pool,
-            match_id,
+            tx_hash,
+            output_index,
             &rent_service::ExtractRentOptions {
                 tx_assembler,
                 signer: Some(signer),
@@ -983,11 +912,12 @@ impl GatewayService {
     }
 
     pub async fn destroy_match(
-        pool: &DbPool,
+        _pool: &DbPool,
         provider: &dyn ChainProvider,
-        match_id: i64,
+        tx_hash: &str,
+        output_index: u32,
     ) -> Result<String, AppError> {
-        rent_service::destroy_match(provider, pool, match_id).await
+        rent_service::destroy_match(provider, tx_hash, output_index).await
     }
 
     // ═══════════════════════════════════════════════════════
@@ -999,13 +929,9 @@ impl GatewayService {
     /// 1. Filter match cells by counterparty fiber pubkey
     /// 2. Among filtered, match by channel outpoint
     pub async fn get_channels_with_matches(
-        pool: &DbPool,
+        _pool: &DbPool,
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
-        let mut conn = pool.get()?;
-        let dismissed = crate::db::channels::list_dismissed_ids(&mut conn)?;
-        let dismissed_set: std::collections::HashSet<String> = dismissed.into_iter().collect();
-
         let channels = provider.scan_fiber_channels(&[]).await?;
 
         // Scan on-chain matches — if it fails, still return channels without
@@ -1023,7 +949,7 @@ impl GatewayService {
 
         Ok(channels
             .into_iter()
-            .filter(|ch| !dismissed_set.contains(&ch.channel_id))
+            .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
             .map(|ch| {
                 let match_info = find_match_for_channel(&ch, &matches);
                 let match_status = if match_info.is_some() {
@@ -1050,10 +976,11 @@ impl GatewayService {
         provider.shutdown_channel(channel_id, force).await
     }
 
-    /// Remove a closed Fiber channel from the console list and delete any
-    /// associated tracked match records from the database.
+    /// Verify a closed Fiber channel exists and can be dismissed from the console.
+    /// After the chain-first refactor, no DB records are deleted — closed channels
+    /// are filtered out by `get_channels_with_matches` (terminal state check).
     pub async fn delete_channel(
-        pool: &DbPool,
+        _pool: &DbPool,
         provider: &dyn ChainProvider,
         channel_id: &str,
     ) -> Result<(), AppError> {
@@ -1069,35 +996,6 @@ impl GatewayService {
             ));
         }
 
-        let matches = match provider.scan_matches().await {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to scan on-chain matches while deleting channel: {}",
-                    e
-                );
-                vec![]
-            }
-        };
-
-        let mut conn = pool.get()?;
-        if let Some(match_info) = find_match_for_channel(&channel, &matches) {
-            let deleted = match_db::delete_match_by_outpoint(
-                &mut conn,
-                &match_info.match_tx_hash,
-                match_info.match_output_index as i32,
-            )?;
-            if deleted {
-                tracing::info!(
-                    channel_id = %channel_id,
-                    match_tx_hash = %match_info.match_tx_hash,
-                    match_output_index = match_info.match_output_index,
-                    "Deleted tracked match for dismissed channel"
-                );
-            }
-        }
-
-        crate::db::channels::dismiss_channel(&mut conn, channel_id)?;
         tracing::info!(channel_id = %channel_id, "Fiber channel dismissed from console");
         Ok(())
     }

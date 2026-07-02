@@ -1,16 +1,16 @@
 //! Match endpoints.
 //!
-//! GET    /api/matches             — list tracked matches
-//! GET    /api/matches/scan        — scan chain for matches
-//! POST   /api/matches/{id}/extract — extract rent
-//! POST   /api/matches/{id}/destroy — destroy exhausted match
+//! GET    /api/matches                  — list matches from chain scan
+//! GET    /api/matches/scan             — scan chain for matches (detailed)
+//! POST   /api/matches/{tx_hash}/{idx}/extract  — extract rent
+//! POST   /api/matches/{tx_hash}/{idx}/destroy  — destroy exhausted match
 
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
 
 use crate::api::AppState;
 use crate::error::AppError;
-use crate::services::{match_service, rent_service};
+use crate::services::rent_service;
 
 /// Query parameters for listing matches.
 #[derive(Deserialize)]
@@ -18,17 +18,54 @@ pub struct ListMatchesQuery {
     pub status: Option<String>,
 }
 
+/// Path parameters for match operations (identified by on-chain outpoint).
+#[derive(Deserialize)]
+pub struct MatchPath {
+    pub tx_hash: String,
+    pub output_index: u32,
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// GET /api/matches — list tracked matches.
+/// GET /api/matches — list matches from on-chain scan.
 pub async fn list(
     state: web::Data<AppState>,
     query: web::Query<ListMatchesQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let matches = match_service::list_matches(&state.db, query.status.as_deref())?;
-    Ok(HttpResponse::Ok().json(matches))
+    let tip_block = state.chain_provider.get_tip_block_number().await?;
+    let on_chain = state.chain_provider.scan_matches().await?;
+
+    let items: Vec<serde_json::Value> = on_chain
+        .iter()
+        .filter(|m| match query.status.as_deref() {
+            Some("live") => m.ckb_capacity > 0,
+            Some("exhausted") => m.ckb_capacity == 0,
+            Some("destroyed") => false, // destroyed cells are consumed
+            _ => true,
+        })
+        .map(|m| {
+            let tx_hash = hex::encode(m.match_outpoint.tx_hash);
+            let output_index = m.match_outpoint.index;
+            let is_exhausted = m.ckb_capacity == 0;
+            serde_json::json!({
+                "tx_hash": tx_hash,
+                "output_index": output_index,
+                "order_tx_hash": hex::encode(m.match_args.order_args.fiber_pubkey.to_bytes()),
+                "seller_lock_hash": hex::encode(m.match_args.seller_lock_hash),
+                "shannons_per_block": m.match_data.shannons_per_block,
+                "ckb_capacity": m.ckb_capacity,
+                "last_extraction_block": m.match_data.last_extraction_block,
+                "xudt_amount": m.match_data.xudt_amount,
+                "status": if is_exhausted { "exhausted" } else { "live" },
+                "match_current_block": m.match_current_block,
+                "tip_block": tip_block,
+            })
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(items))
 }
 
 /// Lightweight serializable match info for API responses.
@@ -75,16 +112,17 @@ pub async fn scan_chain(state: web::Data<AppState>) -> Result<HttpResponse, AppE
     Ok(HttpResponse::Ok().json(items))
 }
 
-/// POST /api/matches/{id}/extract — extract rent from a match.
+/// POST /api/matches/{tx_hash}/{output_index}/extract — extract rent from a match.
 pub async fn extract(
     state: web::Data<AppState>,
-    path: web::Path<i64>,
+    path: web::Path<MatchPath>,
 ) -> Result<HttpResponse, AppError> {
-    let match_id = path.into_inner();
+    let p = path.into_inner();
     let result = rent_service::extract_rent(
         state.chain_provider.as_ref(),
         &state.db,
-        match_id,
+        &p.tx_hash,
+        p.output_index,
         &rent_service::ExtractRentOptions {
             tx_assembler: state.tx_assembler.as_ref(),
             signer: Some(state.signer.as_ref()),
@@ -94,14 +132,18 @@ pub async fn extract(
     Ok(HttpResponse::Ok().json(result))
 }
 
-/// POST /api/matches/{id}/destroy — destroy an exhausted match.
+/// POST /api/matches/{tx_hash}/{output_index}/destroy — destroy an exhausted match.
 pub async fn destroy(
     state: web::Data<AppState>,
-    path: web::Path<i64>,
+    path: web::Path<MatchPath>,
 ) -> Result<HttpResponse, AppError> {
-    let match_id = path.into_inner();
-    let tx_hash =
-        rent_service::destroy_match(state.chain_provider.as_ref(), &state.db, match_id).await?;
+    let p = path.into_inner();
+    let tx_hash = rent_service::destroy_match(
+        state.chain_provider.as_ref(),
+        &p.tx_hash,
+        p.output_index,
+    )
+    .await?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "tx_hash": tx_hash,

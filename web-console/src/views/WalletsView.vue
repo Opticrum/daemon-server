@@ -124,51 +124,6 @@ async function importFromMnemonic() {
   } catch (e: any) { console.error('Failed to import from mnemonic:', e); toast.error(e.message || t('wallets.importFailed')) }
 }
 
-function showUnlockModal() {
-  const pw = ref('')
-  const err = ref('')
-  modal.show({
-    title: t('wallets.unlockTitle'),
-    content: {
-      setup() {
-        return () => h('div', { class: 'unlock-dialog' }, [
-          h('div', { class: 'unlock-icon-wrap' }, [
-            h('span', { class: 'unlock-icon' }, '🔐'),
-          ]),
-          h('p', { class: 'unlock-hint' }, t('wallets.unlockHint')),
-          h('input', {
-            type: 'password',
-            class: 'input unlock-input',
-            value: pw.value,
-            onInput: (e: Event) => { pw.value = (e.target as HTMLInputElement).value; err.value = '' },
-            onKeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') { /* handled by onConfirm */ } },
-            placeholder: t('wallets.passwordPlaceholder'),
-            autofocus: true,
-          }),
-          h('p', { class: 'unlock-error', style: { display: err.value ? 'block' : 'none' } }, err.value),
-        ])
-      },
-    },
-    confirmText: t('wallets.unlock'),
-    onConfirm: async () => {
-      if (!pw.value) {
-        err.value = t('wallets.fillRequired')
-        return
-      }
-      try {
-        await api.unlockWallet({ password: pw.value })
-        toast.success(t('wallets.unlockSuccess'))
-        unlocked.value = true
-        await doRefreshHd(pw.value)
-      } catch (e: any) {
-        console.error('Failed to unlock wallet:', e);
-        err.value = e.message || t('wallets.unlockFailed')
-      }
-    },
-    onCancel: () => modal.hide(),
-  })
-}
-
 async function refreshWallet() {
   if (unlocked.value) {
     try {
@@ -276,6 +231,50 @@ async function deriveMoreAddresses(password?: string) {
   await doRefreshHd(password)
 }
 
+function showMnemonicRevealModal() {
+  const pw = ref('')
+  const err = ref('')
+  modal.show({
+    title: t('wallets.showMnemonicTitle'),
+    content: {
+      setup() {
+        return () => h('div', { class: 'unlock-dialog' }, [
+          h('div', { class: 'unlock-icon-wrap' }, [
+            h('span', { class: 'unlock-icon' }, '🔑'),
+          ]),
+          h('p', { class: 'unlock-hint' }, t('wallets.showMnemonicHint')),
+          h('input', {
+            type: 'password',
+            class: 'input unlock-input',
+            value: pw.value,
+            onInput: (e: Event) => { pw.value = (e.target as HTMLInputElement).value; err.value = '' },
+            placeholder: t('wallets.passwordPlaceholder'),
+            autofocus: true,
+          }),
+          h('p', { class: 'unlock-error', style: { display: err.value ? 'block' : 'none' } }, err.value),
+        ])
+      },
+    },
+    confirmText: t('common.confirm'),
+    onConfirm: async () => {
+      if (!pw.value) {
+        err.value = t('wallets.fillRequired')
+        return
+      }
+      try {
+        const result = await api.revealMnemonic(pw.value)
+        hdMnemonic.value = result.mnemonic
+        showMnemonic.value = true
+        modal.hide()
+      } catch (e: any) {
+        console.error('Failed to reveal mnemonic:', e);
+        err.value = e.message || t('wallets.revealMnemonicFailed')
+      }
+    },
+    onCancel: () => modal.hide(),
+  })
+}
+
 async function deleteHdWallet() {
   const ok = await modal.confirm(t('wallets.deleteHdWarning'), {
     title: t('wallets.deleteHdTitle'),
@@ -314,7 +313,7 @@ async function copyToClipboard(text: string) {
 onMounted(async () => {
   await loadAll()
   await tryRestoreSession()
-  if (hdStatus.value?.keystore_exists && !unlocked.value) await loadBalances()
+  await loadBalances()
 })
 </script>
 
@@ -366,22 +365,19 @@ onMounted(async () => {
               {{ t('wallets.importMnemonic') }}
             </button>
           </template>
-          <!-- Wallet exists, locked -->
-          <template v-else-if="!unlocked">
-            <button
-              class="btn btn-outline btn-sm"
-              @click="showUnlockModal"
-            >
-              {{ t('wallets.unlock') }}
-            </button>
-          </template>
-          <!-- Wallet unlocked -->
+          <!-- Wallet exists: Refresh and Show Mnemonic always available -->
           <template v-else>
             <button
               class="btn btn-outline btn-sm"
               @click="refreshWallet"
             >
               {{ t('wallets.refresh') }}
+            </button>
+            <button
+              class="btn btn-outline btn-sm"
+              @click="showMnemonicRevealModal"
+            >
+              {{ t('wallets.showMnemonic') }}
             </button>
           </template>
           <!-- Delete (danger) — always visible when wallet exists -->
@@ -495,14 +491,7 @@ onMounted(async () => {
       >
         <div class="summary-item">
           <span class="summary-label">{{ t('wallets.totalBalance') }}</span>
-          <span
-            v-if="unlocked"
-            class="summary-value"
-          >{{ balanceLoading ? '...' : totalBalance !== null ? formatCKB(totalBalance) : '--' }}</span>
-          <span
-            v-else
-            class="summary-value locked"
-          >🔒 {{ t('wallets.locked') }}</span>
+          <span class="summary-value">{{ balanceLoading ? '...' : totalBalance !== null ? formatCKB(totalBalance) : '--' }}</span>
         </div>
         <div class="summary-item">
           <span class="summary-label">{{ t('wallets.addressCount') }}</span><span class="summary-value">{{ hdStatus.address_count }}</span>
@@ -524,15 +513,8 @@ onMounted(async () => {
     <div
       v-if="hdChildren.length"
       class="card addr-card"
-      :class="{ locked: !unlocked }"
       style="margin-top:var(--space-xl)"
     >
-      <div
-        v-if="!unlocked"
-        class="lock-overlay"
-      >
-        <span class="lock-icon">🔒</span>
-      </div>
       <div class="card-header">
         <h3>{{ t('wallets.perAddress') }}</h3>
       </div>
@@ -549,13 +531,10 @@ onMounted(async () => {
             @click="copyToClipboard(w.ckb_address)"
           >{{ truncateAddress(w.ckb_address, 30, 20) }}</code>
           <span class="addr-derivation">m/44'/309'/0'/0/{{ w.derivation_index }}</span>
-          <span class="addr-balance">{{ unlocked ? (balanceFor(w.id) === null ? '...' : formatCKB(balanceFor(w.id)!)) : '--' }}</span>
+          <span class="addr-balance">{{ balanceFor(w.id) === null ? '...' : formatCKB(balanceFor(w.id)!) }}</span>
         </div>
       </div>
-      <div
-        v-if="unlocked"
-        class="derive-more-bar"
-      >
+      <div class="derive-more-bar">
         <button
           class="btn-add"
           :title="t('wallets.deriveMore')"
@@ -586,8 +565,6 @@ onMounted(async () => {
 .summary-item { display: flex; flex-direction: column; gap: 2px; }
 .summary-label { font-size: var(--fs-small); color: var(--text-secondary); }
 .summary-value { font-size: var(--fs-h3); font-weight: var(--fw-h3); color: var(--text-primary); }
-.summary-value.locked { color: var(--text-disabled); font-size: var(--fs-body); font-weight: 500; }
-
 .form-import {
   display: flex;
   flex-direction: column;
@@ -650,12 +627,6 @@ onMounted(async () => {
 .btn-add { width: 28px; height: 28px; border-radius: 50%; border: 1px dashed var(--border-dark); background: transparent; color: var(--text-secondary); font-size: var(--fs-h3); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition-base); }
 .btn-add:hover { border-color: var(--primary-500); color: var(--primary-500); }
 .addr-balance { font-weight: 600; color: var(--primary-500); min-width: 100px; text-align: right; }
-
-/* Locked overlay */
-.addr-card { position: relative; }
-.addr-card.locked .address-list { filter: blur(6px); user-select: none; pointer-events: none; }
-.lock-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 1; }
-.lock-icon { font-size: 48px; opacity: 0.6; filter: none; }
 
 .btn { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-md); height: 36px; border: none; border-radius: var(--radius-md); font-size: var(--fs-body); font-family: inherit; cursor: pointer; transition: all var(--transition-base); font-weight: 500; white-space: nowrap; }
 .btn-primary { background: var(--primary-500); color: #fff; }

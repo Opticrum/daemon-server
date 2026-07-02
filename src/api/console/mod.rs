@@ -8,6 +8,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use serde::Deserialize;
 
 use crate::api::AppState;
+use crate::db::wallets as wallet_db;
 use crate::error::AppError;
 use crate::services::console::gateway_service::GatewayService;
 use crate::services::runtime_config::RuntimeConfigPartial;
@@ -140,9 +141,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/orders/{tx_hash}/match", web::post().to(match_order))
             // Matches
             .route("/matches", web::get().to(list_matches))
-            .route("/matches/{id}", web::get().to(match_detail))
-            .route("/matches/{id}/extract", web::post().to(extract_rent))
-            .route("/matches/{id}/destroy", web::post().to(destroy_match))
+            .route(
+                "/matches/{tx_hash}/{output_index}",
+                web::get().to(match_detail),
+            )
+            .route(
+                "/matches/{tx_hash}/{output_index}/extract",
+                web::post().to(extract_rent),
+            )
+            .route(
+                "/matches/{tx_hash}/{output_index}/destroy",
+                web::post().to(destroy_match),
+            )
             // Channels
             .route("/channels", web::get().to(scan_channels))
             // Fiber node info
@@ -150,7 +160,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             // Runtime config (mutable at runtime)
             .route("/runtime-config", web::get().to(get_runtime_config))
             .route("/runtime-config", web::put().to(update_runtime_config))
-            .route("/runtime-config/reset", web::post().to(reset_runtime_config))
+            .route(
+                "/runtime-config/reset",
+                web::post().to(reset_runtime_config),
+            )
             // Scheduler
             .route("/scheduler/status", web::get().to(scheduler_status))
             // Server info
@@ -400,6 +413,27 @@ pub async fn delete_hd_wallet(state: web::Data<AppState>) -> Result<HttpResponse
         .json(serde_json::json!({"deleted": true})))
 }
 
+/// Reveal the HD wallet mnemonic phrase. Requires password verification.
+/// Unlike unlock_keystore, this does NOT start a wallet session or load
+/// the signer — it only decrypts and returns the mnemonic for display.
+#[derive(Deserialize)]
+pub struct RevealMnemonicBody {
+    pub password: String,
+}
+
+pub async fn reveal_mnemonic(
+    state: web::Data<AppState>,
+    body: web::Json<RevealMnemonicBody>,
+) -> Result<HttpResponse, AppError> {
+    let mnemonic = GatewayService::reveal_mnemonic(
+        std::path::Path::new(&state.keystore_path),
+        &body.password,
+    )?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "mnemonic": mnemonic,
+    })))
+}
+
 /// Lighter wallet info for the address selector in the match dialog.
 /// Omits `encrypted_key` and other internal fields.
 #[derive(serde::Serialize)]
@@ -413,10 +447,25 @@ pub struct SignerWalletItem {
     pub balance_shannons: u64,
 }
 
-/// Return the currently loaded (unlocked) HD wallet addresses with CKB
-/// balances for the match-order address selector.
+/// Return the HD wallet addresses with CKB balances for the address selector.
+///
+/// When the signer is unlocked, the in-memory wallet records are used.
+/// When locked, we fall back to querying the DB directly — viewing wallet
+/// addresses no longer requires unlocking.
 pub async fn signer_wallets(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    // Prefer in-memory signer records when available; fall back to DB otherwise.
     let records = state.signer.wallet_records();
+    let records: Vec<wallet_db::WalletRecord> = if records.is_empty() {
+        // Signer is locked — load HD children from the database.
+        let mut conn = state.db.get()?;
+        wallet_db::list_wallets(&mut conn)?
+            .into_iter()
+            .filter(|w| w.wallet_type == "hd_child")
+            .collect()
+    } else {
+        records
+    };
+
     let mut wallets = Vec::with_capacity(records.len());
     for wr in records {
         let balance = state
@@ -460,9 +509,9 @@ pub async fn scan_orders(state: web::Data<AppState>) -> Result<HttpResponse, App
         .into_iter()
         .filter(|o| {
             // Filter out orders belonging to our own Fiber node.
-            own_pubkey.as_ref().is_none_or(|pk| {
-                hex::encode(o.order_args.fiber_pubkey.to_bytes()) != *pk
-            })
+            own_pubkey
+                .as_ref()
+                .is_none_or(|pk| hex::encode(o.order_args.fiber_pubkey.to_bytes()) != *pk)
         })
         .map(|o| OrderScanItem {
             tx_hash: hex::encode(o.order_outpoint.tx_hash),
@@ -513,12 +562,9 @@ pub async fn match_readiness(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let tx_hash = path.into_inner();
-    let status = GatewayService::get_match_readiness(
-        state.chain_provider.as_ref(),
-        &state.db,
-        &tx_hash,
-    )
-    .await?;
+    let status =
+        GatewayService::get_match_readiness(state.chain_provider.as_ref(), &state.db, &tx_hash)
+            .await?;
     Ok(HttpResponse::Ok().json(status))
 }
 
@@ -528,11 +574,8 @@ pub async fn create_order_channel(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let tx_hash = path.into_inner();
-    let result = GatewayService::create_order_channel(
-        state.chain_provider.as_ref(),
-        &tx_hash,
-    )
-    .await?;
+    let result =
+        GatewayService::create_order_channel(state.chain_provider.as_ref(), &tx_hash).await?;
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -543,10 +586,16 @@ pub async fn create_order_channel(
 /// Get a single match with full extraction history.
 pub async fn match_detail(
     state: web::Data<AppState>,
-    path: web::Path<i64>,
+    path: web::Path<(String, u32)>,
 ) -> Result<HttpResponse, AppError> {
-    let match_id = path.into_inner();
-    let detail = GatewayService::get_match_detail(&state.db, match_id)?;
+    let (tx_hash, output_index) = path.into_inner();
+    let detail = GatewayService::get_match_detail(
+        &state.db,
+        &tx_hash,
+        output_index,
+        state.chain_provider.as_ref(),
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(detail))
 }
 
@@ -575,33 +624,19 @@ pub async fn list_matches(
     )
     .await?;
 
-    // Enrich each match with its total extracted amount from extraction_history
-    let mut conn = state.db.get()?;
-    let enriched: Vec<serde_json::Value> = matches
-        .into_iter()
-        .map(|m| {
-            let extracted = crate::db::matches::extracted_for_match(
-                &mut conn, &m.tx_hash, m.output_index,
-            )
-            .unwrap_or(0) as u64;
-            let mut v = serde_json::to_value(&m).unwrap_or_default();
-            v["extracted_amount_shannons"] = serde_json::json!(extracted);
-            v
-        })
-        .collect();
-
-    Ok(HttpResponse::Ok().json(enriched))
+    Ok(HttpResponse::Ok().json(matches))
 }
 
 pub async fn extract_rent(
     state: web::Data<AppState>,
-    path: web::Path<i64>,
+    path: web::Path<(String, u32)>,
 ) -> Result<HttpResponse, AppError> {
-    let id = path.into_inner();
+    let (tx_hash, output_index) = path.into_inner();
     let result = GatewayService::extract_rent(
         &state.db,
         state.chain_provider.as_ref(),
-        id,
+        &tx_hash,
+        output_index,
         state.tx_assembler.as_ref(),
         state.signer.as_ref(),
     )
@@ -611,12 +646,18 @@ pub async fn extract_rent(
 
 pub async fn destroy_match(
     state: web::Data<AppState>,
-    path: web::Path<i64>,
+    path: web::Path<(String, u32)>,
 ) -> Result<HttpResponse, AppError> {
-    let id = path.into_inner();
-    let tx_hash =
-        GatewayService::destroy_match(&state.db, state.chain_provider.as_ref(), id).await?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({"tx_hash": tx_hash, "status": "destroyed"})))
+    let (tx_hash, output_index) = path.into_inner();
+    let tx_hash_result = GatewayService::destroy_match(
+        &state.db,
+        state.chain_provider.as_ref(),
+        &tx_hash,
+        output_index,
+    )
+    .await?;
+    Ok(HttpResponse::Ok()
+        .json(serde_json::json!({"tx_hash": tx_hash_result, "status": "destroyed"})))
 }
 
 // ═══════════════════════════════════════════════════════
@@ -718,9 +759,7 @@ pub async fn update_runtime_config(
     Ok(HttpResponse::Ok().json(cfg))
 }
 
-pub async fn reset_runtime_config(
-    state: web::Data<AppState>,
-) -> Result<HttpResponse, AppError> {
+pub async fn reset_runtime_config(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let cfg = GatewayService::reset_runtime_config(&state.runtime_config, &state.config);
     Ok(HttpResponse::Ok().json(cfg))
 }

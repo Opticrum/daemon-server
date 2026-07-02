@@ -5,6 +5,7 @@
 //! `MockChainProvider` is used in tests; `RealChainProvider` in production.
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use opticrum_calculator::types::{MatchInfo, OrderInfo};
@@ -92,6 +93,23 @@ pub trait ChainProvider: Send + Sync {
     /// Returns 0 if the tx is not found or not yet confirmed.
     async fn get_tx_block_number(&self, _tx_hash: &str) -> Result<u64, AppError> {
         Ok(0)
+    }
+
+    /// Get the timestamp (Unix milliseconds) of a block by its number.
+    /// Returns 0 if the block is not found.
+    async fn get_block_timestamp(&self, _block_number: u64) -> Result<u64, AppError> {
+        Ok(0)
+    }
+
+    /// Get full transaction data from CKB RPC.
+    ///
+    /// Returns the transaction hex, block number, and metadata.
+    /// Used for extraction backtracking — walking the transaction graph
+    /// to reconstruct extraction history from on-chain data.
+    async fn get_transaction(&self, _tx_hash: &str) -> Result<TransactionInfo, AppError> {
+        Err(AppError::ChainError(
+            "get_transaction not implemented".into(),
+        ))
     }
 
     /// Query live cells locked by a given lock hash.
@@ -232,6 +250,20 @@ pub struct FiberNodeInfo {
     pub udt_cfg_infos: Vec<serde_json::Value>,
 }
 
+/// Full transaction data retrieved from the CKB chain.
+///
+/// Used for extraction backtracking — walking the transaction graph
+/// to trace how a match cell evolved through multiple rent extractions.
+#[derive(Clone, Debug)]
+pub struct TransactionInfo {
+    /// Transaction hash (hex-encoded, 64 chars).
+    pub tx_hash: String,
+    /// Block number where the transaction was confirmed, or 0 if pending.
+    pub block_number: u64,
+    /// Raw transaction as hex-encoded bytes.
+    pub tx_hex: String,
+}
+
 // OrderInfo and MatchInfo are imported from opticrum_calculator —
 // the contract kernel is the single source of truth for protocol types.
 
@@ -256,6 +288,7 @@ pub struct MockChainProvider {
     pub open_channels: Mutex<Vec<(String, u64)>>,
     pub peer_list: Mutex<Vec<PeerInfo>>,
     pub peer_connections: Mutex<Vec<String>>,
+    pub transactions: Mutex<HashMap<String, TransactionInfo>>,
 }
 
 impl Default for MockChainProvider {
@@ -279,6 +312,7 @@ impl MockChainProvider {
             open_channels: Mutex::new(Vec::new()),
             peer_list: Mutex::new(Vec::new()),
             peer_connections: Mutex::new(Vec::new()),
+            transactions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -320,6 +354,13 @@ impl MockChainProvider {
             fiber_channels: Mutex::new(channels),
             ..Self::new()
         }
+    }
+
+    pub fn add_transaction(&self, tx_hash: &str, info: TransactionInfo) {
+        self.transactions
+            .lock()
+            .unwrap()
+            .insert(tx_hash.to_string(), info);
     }
 
     pub fn with_channel_matches(cwms: Vec<ChannelWithMatch>) -> Self {
@@ -424,5 +465,14 @@ impl ChainProvider for MockChainProvider {
         use crate::services::address::script_lock_hash;
         let lock_hash = script_lock_hash(lock_arg);
         self.get_cells_by_lock(&lock_hash).await
+    }
+
+    async fn get_transaction(&self, tx_hash: &str) -> Result<TransactionInfo, AppError> {
+        self.transactions
+            .lock()
+            .unwrap()
+            .get(tx_hash)
+            .cloned()
+            .ok_or_else(|| AppError::NotFound(format!("Transaction {tx_hash} not found")))
     }
 }

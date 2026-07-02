@@ -1,4 +1,8 @@
-//! Database layer tests — CRUD operations with in-memory SQLite.
+//! Database layer tests — wallets and extraction_history (statistics cache).
+//!
+//! After the chain-first refactor, tracked_matches and dismissed_fiber_channels
+//! have been removed. This file tests wallets (local key store) and
+//! extraction_history (statistics cache).
 
 mod common;
 
@@ -9,9 +13,10 @@ use rust_server::db::{matches as match_db, schema, wallets as wallet_db};
 fn migration_idempotent() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
-    // Running migrations again should not error
     schema::run_migrations(&mut conn).expect("migrations should be idempotent");
 }
+
+// ── Wallet tests (unchanged) ─────────────────────────────────────────────
 
 #[test]
 fn wallet_create_and_get() {
@@ -121,85 +126,7 @@ fn wallet_get_by_lock_hash() {
     assert_eq!(wallet.label, "by-hash");
 }
 
-#[test]
-fn match_create_and_get() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    let id = match_db::insert_match(
-        &mut conn,
-        "match_tx",
-        0,
-        "order_tx",
-        0,
-        "ckt1q...seller",
-        150,
-        100,
-        None::<&str>,
-        None::<&str>,
-    )
-    .unwrap();
-
-    let m = match_db::get_match_by_id(&mut conn, id).unwrap();
-    assert_eq!(m.tx_hash, "match_tx");
-    assert_eq!(m.seller_address, "ckt1q...seller");
-    assert_eq!(m.shannons_per_block, 150);
-    assert_eq!(m.status, "live");
-    assert_eq!(m.last_extraction_block, 0);
-}
-
-#[test]
-fn match_update_extraction() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    let id = match_db::insert_match(
-        &mut conn,
-        "m_tx",
-        0,
-        "o_tx",
-        0,
-        "seller",
-        50,
-        100,
-        None::<&str>,
-        None::<&str>,
-    )
-    .unwrap();
-
-    match_db::update_match_extraction(&mut conn, id, 5000).unwrap();
-    let m = match_db::get_match_by_id(&mut conn, id).unwrap();
-    assert_eq!(m.last_extraction_block, 5000);
-}
-
-#[test]
-fn match_update_status() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    let id =
-        match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 10, 100, None::<&str>, None::<&str>).unwrap();
-
-    match_db::update_match_status(&mut conn, id, "exhausted").unwrap();
-    let m = match_db::get_match_by_id(&mut conn, id).unwrap();
-    assert_eq!(m.status, "exhausted");
-}
-
-#[test]
-fn match_list_by_status() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    match_db::insert_match(&mut conn, "m1", 0, "o1", 0, "s1", 1, 100, None::<&str>, None::<&str>).unwrap();
-    match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 2, 100, None::<&str>, None::<&str>).unwrap();
-    match_db::update_match_status(&mut conn, 1, "destroyed").unwrap();
-
-    let live = match_db::list_matches(&mut conn, Some("live")).unwrap();
-    assert_eq!(live.len(), 1);
-
-    let destroyed = match_db::list_matches(&mut conn, Some("destroyed")).unwrap();
-    assert_eq!(destroyed.len(), 1);
-}
+// ── Extraction history tests (statistics cache) ──────────────────────────
 
 #[test]
 fn extraction_history_insert() {
@@ -229,51 +156,14 @@ fn total_extracted_aggregates() {
 }
 
 #[test]
-fn dismiss_fiber_channel() {
+fn extracted_for_match_sums_correctly() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    rust_server::db::channels::dismiss_channel(&mut conn, "ch_closed_001").unwrap();
-    assert!(rust_server::db::channels::is_dismissed(&mut conn, "ch_closed_001").unwrap());
+    match_db::insert_extraction(&mut conn, "match_xyz", 0, 100, 10, "tx_a").unwrap();
+    match_db::insert_extraction(&mut conn, "match_xyz", 0, 200, 20, "tx_b").unwrap();
+    match_db::insert_extraction(&mut conn, "other", 1, 500, 30, "tx_c").unwrap();
 
-    let ids = rust_server::db::channels::list_dismissed_ids(&mut conn).unwrap();
-    assert_eq!(ids, vec!["ch_closed_001".to_string()]);
-
-    // Idempotent
-    rust_server::db::channels::dismiss_channel(&mut conn, "ch_closed_001").unwrap();
-    assert_eq!(
-        rust_server::db::channels::list_dismissed_ids(&mut conn).unwrap().len(),
-        1
-    );
-}
-
-#[test]
-fn delete_match_by_outpoint_cascades_extraction_history() {
-    let pool = test_db();
-    let mut conn = pool.get().unwrap();
-
-    match_db::insert_match(
-        &mut conn,
-        "match_tx_del",
-        0,
-        "order_tx",
-        0,
-        "seller",
-        10,
-        1000,
-        None::<&str>,
-        None::<&str>,
-    )
-    .unwrap();
-    match_db::insert_extraction(&mut conn, "match_tx_del", 0, 500, 100, "extract_tx").unwrap();
-
-    let deleted = match_db::delete_match_by_outpoint(&mut conn, "match_tx_del", 0).unwrap();
-    assert!(deleted);
-
-    assert!(match_db::get_extractions_for_match(&mut conn, "match_tx_del", 0)
-        .unwrap()
-        .is_empty());
-    assert!(
-        !match_db::delete_match_by_outpoint(&mut conn, "missing", 0).unwrap()
-    );
+    let sum = match_db::extracted_for_match(&mut conn, "match_xyz", 0).unwrap();
+    assert_eq!(sum, 300);
 }

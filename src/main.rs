@@ -11,14 +11,14 @@ use tracing::{error, info, warn};
 
 use rust_server::config::Config;
 use rust_server::services::chain_provider::ChainProvider;
-use rust_server::services::RuntimeConfig;
-use std::sync::RwLock;
 use rust_server::services::console::scheduler_state::{SchedulerState, SharedSchedulerState};
 use rust_server::services::hd_wallet_signer::HdWalletSigner;
 use rust_server::services::transaction_assembler::TransactionAssembler;
 use rust_server::services::wallet_session::WalletSessionManager;
 use rust_server::services::RealChainProvider;
+use rust_server::services::RuntimeConfig;
 use rust_server::{api, db, scheduler};
+use std::sync::RwLock;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

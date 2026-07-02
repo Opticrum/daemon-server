@@ -92,11 +92,7 @@ pub struct Config {
     pub fee_rate: u64,
 
     /// Enable automatic rent extraction (background task)
-    #[arg(
-        long,
-        env = "OPTICRUM_RENT_EXTRACTION_ENABLED",
-        default_value = "true"
-    )]
+    #[arg(long, env = "OPTICRUM_RENT_EXTRACTION_ENABLED", default_value = "true")]
     pub rent_extraction_enabled: bool,
 
     // -----------------------------------------------------------------------
@@ -125,7 +121,6 @@ pub struct Config {
     /// Auto-match cycle interval in seconds
     #[arg(long, env = "OPTICRUM_AUTO_MATCH_INTERVAL_SECS", default_value = "120")]
     pub auto_match_interval_secs: u64,
-
 }
 
 impl Default for Config {
