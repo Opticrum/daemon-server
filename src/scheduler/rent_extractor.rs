@@ -3,13 +3,16 @@
 //! Runs periodically, scanning the chain for matches owned by managed
 //! wallets and extracting rent when above the dust threshold.
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::db::DbPool;
 
 use crate::db::{matches as match_db, wallets as wallet_db};
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
+use crate::services::hd_wallet_signer::HdWalletSigner;
+use crate::services::rent_service::{self, ExtractRentOptions, preview_extractable};
+use crate::services::transaction_assembler::TransactionAssembler;
 
 /// Run one extraction cycle.
 ///
@@ -18,60 +21,75 @@ pub async fn run_extraction_cycle(
     pool: &DbPool,
     min_extraction_amount_shannons: u64,
     provider: &(dyn ChainProvider + Send + Sync),
+    tx_assembler: Option<&TransactionAssembler>,
+    signer: Option<&HdWalletSigner>,
 ) -> Result<u64, AppError> {
     let mut conn = pool.get()?;
 
-    // Get all managed wallet lock hashes
     let wallets = wallet_db::list_wallets(&mut conn)?;
     if wallets.is_empty() {
         debug!("Rent extraction: no managed wallets — skipping cycle");
         return Ok(0);
     }
 
-    let _managed_lock_hashes: Vec<Vec<u8>> = wallets.iter().map(|w| w.lock_hash.clone()).collect();
+    if tx_assembler.is_some() {
+        let unlocked = signer.map(HdWalletSigner::is_unlocked).unwrap_or(false);
+        if !unlocked {
+            debug!("Rent extraction: HD wallet locked — skipping cycle");
+            return Ok(0);
+        }
+    }
 
-    // Get the actual tip block from chain
     let tip_block = provider.get_tip_block_number().await?;
+    let on_chain_matches = provider.scan_matches().await.unwrap_or_default();
 
-    // Get all live matches
     let live_matches = match_db::list_matches(&mut conn, Some("live"))?;
     if live_matches.is_empty() {
         debug!("Rent extraction: no live matches — skipping cycle");
         return Ok(0);
     }
 
+    let opts = ExtractRentOptions {
+        tx_assembler,
+        signer,
+    };
+
     let mut total_extracted = 0u64;
     let mut extractions = 0u32;
 
     for m in &live_matches {
-        let shannons_per_block = m.shannons_per_block as u64;
-        let last_extraction = m.last_extraction_block as u64;
-        let elapsed = tip_block.saturating_sub(last_extraction);
-        let extractable = shannons_per_block * elapsed;
+        let match_info = on_chain_matches.iter().find(|info| {
+            hex::encode(info.match_outpoint.tx_hash) == m.tx_hash
+                && info.match_outpoint.index == m.output_index as u32
+        });
+        let already_extracted =
+            match_db::extracted_for_match(&mut conn, &m.tx_hash, m.output_index)? as u64;
+        let extractable =
+            preview_extractable(m, match_info, tip_block, already_extracted);
 
-        if extractable >= min_extraction_amount_shannons {
-            let tx_hash = format!(
-                "auto_extract:{}:{}:{}",
-                m.tx_hash, m.output_index, extractable
-            );
+        if extractable < min_extraction_amount_shannons || extractable == 0 {
+            continue;
+        }
 
-            match_db::update_match_extraction(&mut conn, m.id, tip_block)?;
-            match_db::insert_extraction(
-                &mut conn,
-                &m.tx_hash,
-                m.output_index,
-                extractable,
-                tip_block,
-                &tx_hash,
-            )?;
-
-            total_extracted += extractable;
-            extractions += 1;
-
-            info!(
-                match_id = m.id,
-                extractable, tip_block, elapsed, "Rent extracted"
-            );
+        match rent_service::extract_rent(provider, pool, m.id, &opts).await {
+            Ok(result) => {
+                total_extracted += result.extracted_amount;
+                extractions += 1;
+                info!(
+                    match_id = m.id,
+                    tx_hash = %result.tx_hash,
+                    extractable = result.extracted_amount,
+                    tip_block,
+                    "Rent extracted"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    match_id = m.id,
+                    error = %e,
+                    "Rent extraction skipped for match"
+                );
+            }
         }
     }
 
@@ -109,7 +127,9 @@ mod tests {
     async fn no_wallets_no_extraction() {
         let pool = db::init_test_db();
         let provider = test_provider();
-        let extracted = run_extraction_cycle(&pool, 1000, &provider).await.unwrap();
+        let extracted = run_extraction_cycle(&pool, 1000, &provider, None, None)
+            .await
+            .unwrap();
         assert_eq!(extracted, 0);
     }
 
@@ -119,7 +139,6 @@ mod tests {
         let mut conn = pool.get().unwrap();
         let provider = test_provider();
 
-        // Add a managed wallet
         wallet_db::insert_wallet(
             &mut conn,
             "test-wallet",
@@ -133,7 +152,6 @@ mod tests {
         )
         .unwrap();
 
-        // Add a live match with high shannons_per_block
         match_db::insert_match(
             &mut conn,
             "match_tx_001",
@@ -144,13 +162,13 @@ mod tests {
             1000,
             0,
             None::<&str>,
+            None::<&str>,
         )
         .unwrap();
 
-        let extracted = run_extraction_cycle(&pool, 100_000, &provider)
+        let extracted = run_extraction_cycle(&pool, 100_000, &provider, None, None)
             .await
             .unwrap();
-        // 1000 * 1000 = 1_000_000 > 100_000 threshold
         assert!(extracted > 0);
     }
 
@@ -173,7 +191,6 @@ mod tests {
         )
         .unwrap();
 
-        // Low shannons_per_block — won't meet threshold
         match_db::insert_match(
             &mut conn,
             "match_tx_002",
@@ -184,12 +201,11 @@ mod tests {
             1,
             0,
             None::<&str>,
+            None::<&str>,
         )
         .unwrap();
 
-        // threshold is 1 CKB = 100_000_000 shannons
-        // extractable = 1 * 1000 = 1000 < 100_000_000
-        let extracted = run_extraction_cycle(&pool, 100_000_000, &provider)
+        let extracted = run_extraction_cycle(&pool, 100_000_000, &provider, None, None)
             .await
             .unwrap();
         assert_eq!(extracted, 0);
@@ -224,17 +240,55 @@ mod tests {
             10,
             0,
             None::<&str>,
+            None::<&str>,
         )
         .unwrap();
 
-        // extractable = 10 * 1000 = 10_000 < 1_000_000 threshold
-        let extracted = run_extraction_cycle(&pool, 1_000_000, &provider)
+        let extracted = run_extraction_cycle(&pool, 1_000_000, &provider, None, None)
             .await
             .unwrap();
         assert_eq!(extracted, 0, "should skip when below min extraction");
 
-        // With threshold 0, it should extract
-        let extracted2 = run_extraction_cycle(&pool, 0, &provider).await.unwrap();
+        let extracted2 = run_extraction_cycle(&pool, 0, &provider, None, None)
+            .await
+            .unwrap();
         assert!(extracted2 > 0, "should extract with zero threshold");
+    }
+
+    #[actix_rt::test]
+    async fn large_rate_does_not_overflow() {
+        let pool = db::init_test_db();
+        let mut conn = pool.get().unwrap();
+        let provider = test_provider();
+
+        wallet_db::insert_wallet(
+            &mut conn,
+            "overflow-wallet",
+            b"enc",
+            &[4u8; 32],
+            "ckt1q...overflow",
+            None,
+            None,
+            None,
+            "imported",
+        )
+        .unwrap();
+
+        match_db::insert_match(
+            &mut conn,
+            "match_tx_overflow",
+            0,
+            "order_tx_overflow",
+            0,
+            "seller",
+            i64::MAX as u64 / 2,
+            0,
+            None::<&str>,
+            None::<&str>,
+        )
+        .unwrap();
+
+        let result = run_extraction_cycle(&pool, u64::MAX, &provider, None, None).await;
+        assert!(result.is_ok(), "overflow must not panic the scheduler");
     }
 }

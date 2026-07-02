@@ -1,4 +1,4 @@
-import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus } from '@/types/api'
+import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus, type SchedulerStatusResponse } from '@/types/api'
 
 // ═══════════════════════════════════════════
 // Fetch wrapper
@@ -112,6 +112,8 @@ export function useApi() {
         `/console/channels/${encodeURIComponent(channelId)}/close`,
         { method: 'POST', body: JSON.stringify({ force: force ?? false }) },
       ),
+    deleteChannel: (channelId: string): Promise<{ deleted: boolean }> =>
+      request(`/console/channels/${encodeURIComponent(channelId)}`, { method: 'DELETE' }),
 
     // ── Peer Connection ──
     checkPeerConnection: (pubkey: string): Promise<PeerConnectionStatus> =>
@@ -136,7 +138,7 @@ export function useApi() {
       request('/console/server-info'),
 
     // ── Scheduler ──
-    getSchedulerStatus: (): Promise<any> =>
+    getSchedulerStatus: (): Promise<SchedulerStatusResponse> =>
       request('/console/scheduler/status'),
   }
 }
@@ -161,11 +163,7 @@ export interface DashboardResponse {
   monthly_stats: { month: string; matches: number; revenue: number }[]
   top_sellers: { address: string; label: string; extracted: number; rating: number }[]
   sparklines: Record<string, number[]>
-  scheduler: {
-    extractor: { last_run: string | null; last_duration_ms: number; cycles: number; last_processed: number; last_error: string | null }
-    matcher: { last_run: string | null; last_duration_ms: number; cycles: number; last_processed: number; last_error: string | null }
-    tip_block: number
-  }
+  scheduler: SchedulerStatusResponse
 }
 
 export interface KpiTrendItem {

@@ -41,6 +41,7 @@ use crate::error::AppError;
 ///
 /// Only seller-side operations are exposed: match, extract rent, destroy match.
 /// Buyer-side operations (create/cancel order) are handled by the frontend.
+#[derive(Clone)]
 pub struct TransactionAssembler {
     rpc: RpcClient,
     fee_rate: u64,

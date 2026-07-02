@@ -70,6 +70,7 @@ pub fn test_app_state() -> rust_server::api::AppState {
         scheduler_interval_secs: 60,
         min_extraction_amount_shannons: 100_000_000,
         fee_rate: 1000,
+        rent_extraction_enabled: true,
         log_level: "info".to_string(),
         auto_match_enabled: false,
         auto_match_min_capacity: 10_000_000_000,

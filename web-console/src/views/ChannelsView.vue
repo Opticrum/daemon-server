@@ -114,6 +114,27 @@ async function closeChannel(channel: ChannelWithMatch) {
   }
 }
 
+async function deleteChannel(channel: ChannelWithMatch) {
+  const channelId = channel.channel_id
+  const confirmed = await modal.confirm(
+    t('channels.deleteChannelWarning', { id: truncateAddress(channelId, 8, 8) }),
+    {
+      title: t('channels.deleteChannelTitle'),
+      confirmText: t('channels.deleteChannelConfirm'),
+      danger: true,
+    },
+  )
+  if (!confirmed) return
+  try {
+    await api.deleteChannel(channelId)
+    toast.success(t('channels.deleteSuccess'))
+    await loadChannels()
+  } catch (e: any) {
+    console.error('Failed to delete channel:', e);
+    toast.error(e.message || t('channels.deleteFailed'))
+  }
+}
+
 function showMatchDetail(channel: ChannelWithMatch) {
   if (!channel.match_info) return
   const info: ChannelMatchInfo = channel.match_info
@@ -340,6 +361,13 @@ function showMatchDetail(channel: ChannelWithMatch) {
         >
           {{ t('channels.closeChannel') }}
         </button>
+        <button
+          v-else-if="row.state_name === 'Closed'"
+          class="btn btn-sm btn-default"
+          @click="deleteChannel(row)"
+        >
+          {{ t('channels.deleteChannel') }}
+        </button>
       </template>
     </DataTable>
   </div>
@@ -378,6 +406,10 @@ function showMatchDetail(channel: ChannelWithMatch) {
 .search-input:focus { border-color: var(--primary-500); box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2); }
 .btn { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-md); height: 36px; border: none; border-radius: var(--radius-md); font-size: var(--fs-body); font-family: inherit; cursor: pointer; transition: all var(--transition-base); font-weight: 500; white-space: nowrap; }
 .btn-primary { background: var(--primary-500); color: #fff; } .btn-primary:hover:not(:disabled) { background: var(--primary-400); } .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-default { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-dark); }
+.btn-default:hover:not(:disabled) { color: var(--primary-500); border-color: var(--primary-500); }
+.btn-danger { background: var(--danger); color: #fff; } .btn-danger:hover:not(:disabled) { background: #ff7875; }
+.btn-sm { height: 28px; font-size: var(--fs-caption); padding: 0 var(--space-sm); }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
 
 /* Match status button */

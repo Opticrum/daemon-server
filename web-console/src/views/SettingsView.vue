@@ -3,20 +3,22 @@ import { ref, onMounted, inject } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
 import StatusTag from '@/components/ui/StatusTag.vue'
-import type { RuntimeConfig, ServerInfo } from '@/types/api'
+import type { RuntimeConfig, ServerInfo, SchedulerStatusResponse } from '@/types/api'
 
 const api = useApi()
 const { t } = useI18n()
 const toast = inject<any>('toast')!
 
-const activeTab = ref<'auto-match' | 'runtime' | 'network'>('auto-match')
+const activeTab = ref<'auto-match' | 'rent-extraction' | 'network'>('auto-match')
 
-// Runtime Config (shared by auto-match and runtime tabs)
+// Runtime Config (shared by auto-match and rent-extraction tabs)
 const config = ref<RuntimeConfig | null>(null)
 const configLoading = ref(true)
-const editing = ref(false)
+const editingMatch = ref(false)
+const editingRent = ref(false)
 const editForm = ref<RuntimeConfig>({
   fee_rate: 0,
+  rent_extraction_enabled: true,
   scheduler_interval_secs: 0,
   min_extraction_amount_shannons: 0,
   auto_match_enabled: false,
@@ -31,27 +33,45 @@ async function loadConfig() {
   catch (e: any) { console.error('Failed to load runtime config:', e); toast.error(e.message || t('settings.configLoadFailed')) }
   finally { configLoading.value = false }
 }
-function startEditing() { if (config.value) editForm.value = { ...config.value }; editing.value = true }
+
+function startEditingMatch() { if (config.value) editForm.value = { ...config.value }; editingMatch.value = true }
+function cancelEditingMatch() { editForm.value = { ...config.value! }; editingMatch.value = false }
+
+function startEditingRent() { if (config.value) editForm.value = { ...config.value }; editingRent.value = true }
+function cancelEditingRent() { editForm.value = { ...config.value! }; editingRent.value = false }
+
 async function saveConfig() {
   try {
     const updated = await api.updateRuntimeConfig(editForm.value)
     toast.success(t('settings.configSaved'))
     config.value = updated
     editForm.value = { ...updated }
-    editing.value = false
+    editingMatch.value = false
+    editingRent.value = false
   }
   catch (e: any) { console.error('Failed to save config:', e); toast.error(e.message || t('settings.configSaveFailed')) }
 }
+
 async function resetConfig() {
   try {
     const defaults = await api.resetRuntimeConfig()
     config.value = defaults
-    if (editing.value) editForm.value = { ...defaults }
+    if (editingMatch.value || editingRent.value) editForm.value = { ...defaults }
     toast.success(t('settings.configSaved'))
   }
   catch (e: any) { console.error('Failed to reset config:', e); toast.error(e.message || t('settings.configResetFailed')) }
 }
-function cancelEditing() { editForm.value = { ...config.value! }; editing.value = false }
+
+// Scheduler status
+const schedulerStatus = ref<SchedulerStatusResponse | null>(null)
+const statusLoading = ref(false)
+
+async function loadSchedulerStatus() {
+  statusLoading.value = true
+  try { schedulerStatus.value = await api.getSchedulerStatus() }
+  catch (e) { console.warn('Failed to load scheduler status:', e) }
+  finally { statusLoading.value = false }
+}
 
 // Network info
 const serverInfo = ref<ServerInfo | null>(null)
@@ -61,7 +81,7 @@ async function loadServerInfo() {
   catch (e) { console.warn('Failed to load server info:', e) }
 }
 
-onMounted(() => { loadConfig(); loadServerInfo() })
+onMounted(() => { loadConfig(); loadServerInfo(); loadSchedulerStatus() })
 </script>
 
 <template>
@@ -79,10 +99,10 @@ onMounted(() => { loadConfig(); loadServerInfo() })
       </button>
       <button
         class="sub-tab"
-        :class="{ active: activeTab === 'runtime' }"
-        @click="activeTab = 'runtime'"
+        :class="{ active: activeTab === 'rent-extraction' }"
+        @click="activeTab = 'rent-extraction'; loadSchedulerStatus()"
       >
-        {{ t('settings.runtime') }}
+        {{ t('settings.rentExtraction') }}
       </button>
       <button
         class="sub-tab"
@@ -102,16 +122,16 @@ onMounted(() => { loadConfig(); loadServerInfo() })
         <h3>{{ t('settings.autoMatchConfig') }}</h3>
         <div class="card-header-actions">
           <button
-            v-if="!editing"
+            v-if="!editingMatch"
             class="btn btn-default btn-sm"
             @click="resetConfig"
           >
             {{ t('settings.reset') }}
           </button>
           <button
-            v-if="!editing"
+            v-if="!editingMatch"
             class="btn btn-default btn-sm"
-            @click="startEditing"
+            @click="startEditingMatch"
           >
             {{ t('settings.edit') }}
           </button>
@@ -125,7 +145,7 @@ onMounted(() => { loadConfig(); loadServerInfo() })
       </div>
       <template v-else-if="config">
         <div
-          v-if="!editing"
+          v-if="!editingMatch"
           class="config-display"
         >
           <div class="config-row">
@@ -178,7 +198,7 @@ onMounted(() => { loadConfig(); loadServerInfo() })
           <div class="form-actions">
             <button
               class="btn btn-default"
-              @click="cancelEditing"
+              @click="cancelEditingMatch"
             >
               {{ t('settings.cancel') }}
             </button><button
@@ -192,25 +212,25 @@ onMounted(() => { loadConfig(); loadServerInfo() })
       </template>
     </div>
 
-    <!-- Runtime Tab -->
+    <!-- Rent Extraction Tab -->
     <div
-      v-if="activeTab === 'runtime'"
+      v-if="activeTab === 'rent-extraction'"
       class="card config-card"
     >
       <div class="card-header">
-        <h3>{{ t('settings.runtimeConfig') }}</h3>
+        <h3>{{ t('settings.rentExtractionConfig') }}</h3>
         <div class="card-header-actions">
           <button
-            v-if="!editing"
+            v-if="!editingRent"
             class="btn btn-default btn-sm"
             @click="resetConfig"
           >
             {{ t('settings.reset') }}
           </button>
           <button
-            v-if="!editing"
+            v-if="!editingRent"
             class="btn btn-default btn-sm"
-            @click="startEditing"
+            @click="startEditingRent"
           >
             {{ t('settings.edit') }}
           </button>
@@ -223,10 +243,18 @@ onMounted(() => { loadConfig(); loadServerInfo() })
         {{ t('common.loading') }}
       </div>
       <template v-else-if="config">
+        <!-- Display mode -->
         <div
-          v-if="!editing"
+          v-if="!editingRent"
           class="config-display"
         >
+          <div class="config-row">
+            <span class="config-label">{{ t('settings.enabled') }}</span>
+            <StatusTag
+              :status="config.rent_extraction_enabled ? 'live' : 'destroyed'"
+              :label="config.rent_extraction_enabled ? t('settings.enabledLabel') : t('settings.disabledLabel')"
+            />
+          </div>
           <div class="config-row">
             <span class="config-label">{{ t('settings.feeRate') }}</span><span>{{ config.fee_rate.toLocaleString() }} shannons/KB</span>
           </div>
@@ -237,10 +265,20 @@ onMounted(() => { loadConfig(); loadServerInfo() })
             <span class="config-label">{{ t('settings.minExtraction') }}</span><span>{{ (config.min_extraction_amount_shannons / 100_000_000).toFixed(2) }} {{ t('common.CKB') }}</span>
           </div>
         </div>
+        <!-- Edit mode -->
         <div
           v-else
           class="config-form"
         >
+          <div class="form-group">
+            <label class="form-label">
+              <input
+                v-model="editForm.rent_extraction_enabled"
+                type="checkbox"
+              >
+              {{ t('settings.enableRentExtraction') }}
+            </label>
+          </div>
           <div class="form-group">
             <label class="form-label">{{ t('settings.feeRate') }}</label><input
               v-model.number="editForm.fee_rate"
@@ -265,7 +303,7 @@ onMounted(() => { loadConfig(); loadServerInfo() })
           <div class="form-actions">
             <button
               class="btn btn-default"
-              @click="cancelEditing"
+              @click="cancelEditingRent"
             >
               {{ t('settings.cancel') }}
             </button><button
@@ -274,6 +312,56 @@ onMounted(() => { loadConfig(); loadServerInfo() })
             >
               {{ t('settings.save') }}
             </button>
+          </div>
+        </div>
+
+        <!-- Scheduler Status -->
+        <div
+          style="margin-top: var(--space-xl); border-top: 1px solid var(--border-light); padding-top: var(--space-lg);"
+        >
+          <div
+            class="card-header"
+            style="margin-bottom: var(--space-md);"
+          >
+            <h3>{{ t('settings.extractionStatus') }}</h3>
+            <button
+              class="btn btn-default btn-sm"
+              :disabled="statusLoading"
+              @click="loadSchedulerStatus"
+            >
+              {{ t('settings.refresh') }}
+            </button>
+          </div>
+          <div
+            v-if="statusLoading"
+            class="text-muted"
+          >
+            {{ t('common.loading') }}
+          </div>
+          <div
+            v-else-if="schedulerStatus"
+            class="config-display"
+          >
+            <div class="config-row">
+              <span class="config-label">{{ t('settings.lastRun') }}</span>
+              <span>{{ schedulerStatus.extractor.last_run || t('settings.never') }}</span>
+            </div>
+            <div class="config-row">
+              <span class="config-label">{{ t('settings.lastDuration') }}</span>
+              <span>{{ schedulerStatus.extractor.last_duration_ms }} {{ t('settings.ms') }}</span>
+            </div>
+            <div class="config-row">
+              <span class="config-label">{{ t('settings.totalCycles') }}</span>
+              <span>{{ schedulerStatus.extractor.cycles }}</span>
+            </div>
+            <div class="config-row">
+              <span class="config-label">{{ t('settings.totalExtracted') }}</span>
+              <span>{{ schedulerStatus.extractor.total_processed }} shannons</span>
+            </div>
+            <div class="config-row">
+              <span class="config-label">{{ t('settings.lastError') }}</span>
+              <span :class="{ 'text-danger': schedulerStatus.extractor.last_error }">{{ schedulerStatus.extractor.last_error || t('common.none') }}</span>
+            </div>
           </div>
         </div>
       </template>

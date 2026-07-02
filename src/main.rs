@@ -130,6 +130,8 @@ async fn main() -> std::io::Result<()> {
     // without a server restart.
     let runtime_config = Arc::new(RwLock::new(RuntimeConfig::from_config(&config)));
 
+    let tx_assembler_for_scheduler = tx_assembler.clone();
+
     let state = api::AppState {
         db: pool.clone(),
         config: config.clone(),
@@ -150,6 +152,7 @@ async fn main() -> std::io::Result<()> {
         runtime_config,
         chain_provider,
         signer_bg,
+        tx_assembler_for_scheduler,
         scheduler_state,
     );
 

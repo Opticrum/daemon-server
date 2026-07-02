@@ -186,6 +186,42 @@ async fn invalid_request_body_returns_400() {
 }
 
 #[actix_rt::test]
+async fn console_match_detail() {
+    let state = test_app_state();
+    let mut conn = state.db.get().unwrap();
+    rust_server::db::matches::insert_match(
+        &mut conn,
+        "match_detail_tx",
+        0,
+        "order_detail_tx",
+        0,
+        "ckt1q...seller",
+        100,
+        1_000_000,
+        None::<&str>,
+        None::<&str>,
+    )
+    .unwrap();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .configure(api::configure_routes),
+    )
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/api/console/matches/1")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert!(resp.status().is_success(), "match detail route should be registered");
+
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["tx_hash"], "match_detail_tx");
+    assert_eq!(body["extracted_total_shannons"], 0);
+}
+
+#[actix_rt::test]
 async fn wallet_not_found_returns_404() {
     let state = test_app_state();
     let app = test::init_service(

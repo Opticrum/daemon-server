@@ -81,8 +81,16 @@ pub async fn extract(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let match_id = path.into_inner();
-    let result =
-        rent_service::extract_rent(state.chain_provider.as_ref(), &state.db, match_id).await?;
+    let result = rent_service::extract_rent(
+        state.chain_provider.as_ref(),
+        &state.db,
+        match_id,
+        &rent_service::ExtractRentOptions {
+            tx_assembler: state.tx_assembler.as_ref(),
+            signer: Some(state.signer.as_ref()),
+        },
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(result))
 }
 

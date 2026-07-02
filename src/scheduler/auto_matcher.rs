@@ -204,6 +204,7 @@ pub async fn run_auto_match_cycle(
             shannons_per_block,
             order.ckb_capacity,
             None::<&str>,
+            Some(&channel.channel_id),
         )?;
 
         info!(

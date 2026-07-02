@@ -152,6 +152,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             )
             .route("/console/matches", web::get().to(console::list_matches))
             .route(
+                "/console/matches/{id}",
+                web::get().to(console::match_detail),
+            )
+            .route(
                 "/console/matches/{id}/extract",
                 web::post().to(console::extract_rent),
             )
@@ -163,6 +167,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/console/channels/{channel_id}/close",
                 web::post().to(console::close_channel),
+            )
+            .route(
+                "/console/channels/{channel_id}",
+                web::delete().to(console::delete_channel),
             )
             .route(
                 "/console/scheduler/status",

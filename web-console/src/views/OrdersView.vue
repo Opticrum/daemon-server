@@ -144,10 +144,7 @@ function stopPolling(txHash: string) {
 }
 
 function isChannelBeingCreated(txHash: string): boolean {
-  const r = readiness[txHash];
-  if (!r?.compatible_channel) return false;
-  const s = r.compatible_channel.state_name;
-  return s !== "ChannelReady" && s !== "Closed" && s !== "ShuttingDown";
+  return !!readiness[txHash]?.pending_channel;
 }
 
 async function connectPeerForOrder(txHash: string, pubkey: string) {
@@ -382,7 +379,16 @@ onMounted(async () => {
             :label="t('orders.channelAvailable')"
           />
           <StatusTag
-            v-else-if="readiness[row.tx_hash] && !readiness[row.tx_hash]!.compatible_channel"
+            v-else-if="readiness[row.tx_hash]?.pending_channel"
+            status="pending"
+            :label="t('orders.channelCreatingShort')"
+          />
+          <StatusTag
+            v-else-if="
+              readiness[row.tx_hash]
+                && !readiness[row.tx_hash]!.compatible_channel
+                && !readiness[row.tx_hash]!.pending_channel
+            "
             status="pending"
             :label="t('orders.channelNone')"
           />

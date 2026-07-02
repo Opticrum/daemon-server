@@ -16,7 +16,7 @@ fn test_provider() -> MockChainProvider {
 async fn no_wallets_produces_zero_extraction() {
     let pool = test_db();
     let provider = test_provider();
-    let extracted = run_extraction_cycle(&pool, 1000, &provider).await.unwrap();
+    let extracted = run_extraction_cycle(&pool, 1000, &provider, None, None).await.unwrap();
     assert_eq!(extracted, 0);
 }
 
@@ -51,11 +51,12 @@ async fn extracts_when_above_threshold() {
         1000,
         0,
             None::<&str>,
+        None::<&str>,
     )
     .unwrap();
 
     // Threshold 100_000, extractable = 1000 * 1000 = 1_000_000 > 100_000
-    let extracted = run_extraction_cycle(&pool, 100_000, &provider)
+    let extracted = run_extraction_cycle(&pool, 100_000, &provider, None, None)
         .await
         .unwrap();
     assert!(extracted > 0);
@@ -91,11 +92,12 @@ async fn skips_when_below_threshold() {
         1, // 1 shannon/block
         0,
             None::<&str>,
+        None::<&str>,
     )
     .unwrap();
 
     // Extractable = 1 * 1000 = 1000 < 1_000_000_000 threshold
-    let extracted = run_extraction_cycle(&pool, 1_000_000_000, &provider)
+    let extracted = run_extraction_cycle(&pool, 1_000_000_000, &provider, None, None)
         .await
         .unwrap();
     assert_eq!(extracted, 0);
@@ -130,18 +132,19 @@ async fn respects_min_extraction_different_levels() {
         50, // 50 shannons/block
         0,
             None::<&str>,
+        None::<&str>,
     )
     .unwrap();
 
     // Extractable = 50 * 1000 = 50_000
     // High threshold: skipped
-    let result = run_extraction_cycle(&pool, 1_000_000, &provider)
+    let result = run_extraction_cycle(&pool, 1_000_000, &provider, None, None)
         .await
         .unwrap();
     assert_eq!(result, 0, "should skip with high threshold");
 
     // Low threshold: extracted
-    let result = run_extraction_cycle(&pool, 100, &provider).await.unwrap();
+    let result = run_extraction_cycle(&pool, 100, &provider, None, None).await.unwrap();
     assert!(result > 0, "should extract with low threshold");
 }
 
@@ -175,12 +178,13 @@ async fn only_processes_live_matches() {
         1000,
         0,
             None::<&str>,
+        None::<&str>,
     )
     .unwrap();
     match_db::update_match_status(&mut conn, 1, "destroyed").unwrap();
 
     // Should skip destroyed matches
-    let extracted = run_extraction_cycle(&pool, 0, &provider).await.unwrap();
+    let extracted = run_extraction_cycle(&pool, 0, &provider, None, None).await.unwrap();
     assert_eq!(extracted, 0, "should skip destroyed matches");
 }
 
@@ -214,10 +218,11 @@ async fn multiple_matches_all_processed() {
             200,
             0,
             None::<&str>,
+            None::<&str>,
         )
         .unwrap();
     }
 
-    let extracted = run_extraction_cycle(&pool, 0, &provider).await.unwrap();
+    let extracted = run_extraction_cycle(&pool, 0, &provider, None, None).await.unwrap();
     assert!(extracted > 0, "should process all live matches");
 }

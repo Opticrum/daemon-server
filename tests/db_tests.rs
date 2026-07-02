@@ -136,6 +136,7 @@ fn match_create_and_get() {
         150,
         100,
         None::<&str>,
+        None::<&str>,
     )
     .unwrap();
 
@@ -162,6 +163,7 @@ fn match_update_extraction() {
         50,
         100,
         None::<&str>,
+        None::<&str>,
     )
     .unwrap();
 
@@ -176,7 +178,7 @@ fn match_update_status() {
     let mut conn = pool.get().unwrap();
 
     let id =
-        match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 10, 100, None::<&str>).unwrap();
+        match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 10, 100, None::<&str>, None::<&str>).unwrap();
 
     match_db::update_match_status(&mut conn, id, "exhausted").unwrap();
     let m = match_db::get_match_by_id(&mut conn, id).unwrap();
@@ -188,8 +190,8 @@ fn match_list_by_status() {
     let pool = test_db();
     let mut conn = pool.get().unwrap();
 
-    match_db::insert_match(&mut conn, "m1", 0, "o1", 0, "s1", 1, 100, None::<&str>).unwrap();
-    match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 2, 100, None::<&str>).unwrap();
+    match_db::insert_match(&mut conn, "m1", 0, "o1", 0, "s1", 1, 100, None::<&str>, None::<&str>).unwrap();
+    match_db::insert_match(&mut conn, "m2", 0, "o2", 0, "s2", 2, 100, None::<&str>, None::<&str>).unwrap();
     match_db::update_match_status(&mut conn, 1, "destroyed").unwrap();
 
     let live = match_db::list_matches(&mut conn, Some("live")).unwrap();
@@ -224,4 +226,54 @@ fn total_extracted_aggregates() {
 
     let total = match_db::total_extracted(&mut conn).unwrap();
     assert_eq!(total, 6000);
+}
+
+#[test]
+fn dismiss_fiber_channel() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    rust_server::db::channels::dismiss_channel(&mut conn, "ch_closed_001").unwrap();
+    assert!(rust_server::db::channels::is_dismissed(&mut conn, "ch_closed_001").unwrap());
+
+    let ids = rust_server::db::channels::list_dismissed_ids(&mut conn).unwrap();
+    assert_eq!(ids, vec!["ch_closed_001".to_string()]);
+
+    // Idempotent
+    rust_server::db::channels::dismiss_channel(&mut conn, "ch_closed_001").unwrap();
+    assert_eq!(
+        rust_server::db::channels::list_dismissed_ids(&mut conn).unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn delete_match_by_outpoint_cascades_extraction_history() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    match_db::insert_match(
+        &mut conn,
+        "match_tx_del",
+        0,
+        "order_tx",
+        0,
+        "seller",
+        10,
+        1000,
+        None::<&str>,
+        None::<&str>,
+    )
+    .unwrap();
+    match_db::insert_extraction(&mut conn, "match_tx_del", 0, 500, 100, "extract_tx").unwrap();
+
+    let deleted = match_db::delete_match_by_outpoint(&mut conn, "match_tx_del", 0).unwrap();
+    assert!(deleted);
+
+    assert!(match_db::get_extractions_for_match(&mut conn, "match_tx_del", 0)
+        .unwrap()
+        .is_empty());
+    assert!(
+        !match_db::delete_match_by_outpoint(&mut conn, "missing", 0).unwrap()
+    );
 }

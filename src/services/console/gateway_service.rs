@@ -24,9 +24,11 @@ use crate::services::chain_provider::{
     ChainProvider, ChannelMatchInfo, ChannelWithMatch, FiberChannelInfo,
 };
 use crate::services::match_service::{self, MatchOrderResult};
+use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::rent_service;
 use crate::services::runtime_config::{RuntimeConfig, RuntimeConfigPartial};
 use crate::services::signer::Signer;
+use crate::services::transaction_assembler::TransactionAssembler;
 use opticrum_calculator::types::MatchInfo;
 use opticrum_protocol::CompressedPubkey;
 use std::sync::{Arc, RwLock};
@@ -113,6 +115,7 @@ pub struct CycleStatus {
     pub last_run: Option<String>,
     pub last_duration_ms: u64,
     pub cycles: u64,
+    pub total_processed: u64,
     pub last_processed: u64,
     pub last_error: Option<String>,
 }
@@ -123,6 +126,7 @@ impl From<&super::scheduler_state::CycleState> for CycleStatus {
             last_run: cs.last_run.clone(),
             last_duration_ms: cs.last_duration_ms,
             cycles: cs.cycles,
+            total_processed: cs.total_processed,
             last_processed: cs.last_processed,
             last_error: cs.last_error.clone(),
         }
@@ -555,12 +559,20 @@ impl GatewayService {
             })
             .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
 
-        // Find or create a compatible channel
+        // Find or create a compatible channel (exclude already-matched channels)
+        let used_channel_ids: std::collections::HashSet<String> = {
+            let mut conn = pool.get()?;
+            match_db::get_used_channel_ids(&mut conn)
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        };
         let channel = match_service::ensure_channel(
             provider,
             &hex::encode(order.order_args.fiber_pubkey.to_bytes()),
             order.order_data.channel_capacity,
             order_tx_hash,
+            &used_channel_ids,
         )
         .await?;
 
@@ -614,6 +626,7 @@ impl GatewayService {
             shannons_per_block,
             order_data.channel_capacity,
             None::<&str>,
+            Some(channel.channel_id.as_str()),
         )?;
 
         tracing::info!(
@@ -635,6 +648,7 @@ impl GatewayService {
     /// compatible channel exists. Used by the frontend to show per-order status.
     pub async fn get_match_readiness(
         provider: &dyn ChainProvider,
+        pool: &crate::db::DbPool,
         order_tx_hash: &str,
     ) -> Result<serde_json::Value, AppError> {
         let orders = provider.scan_orders().await?;
@@ -658,8 +672,19 @@ impl GatewayService {
 
         // Check for compatible channel: matching peer + capacity + tx on-chain
         // + created after the order (contract requires channel_block > order_block).
+        // + not already used in another match.
+        // Only ChannelReady counts as usable; in-progress channels are reported
+        // separately as pending_channel.
         let channels = provider.scan_fiber_channels(&[]).await?;
+        let used_ids: std::collections::HashSet<String> = {
+            let mut conn = pool.get()?;
+            match_db::get_used_channel_ids(&mut conn)
+                .unwrap_or_default()
+                .into_iter()
+                .collect()
+        };
         let mut compatible = None;
+        let mut pending = None;
         for ch in &channels {
             if ch.counterparty_fiber_key.trim_start_matches("0x")
                 != fiber_pubkey_hex.trim_start_matches("0x")
@@ -668,16 +693,33 @@ impl GatewayService {
             {
                 continue;
             }
+            // Exclude channels already used in another match
+            if used_ids.contains(&ch.channel_id) {
+                continue;
+            }
             let channel_block = provider.get_tx_block_number(&ch.tx_hash).await.unwrap_or(0);
-            if channel_block > 0 && channel_block > order_block {
+            if channel_block == 0 || channel_block <= order_block {
+                continue;
+            }
+
+            if match_service::is_channel_ready(&ch.state_name) {
                 compatible = Some(ch);
                 break;
+            }
+            if pending.is_none() && match_service::is_channel_pending(&ch.state_name) {
+                pending = Some(ch);
             }
         }
 
         Ok(serde_json::json!({
             "peer_connected": peer_connected,
             "compatible_channel": compatible.map(|ch| serde_json::json!({
+                "channel_id": ch.channel_id,
+                "tx_hash": ch.tx_hash,
+                "state_name": ch.state_name,
+                "capacity": ch.capacity,
+            })),
+            "pending_channel": pending.map(|ch| serde_json::json!({
                 "channel_id": ch.channel_id,
                 "tx_hash": ch.tx_hash,
                 "state_name": ch.state_name,
@@ -853,6 +895,7 @@ impl GatewayService {
                 m.match_data.shannons_per_block,
                 m.ckb_capacity,
                 xudt_str,
+                None::<&str>,
             ) {
                 Ok(id) => {
                     tracing::info!(
@@ -924,8 +967,19 @@ impl GatewayService {
         pool: &DbPool,
         provider: &dyn ChainProvider,
         match_id: i64,
+        tx_assembler: Option<&TransactionAssembler>,
+        signer: &HdWalletSigner,
     ) -> Result<rent_service::ExtractRentResult, AppError> {
-        rent_service::extract_rent(provider, pool, match_id).await
+        rent_service::extract_rent(
+            provider,
+            pool,
+            match_id,
+            &rent_service::ExtractRentOptions {
+                tx_assembler,
+                signer: Some(signer),
+            },
+        )
+        .await
     }
 
     pub async fn destroy_match(
@@ -945,8 +999,13 @@ impl GatewayService {
     /// 1. Filter match cells by counterparty fiber pubkey
     /// 2. Among filtered, match by channel outpoint
     pub async fn get_channels_with_matches(
+        pool: &DbPool,
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
+        let mut conn = pool.get()?;
+        let dismissed = crate::db::channels::list_dismissed_ids(&mut conn)?;
+        let dismissed_set: std::collections::HashSet<String> = dismissed.into_iter().collect();
+
         let channels = provider.scan_fiber_channels(&[]).await?;
 
         // Scan on-chain matches — if it fails, still return channels without
@@ -964,6 +1023,7 @@ impl GatewayService {
 
         Ok(channels
             .into_iter()
+            .filter(|ch| !dismissed_set.contains(&ch.channel_id))
             .map(|ch| {
                 let match_info = find_match_for_channel(&ch, &matches);
                 let match_status = if match_info.is_some() {
@@ -988,6 +1048,58 @@ impl GatewayService {
         force: bool,
     ) -> Result<(), AppError> {
         provider.shutdown_channel(channel_id, force).await
+    }
+
+    /// Remove a closed Fiber channel from the console list and delete any
+    /// associated tracked match records from the database.
+    pub async fn delete_channel(
+        pool: &DbPool,
+        provider: &dyn ChainProvider,
+        channel_id: &str,
+    ) -> Result<(), AppError> {
+        let channels = provider.scan_fiber_channels(&[]).await?;
+        let channel = channels
+            .into_iter()
+            .find(|ch| ch.channel_id == channel_id)
+            .ok_or_else(|| AppError::NotFound(format!("Channel {channel_id} not found")))?;
+
+        if channel.state_name != "Closed" {
+            return Err(AppError::BadRequest(
+                "Only closed channels can be deleted".into(),
+            ));
+        }
+
+        let matches = match provider.scan_matches().await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to scan on-chain matches while deleting channel: {}",
+                    e
+                );
+                vec![]
+            }
+        };
+
+        let mut conn = pool.get()?;
+        if let Some(match_info) = find_match_for_channel(&channel, &matches) {
+            let deleted = match_db::delete_match_by_outpoint(
+                &mut conn,
+                &match_info.match_tx_hash,
+                match_info.match_output_index as i32,
+            )?;
+            if deleted {
+                tracing::info!(
+                    channel_id = %channel_id,
+                    match_tx_hash = %match_info.match_tx_hash,
+                    match_output_index = match_info.match_output_index,
+                    "Deleted tracked match for dismissed channel"
+                );
+            }
+        }
+
+        crate::db::channels::dismiss_channel(&mut conn, channel_id)?;
+        tracing::info!(channel_id = %channel_id, "Fiber channel dismissed from console");
+        Ok(())
     }
 
     // ═══════════════════════════════════════════════════════

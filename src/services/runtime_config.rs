@@ -12,6 +12,7 @@ use crate::config::Config;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuntimeConfig {
     pub fee_rate: u64,
+    pub rent_extraction_enabled: bool,
     pub scheduler_interval_secs: u64,
     pub min_extraction_amount_shannons: u64,
     pub auto_match_enabled: bool,
@@ -25,6 +26,7 @@ impl RuntimeConfig {
     pub fn from_config(config: &Config) -> Self {
         Self {
             fee_rate: config.fee_rate,
+            rent_extraction_enabled: config.rent_extraction_enabled,
             scheduler_interval_secs: config.scheduler_interval_secs,
             min_extraction_amount_shannons: config.min_extraction_amount_shannons,
             auto_match_enabled: config.auto_match_enabled,
@@ -43,6 +45,9 @@ impl RuntimeConfig {
     pub fn apply_partial(&mut self, partial: &RuntimeConfigPartial) {
         if let Some(v) = partial.fee_rate {
             self.fee_rate = v;
+        }
+        if let Some(v) = partial.rent_extraction_enabled {
+            self.rent_extraction_enabled = v;
         }
         if let Some(v) = partial.scheduler_interval_secs {
             self.scheduler_interval_secs = v;
@@ -70,6 +75,7 @@ impl RuntimeConfig {
 #[serde(default)]
 pub struct RuntimeConfigPartial {
     pub fee_rate: Option<u64>,
+    pub rent_extraction_enabled: Option<bool>,
     pub scheduler_interval_secs: Option<u64>,
     pub min_extraction_amount_shannons: Option<u64>,
     pub auto_match_enabled: Option<bool>,
@@ -82,6 +88,7 @@ impl Default for RuntimeConfigPartial {
     fn default() -> Self {
         Self {
             fee_rate: None,
+            rent_extraction_enabled: None,
             scheduler_interval_secs: None,
             min_extraction_amount_shannons: None,
             auto_match_enabled: None,

@@ -91,6 +91,14 @@ pub struct Config {
     #[arg(long, env = "OPTICRUM_FEE_RATE", default_value = "1000")]
     pub fee_rate: u64,
 
+    /// Enable automatic rent extraction (background task)
+    #[arg(
+        long,
+        env = "OPTICRUM_RENT_EXTRACTION_ENABLED",
+        default_value = "true"
+    )]
+    pub rent_extraction_enabled: bool,
+
     // -----------------------------------------------------------------------
     // Auto-match configuration
     // -----------------------------------------------------------------------
@@ -133,6 +141,7 @@ impl Default for Config {
             scheduler_interval_secs: 60,
             min_extraction_amount_shannons: 100_000_000,
             fee_rate: 1000,
+            rent_extraction_enabled: true,
             log_level: "info".into(),
             auto_match_enabled: false,
             auto_match_min_capacity: 10_000_000_000,
@@ -251,6 +260,13 @@ impl Config {
                 cli.fee_rate
             } else {
                 file.fee_rate
+            },
+            rent_extraction_enabled: if cli.rent_extraction_enabled
+                != defaults.rent_extraction_enabled
+            {
+                cli.rent_extraction_enabled
+            } else {
+                file.rent_extraction_enabled
             },
             log_level: if cli.log_level != defaults.log_level {
                 cli.log_level

@@ -23,14 +23,20 @@ async fn extract_and_destroy_flow() {
         0,
         "seller_flow",
         100,
-        100,
+        1_000_000_000,
+        None::<&str>,
         None::<&str>,
     )
     .unwrap();
     match_db::update_match_extraction(&mut conn, match_id, 1000).unwrap();
 
     // Extract rent
-    let result = rent_service::extract_rent(&provider, &pool, match_id)
+    let result = rent_service::extract_rent(
+        &provider,
+        &pool,
+        match_id,
+        &rent_service::ExtractRentOptions::mock(),
+    )
         .await
         .expect("extract should succeed");
     assert!(result.extracted_amount > 0);
@@ -49,7 +55,13 @@ async fn extract_nonexistent_match_fails() {
     let pool = test_db();
     let provider = MockChainProvider::new();
 
-    let result = rent_service::extract_rent(&provider, &pool, 9999).await;
+    let result = rent_service::extract_rent(
+        &provider,
+        &pool,
+        9999,
+        &rent_service::ExtractRentOptions::mock(),
+    )
+    .await;
     assert!(result.is_err());
 }
 

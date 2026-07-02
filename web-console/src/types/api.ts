@@ -38,6 +38,7 @@ export interface AutoMatchConfig {
 
 export interface RuntimeConfig {
   fee_rate: number
+  rent_extraction_enabled: boolean
   scheduler_interval_secs: number
   min_extraction_amount_shannons: number
   auto_match_enabled: boolean
@@ -54,6 +55,22 @@ export interface ServerInfo {
   fiber_rpc_url: string
   fee_rate: number
   version: string
+}
+
+// ── Scheduler Status ──
+export interface CycleStatus {
+  last_run: string | null
+  last_duration_ms: number
+  cycles: number
+  total_processed: number
+  last_processed: number
+  last_error: string | null
+}
+
+export interface SchedulerStatusResponse {
+  extractor: CycleStatus
+  matcher: CycleStatus
+  tip_block: number
 }
 
 // ── Wallets ──
@@ -166,6 +183,12 @@ export interface OrderScanItem {
 export interface MatchReadiness {
   peer_connected: boolean
   compatible_channel: {
+    channel_id: string
+    tx_hash: string
+    state_name: string
+    capacity: number
+  } | null
+  pending_channel: {
     channel_id: string
     tx_hash: string
     state_name: string

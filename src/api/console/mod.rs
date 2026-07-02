@@ -515,6 +515,7 @@ pub async fn match_readiness(
     let tx_hash = path.into_inner();
     let status = GatewayService::get_match_readiness(
         state.chain_provider.as_ref(),
+        &state.db,
         &tx_hash,
     )
     .await?;
@@ -597,7 +598,14 @@ pub async fn extract_rent(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let id = path.into_inner();
-    let result = GatewayService::extract_rent(&state.db, state.chain_provider.as_ref(), id).await?;
+    let result = GatewayService::extract_rent(
+        &state.db,
+        state.chain_provider.as_ref(),
+        id,
+        state.tx_assembler.as_ref(),
+        state.signer.as_ref(),
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -616,7 +624,8 @@ pub async fn destroy_match(
 // ═══════════════════════════════════════════════════════
 
 pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let channels = GatewayService::get_channels_with_matches(state.chain_provider.as_ref()).await?;
+    let channels =
+        GatewayService::get_channels_with_matches(&state.db, state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(channels))
 }
 
@@ -638,6 +647,15 @@ pub async fn close_channel(
     )
     .await?;
     Ok(HttpResponse::Ok().json(serde_json::json!({"closed": true})))
+}
+
+pub async fn delete_channel(
+    state: web::Data<AppState>,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let channel_id = path.into_inner();
+    GatewayService::delete_channel(&state.db, state.chain_provider.as_ref(), &channel_id).await?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
 }
 
 // ═══════════════════════════════════════════════════════

@@ -40,6 +40,21 @@ pub const CHANNEL_READY_TIMEOUT_SECS: u64 = 300;
 /// occupied capacity of the channel cell itself (~100 CKB).
 pub const CHANNEL_CELL_OCCUPIED_RESERVE: u64 = 100 * 100_000_000;
 
+/// Whether a Fiber channel is fully ready for order matching.
+pub fn is_channel_ready(state_name: &str) -> bool {
+    state_name == "ChannelReady"
+}
+
+/// Whether a Fiber channel is in a terminal / unusable state.
+pub fn is_channel_terminal(state_name: &str) -> bool {
+    matches!(state_name, "Closed" | "ShuttingDown")
+}
+
+/// Whether a Fiber channel exists but is still being set up.
+pub fn is_channel_pending(state_name: &str) -> bool {
+    !is_channel_ready(state_name) && !is_channel_terminal(state_name)
+}
+
 /// Match an on-chain order with a **fresh** Fiber channel.
 ///
 /// The contract requires `channel_block > order_block`, so the channel must be
@@ -81,15 +96,29 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     let _ = provider.connect_peer(&fiber_pubkey_hex).await;
 
     // ── 3. Try to reuse an existing compatible channel ─────────────────
-    let (channel_tx_hash, channel_output_index) = if let Some(ch) =
-        find_compatible_channel(provider, &fiber_pubkey_hex, required_capacity, order_block).await?
+    let used_channel_ids = {
+        let mut conn = pool.get()?;
+        match_db::get_used_channel_ids(&mut conn).unwrap_or_default()
+    };
+    let used_channels_set: std::collections::HashSet<String> =
+        used_channel_ids.into_iter().collect();
+
+    let (channel_tx_hash, channel_output_index, channel_id) = if let Some(ch) =
+        find_compatible_channel(
+            provider,
+            &fiber_pubkey_hex,
+            required_capacity,
+            order_block,
+            &used_channels_set,
+        )
+        .await?
     {
         info!(
             channel_id = %ch.channel_id,
             tx_hash = %ch.tx_hash,
             "Match: reusing existing channel"
         );
-        (ch.tx_hash, ch.output_index)
+        (ch.tx_hash, ch.output_index, Some(ch.channel_id.clone()))
     } else {
         // ── 4. Open a new channel (add reserve for cell occupied capacity) ──
         let funding_amount = required_capacity + CHANNEL_CELL_OCCUPIED_RESERVE;
@@ -115,7 +144,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
             tx_hash = %channel.tx_hash,
             "Match: new channel ready"
         );
-        (channel.tx_hash, channel.output_index)
+        (channel.tx_hash, channel.output_index, Some(channel.channel_id.clone()))
     };
 
     // ── 4. Build match transaction ─────────────────────────────────────
@@ -139,6 +168,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
         shannons_per_block,
         order.order_data.channel_capacity,
         None::<&str>,
+        channel_id.as_deref(),
     )?;
 
     info!(
@@ -165,6 +195,7 @@ pub async fn ensure_channel<P: ChainProvider + ?Sized>(
     counterparty_pubkey: &str,
     required_capacity: u64,
     order_tx_hash: &str,
+    used_channel_ids: &std::collections::HashSet<String>,
 ) -> Result<crate::services::chain_provider::FiberChannelInfo, AppError> {
     let order_block = provider
         .get_tx_block_number(order_tx_hash)
@@ -177,6 +208,7 @@ pub async fn ensure_channel<P: ChainProvider + ?Sized>(
         counterparty_pubkey,
         required_capacity,
         order_block,
+        used_channel_ids,
     )
     .await?
     {
@@ -191,12 +223,14 @@ pub async fn ensure_channel<P: ChainProvider + ?Sized>(
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 /// Find an existing channel that matches the counterparty pubkey, has enough
-/// capacity, and was created AFTER the order (contract requirement).
+/// capacity, was created AFTER the order (contract requirement), and has not
+/// already been used in another match.
 async fn find_compatible_channel<P: ChainProvider + ?Sized>(
     provider: &P,
     counterparty_pubkey: &str,
     min_capacity: u64,
     order_block: u64,
+    used_channel_ids: &std::collections::HashSet<String>,
 ) -> Result<Option<crate::services::chain_provider::FiberChannelInfo>, AppError> {
     let channels = provider.scan_fiber_channels(&[]).await?;
     for ch in channels {
@@ -209,6 +243,17 @@ async fn find_compatible_channel<P: ChainProvider + ?Sized>(
             continue;
         }
         if ch.tx_hash.is_empty() {
+            continue;
+        }
+        if !is_channel_ready(&ch.state_name) {
+            continue;
+        }
+        // Exclude channels already used in another match
+        if used_channel_ids.contains(&ch.channel_id) {
+            debug!(
+                channel_id = %ch.channel_id,
+                "Match: channel already used in another match, skipping"
+            );
             continue;
         }
         // Check contract requirement: channel_block > order_block
@@ -276,12 +321,15 @@ pub async fn wait_for_channel_ready<P: ChainProvider + ?Sized>(
                         ch.state_name, ch.channel_id
                     )));
                 }
-                _ if !ch.tx_hash.is_empty() && ch.capacity >= min_capacity => {
+                _ if is_channel_ready(&ch.state_name)
+                    && !ch.tx_hash.is_empty()
+                    && ch.capacity >= min_capacity =>
+                {
                     info!(
                         channel_id = %ch.channel_id,
                         tx_hash = %ch.tx_hash,
                         state = %ch.state_name,
-                        "Match: channel outpoint available, proceeding"
+                        "Match: channel ready, proceeding"
                     );
                     return Ok((*ch).clone());
                 }
@@ -349,11 +397,19 @@ mod tests {
         let pool = db::init_test_db();
         let provider = MockChainProvider::new();
 
-        // No orders on chain → should fail with "not found on chain".
         let result = match_order(&provider, &pool, "order_not_found", 0, "ckt1q...seller").await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found on chain"));
+    }
+
+    #[test]
+    fn channel_state_helpers() {
+        assert!(is_channel_ready("ChannelReady"));
+        assert!(!is_channel_ready("AwaitingChannelReady"));
+        assert!(is_channel_pending("NegotiatingFunding"));
+        assert!(is_channel_terminal("Closed"));
+        assert!(is_channel_terminal("ShuttingDown"));
     }
 
     #[actix_rt::test]

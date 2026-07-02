@@ -56,6 +56,7 @@ diesel::table! {
         xudt_amount -> Nullable<Text>,
         status -> Text,
         created_at -> Text,
+        channel_id -> Nullable<Text>,
     }
 }
 
@@ -80,5 +81,12 @@ diesel::table! {
         tip_block -> BigInt,
         tx_hash -> Text,
         timestamp -> Text,
+    }
+}
+
+diesel::table! {
+    dismissed_fiber_channels (channel_id) {
+        channel_id -> Text,
+        dismissed_at -> Text,
     }
 }

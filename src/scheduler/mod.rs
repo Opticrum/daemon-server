@@ -19,7 +19,9 @@ use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::{
     record_error, record_success, set_tip_block, SharedSchedulerState,
 };
+use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::signer::Signer;
+use crate::services::transaction_assembler::TransactionAssembler;
 use crate::services::RuntimeConfig;
 
 /// Spawn all background tasks: rent extractor and auto-matcher.
@@ -27,7 +29,8 @@ pub fn spawn_schedulers(
     pool: DbPool,
     runtime_config: Arc<RwLock<RuntimeConfig>>,
     chain_provider: Arc<dyn ChainProvider>,
-    signer: Arc<dyn Signer>,
+    signer: Arc<HdWalletSigner>,
+    tx_assembler: Option<TransactionAssembler>,
     scheduler_state: SharedSchedulerState,
 ) {
     // Rent extractor
@@ -35,19 +38,34 @@ pub fn spawn_schedulers(
     let rc_ext = runtime_config.clone();
     let cp_ext = chain_provider.clone();
     let state_ext = scheduler_state.clone();
+    let signer_ext = signer.clone();
+    let tx_assembler_ext = tx_assembler.clone();
 
     actix_rt::spawn(async move {
         tracing::info!("Rent extractor started");
 
         loop {
             let rc = rc_ext.read().unwrap();
+            let enabled = rc.rent_extraction_enabled;
             let interval = rc.scheduler_interval_secs;
             let min_extraction = rc.min_extraction_amount_shannons;
             drop(rc);
 
+            if !enabled {
+                tracing::debug!("Rent extraction disabled, sleeping");
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+                continue;
+            }
+
             let started = Instant::now();
-            match rent_extractor::run_extraction_cycle(&pool_ext, min_extraction, cp_ext.as_ref())
-                .await
+            match rent_extractor::run_extraction_cycle(
+                &pool_ext,
+                min_extraction,
+                cp_ext.as_ref(),
+                tx_assembler_ext.as_ref(),
+                Some(signer_ext.as_ref()),
+            )
+            .await
             {
                 Ok(extracted) => {
                     let elapsed = started.elapsed();
@@ -74,7 +92,7 @@ pub fn spawn_schedulers(
     let pool_am = pool;
     let rc_am = runtime_config;
     let cp_am = chain_provider;
-    let signer_am = signer;
+    let signer_am: Arc<dyn Signer> = signer;
     let state_am = scheduler_state;
 
     actix_rt::spawn(async move {
