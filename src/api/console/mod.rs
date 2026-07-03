@@ -296,9 +296,16 @@ pub async fn wallet_session(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
-    let status = session_status(&state, &req);
+    let mut status = session_status(&state, &req);
     if status.active {
         ensure_signer_from_session(&state, &req)?;
+    }
+    // The signer may hold loaded keys even when the session cookie is
+    // absent or expired (e.g. after explicit unlock with no session).
+    // Report the true unlock state so the frontend doesn't mistakenly
+    // show a "wallet locked" warning.
+    if !status.active && state.signer.is_unlocked() {
+        status.active = true;
     }
     Ok(HttpResponse::Ok().json(status))
 }
@@ -449,14 +456,19 @@ pub struct SignerWalletItem {
 
 /// Return the HD wallet addresses with CKB balances for the address selector.
 ///
-/// When the signer is unlocked, the in-memory wallet records are used.
-/// When locked, we fall back to querying the DB directly — viewing wallet
-/// addresses no longer requires unlocking.
-pub async fn signer_wallets(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    // Prefer in-memory signer records when available; fall back to DB otherwise.
+/// Auto-unlocks the signer from an active wallet session. Falls back to DB
+/// records when the signer is locked so the admin can still browse addresses
+/// and unlock directly from the match dialog.
+pub async fn signer_wallets(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> Result<HttpResponse, AppError> {
+    // Auto-unlock from session cookie if available (no-op when already unlocked).
+    let _ = ensure_signer_from_session(&state, &req);
+
+    // Prefer in-memory signer records; fall back to DB when locked.
     let records = state.signer.wallet_records();
     let records: Vec<wallet_db::WalletRecord> = if records.is_empty() {
-        // Signer is locked — load HD children from the database.
         let mut conn = state.db.get()?;
         wallet_db::list_wallets(&mut conn)?
             .into_iter()
@@ -537,7 +549,19 @@ pub async fn match_order(
     state: web::Data<AppState>,
     path: web::Path<String>,
     body: web::Json<MatchOrderBody>,
+    req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
+    // Try cookie-based session unlock first, then fall back to the
+    // configured password (--hd-wallet-password). If the signer is already
+    // unlocked both are no-ops.
+    if let Err(e) = ensure_signer_from_session(&state, &req) {
+        if let Some(ref password) = state.config.hd_wallet_password {
+            state.signer.load_keys(&state.db, password)?;
+        } else {
+            return Err(e);
+        }
+    }
+
     let tx_hash = path.into_inner();
     let tx_assembler = state
         .tx_assembler
@@ -632,6 +656,11 @@ pub async fn extract_rent(
     path: web::Path<(String, u32)>,
 ) -> Result<HttpResponse, AppError> {
     let (tx_hash, output_index) = path.into_inner();
+    let min_extraction = state
+        .runtime_config
+        .read()
+        .map(|rc| rc.min_extraction_amount_shannons)
+        .unwrap_or(0);
     let result = GatewayService::extract_rent(
         &state.db,
         state.chain_provider.as_ref(),
@@ -639,6 +668,7 @@ pub async fn extract_rent(
         output_index,
         state.tx_assembler.as_ref(),
         state.signer.as_ref(),
+        min_extraction,
     )
     .await?;
     Ok(HttpResponse::Ok().json(result))

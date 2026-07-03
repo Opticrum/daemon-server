@@ -1,18 +1,33 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { MatchOrderRequest, SignerWalletItem } from '@/types/api'
 import { useI18n } from '@/composables/useI18n'
-import { truncateAddress, formatCKB } from '@/utils/format'
+import WalletSelector from '@/components/ui/WalletSelector.vue'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: MatchOrderRequest & { tx_hash?: string }
   wallets?: SignerWalletItem[]
+  walletsLoading?: boolean
+  /** When true, show password prompt instead of address selector. */
+  needsUnlock?: boolean
+  unlocking?: boolean
+  unlockError?: string
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: MatchOrderRequest & { tx_hash?: string }]
+  'unlock': [password: string]
+  'cancelUnlock': []
 }>()
+
+const unlockPassword = ref('')
+
+function handleUnlock() {
+  if (!unlockPassword.value.trim()) return
+  emit('unlock', unlockPassword.value)
+}
 
 function update(field: string, value: string | number) {
   emit('update:modelValue', { ...props.modelValue, [field]: value })
@@ -28,49 +43,81 @@ function update(field: string, value: string | number) {
       <label class="form-label">订单交易哈希</label>
       <code class="form-static font-mono">{{ modelValue.tx_hash }}</code>
     </div>
-    <div class="form-group">
-      <label
-        class="form-label"
-        :title="modelValue.seller_address"
-      >{{ t('orders.selectSellerAddr') }}</label>
-      <!-- Dropdown when HD wallet addresses are available -->
-      <select
-        v-if="wallets && wallets.length > 0"
-        :value="modelValue.seller_address"
-        class="form-input form-select"
-        @change="update('seller_address', ($event.target as HTMLSelectElement).value)"
-      >
-        <option
-          value=""
-          disabled
-        >
-          -- {{ t('orders.selectSellerAddr') }} --
-        </option>
-        <option
-          v-for="w in wallets"
-          :key="w.id"
-          :value="w.ckb_address"
-        >
-          #{{ w.derivation_index }} &mdash; {{ truncateAddress(w.ckb_address, 14, 8) }} &mdash; {{ formatCKB(w.balance_shannons) }}
-        </option>
-      </select>
-      <!-- Fallback text input when no wallets available -->
-      <input
-        v-else
-        :value="modelValue.seller_address"
-        type="text"
-        class="form-input font-mono"
-        placeholder="ckb1q..."
-        @input="update('seller_address', ($event.target as HTMLInputElement).value)"
-      >
-      <span
-        v-if="!wallets || wallets.length === 0"
-        class="form-hint"
-      >{{ t('orders.noWalletsUnlocked') }}</span>
+
+    <!-- Password prompt — shown when wallet needs unlocking at confirm time -->
+    <div
+      v-if="needsUnlock"
+      class="form-group"
+    >
+      <label class="form-label">{{ t('orders.selectSellerAddr') }}</label>
+      <div class="locked-section">
+        <p class="locked-msg">
+          🔒 {{ t('orders.walletLockedForMatch') }}
+        </p>
+        <div class="unlock-row">
+          <input
+            v-model="unlockPassword"
+            type="password"
+            class="form-input unlock-input"
+            :placeholder="t('orders.unlockPasswordPlaceholder')"
+            @keydown.enter="handleUnlock"
+          >
+          <button
+            type="button"
+            class="btn-unlock"
+            :disabled="unlocking || !unlockPassword.trim()"
+            @click="handleUnlock"
+          >
+            <span
+              v-if="unlocking"
+              class="spinner"
+            />
+            {{ unlocking ? t('orders.unlocking') : t('orders.unlockAndContinue') }}
+          </button>
+        </div>
+        <span
+          v-if="unlockError"
+          class="unlock-error"
+        >{{ unlockError }}</span>
+      </div>
+      <p class="form-note">
+        {{ t('orders.channelAutoNote') }}
+      </p>
     </div>
-    <p class="form-note">
-      {{ t('orders.channelAutoNote') }}
-    </p>
+
+    <!-- Normal address selection -->
+    <template v-else>
+      <div class="form-group">
+        <label
+          class="form-label"
+          :title="modelValue.seller_address"
+        >{{ t('orders.selectSellerAddr') }}</label>
+
+        <WalletSelector
+          v-if="walletsLoading || (wallets && wallets.length > 0)"
+          :model-value="modelValue.seller_address"
+          :wallets="wallets ?? []"
+          :loading="walletsLoading ?? false"
+          :placeholder="t('orders.selectSellerAddr')"
+          @update:model-value="update('seller_address', $event)"
+        />
+        <input
+          v-else
+          :value="modelValue.seller_address"
+          type="text"
+          class="form-input font-mono"
+          placeholder="ckb1q..."
+          @input="update('seller_address', ($event.target as HTMLInputElement).value)"
+        >
+        <span
+          v-if="!walletsLoading && (!wallets || wallets.length === 0)"
+          class="form-hint"
+        >{{ t('orders.noWalletsUnlocked') }}</span>
+      </div>
+      <p class="form-note">
+        {{ t('orders.channelAutoNote') }}
+      </p>
+    </template>
   </div>
 </template>
 
@@ -114,15 +161,6 @@ function update(field: string, value: string | number) {
   color: var(--text-disabled);
 }
 
-.form-select {
-  cursor: pointer;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%23888'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 30px;
-}
-
 .form-hint {
   font-size: var(--fs-small);
   color: var(--text-disabled);
@@ -147,4 +185,60 @@ function update(field: string, value: string | number) {
   word-break: break-all;
   text-align: center;
 }
+
+/* ── Password prompt ── */
+.locked-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.locked-msg {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
+  text-align: center;
+}
+.unlock-row {
+  display: flex;
+  gap: var(--space-xs);
+  width: 100%;
+}
+.unlock-input {
+  flex: 1;
+  text-align: left;
+}
+.btn-unlock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: 36px;
+  padding: 0 var(--space-md);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--primary-500);
+  color: #fff;
+  white-space: nowrap;
+  transition: background var(--transition-base);
+}
+.btn-unlock:hover:not(:disabled) { background: var(--primary-400); }
+.btn-unlock:disabled { opacity: 0.6; cursor: not-allowed; }
+.unlock-error {
+  font-size: var(--fs-small);
+  color: var(--danger);
+}
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>

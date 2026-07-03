@@ -374,6 +374,7 @@ impl ChainProvider for RealChainProvider {
                     state_name: Self::channel_state_name(&ch.state),
                     is_public: ch.is_public,
                     enabled: ch.enabled,
+                    created_at: ch.created_at,
                 }
             })
             .collect();
@@ -464,7 +465,10 @@ impl ChainProvider for RealChainProvider {
     }
 
     async fn get_transaction(&self, tx_hash: &str) -> Result<TransactionInfo, AppError> {
+        use crate::services::chain_provider::{TxInputInfo, TxOutputInfo};
+        use ckb_cinnabar_calculator::re_exports::ckb_jsonrpc_types::Either;
         use ckb_cinnabar_calculator::rpc::RPC;
+
         let hash: ckb_cinnabar_calculator::re_exports::ckb_types::H256 = tx_hash
             .parse()
             .map_err(|_| AppError::ChainError("invalid tx hash".into()))?;
@@ -476,23 +480,58 @@ impl ChainProvider for RealChainProvider {
         {
             Some(tx) => {
                 let block = tx.tx_status.block_number.unwrap_or_default();
-                // Serialize the full transaction view as JSON for the hex field
-                // (extraction walker uses block_number, tx_hex is for debugging).
-                let tx_hex = tx
+
+                // Extract structured I/O from the transaction view
+                let (inputs, outputs) = tx
                     .transaction
                     .as_ref()
-                    .map(|t| {
-                        hex::encode(
-                            serde_json::to_string(&t.inner)
-                                .unwrap_or_default()
-                                .as_bytes(),
-                        )
+                    .and_then(|rf| match &rf.inner {
+                        Either::Left(txv) => Some(&txv.inner),
+                        Either::Right(_) => None,
+                    })
+                    .map(|inner| {
+                        let inputs: Vec<TxInputInfo> = inner
+                            .inputs
+                            .iter()
+                            .map(|input| TxInputInfo {
+                                previous_tx_hash: hex::encode(
+                                    input.previous_output.tx_hash.as_bytes(),
+                                ),
+                                previous_index: input.previous_output.index.value(),
+                            })
+                            .collect();
+
+                        let outputs: Vec<TxOutputInfo> = inner
+                            .outputs
+                            .iter()
+                            .enumerate()
+                            .map(|(i, output)| {
+                                let data = inner
+                                    .outputs_data
+                                    .get(i)
+                                    .map(|d| hex::encode(d.as_bytes()))
+                                    .unwrap_or_default();
+                                let args_bytes = output.lock.args.as_bytes();
+                                TxOutputInfo {
+                                    capacity: output.capacity.value(),
+                                    lock_code_hash: hex::encode(output.lock.code_hash.as_bytes()),
+                                    lock_hash_type: format!("{:?}", output.lock.hash_type),
+                                    lock_args_hex: hex::encode(args_bytes),
+                                    lock_args_len: args_bytes.len(),
+                                    data_hex: data,
+                                }
+                            })
+                            .collect();
+
+                        (inputs, outputs)
                     })
                     .unwrap_or_default();
+
                 Ok(TransactionInfo {
                     tx_hash: tx_hash.to_string(),
                     block_number: block.value(),
-                    tx_hex,
+                    inputs,
+                    outputs,
                 })
             }
             None => Err(AppError::NotFound(format!(

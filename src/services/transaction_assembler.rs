@@ -31,8 +31,20 @@ use opticrum_calculator::{
 };
 use secp256k1::SecretKey;
 use std::str::FromStr;
+use std::time::Duration;
 
 use crate::error::AppError;
+
+/// Number of block confirmations to wait for before considering a
+/// transaction final. Set to 1 so the tx is committed to at least one
+/// block — without this the caller receives a tx_hash that may still
+/// be sitting in the mempool (or may never be mined).
+const CONFIRM_COUNT: u8 = 1;
+
+/// Maximum time to wait for a transaction to be committed.
+/// Prevents the server from hanging indefinitely if the CKB node
+/// never mines the transaction.
+const CONFIRM_TIMEOUT_SECS: u64 = 300;
 
 /// High-level transaction assembler that produces real on-chain transactions.
 ///
@@ -89,7 +101,11 @@ impl TransactionAssembler {
             .map_err(Self::map_err)?;
 
         let tx_hash = tx
-            .send_and_wait(&self.rpc, 0, None)
+            .send_and_wait(
+                &self.rpc,
+                CONFIRM_COUNT,
+                Some(Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+            )
             .await
             .map_err(Self::map_err)?;
 
@@ -113,18 +129,19 @@ impl TransactionAssembler {
 
         let build_instruction =
             opticrum_calc::extract_rent(seller_addr.clone(), match_info, tip_block);
-
-        let calc = TransactionCalculator::new(vec![build_instruction]);
-        let (mut skeleton, _log) = calc.new_skeleton(&self.rpc).await.map_err(Self::map_err)?;
-
-        let sign_instruction = balance_and_sign(&seller_addr, *seller_secret_key, self.fee_rate);
-        let calc = TransactionCalculator::new(vec![sign_instruction]);
-        calc.apply_skeleton(&self.rpc, &mut skeleton)
+        let complete = DefaultInstruction::new(vec![Box::new(AddSecp256k1SighashCellDep {})]);
+        let balance = balance_and_sign(&seller_addr, *seller_secret_key, self.fee_rate);
+        let (tx, _) = TransactionCalculator::new(vec![build_instruction, complete, balance])
+            .new_skeleton(&self.rpc)
             .await
             .map_err(Self::map_err)?;
 
-        let tx_hash = skeleton
-            .send_and_wait(&self.rpc, 0, None)
+        let tx_hash = tx
+            .send_and_wait(
+                &self.rpc,
+                CONFIRM_COUNT,
+                Some(Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+            )
             .await
             .map_err(Self::map_err)?;
 
@@ -160,7 +177,11 @@ impl TransactionAssembler {
             .map_err(Self::map_err)?;
 
         let tx_hash = skeleton
-            .send_and_wait(&self.rpc, 0, None)
+            .send_and_wait(
+                &self.rpc,
+                CONFIRM_COUNT,
+                Some(Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
+            )
             .await
             .map_err(Self::map_err)?;
 

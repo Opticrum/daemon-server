@@ -46,6 +46,18 @@ export function truncateAddress(addr: string, prefix = 6, suffix = 6): string {
 }
 
 /**
+ * Format channel age in days from a Unix millisecond timestamp.
+ * Returns "—" for null/undefined/0 values.
+ * Shows 1 decimal for < 1 day, whole number for ≥ 1 day.
+ */
+export function formatChannelAge(ms: number | null | undefined): string {
+  if (ms == null || ms === 0) return '—'
+  const days = (Date.now() - ms) / (1000 * 60 * 60 * 24)
+  if (days < 1) return days.toFixed(1) + 'd'
+  return Math.floor(days) + 'd'
+}
+
+/**
  * Build a blockchain explorer URL for a transaction hash.
  * Hardcoded base URLs for CKB mainnet and testnet explorers.
  */

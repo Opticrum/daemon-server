@@ -42,6 +42,12 @@ pub struct Config {
     )]
     pub keystore_path: String,
 
+    /// Password to auto-unlock the HD wallet on startup.
+    /// When set and the keystore file exists, the wallet is unlocked
+    /// automatically — no manual unlock step needed in the admin panel.
+    #[arg(long, env = "OPTICRUM_HD_WALLET_PASSWORD")]
+    pub hd_wallet_password: Option<String>,
+
     /// CKB RPC URL
     #[arg(
         long,
@@ -143,6 +149,7 @@ impl Default for Config {
             auto_match_max_escrow_blocks: 432_000,
             auto_match_interval_secs: 120,
             keystore_path: "data/keystore.json".into(),
+            hd_wallet_password: None,
         }
     }
 }
@@ -299,6 +306,7 @@ impl Config {
             } else {
                 file.keystore_path
             },
+            hd_wallet_password: cli.hd_wallet_password.or(file.hd_wallet_password),
         }
     }
 

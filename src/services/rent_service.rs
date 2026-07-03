@@ -29,6 +29,10 @@ pub struct ExtractRentResult {
 pub struct ExtractRentOptions<'a> {
     pub tx_assembler: Option<&'a TransactionAssembler>,
     pub signer: Option<&'a HdWalletSigner>,
+    /// Minimum shannons that must be extractable for the operation to proceed.
+    /// If the computed rent is below this threshold, the extraction is denied
+    /// with a friendly hint.
+    pub min_extraction_shannons: u64,
 }
 
 impl ExtractRentOptions<'_> {
@@ -36,6 +40,7 @@ impl ExtractRentOptions<'_> {
         ExtractRentOptions {
             tx_assembler: None,
             signer: None,
+            min_extraction_shannons: 0,
         }
     }
 }
@@ -105,6 +110,15 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
         return Err(AppError::BadRequest(
             "No rent to extract — too soon since last extraction".into(),
         ));
+    }
+
+    // Deny if below configured minimum — avoids dust extractions
+    if extractable < opts.min_extraction_shannons {
+        return Err(AppError::BadRequest(format!(
+            "Extractable rent ({extractable} shannons) is below the minimum threshold \
+             ({} shannons). Wait for more blocks to accumulate rent.",
+            opts.min_extraction_shannons
+        )));
     }
 
     let seller_address = hex::encode(match_info.match_args.seller_lock_hash);
@@ -210,6 +224,135 @@ fn resolve_seller_address(
         return Ok(wallet.ckb_address);
     }
     Ok(seller_address.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Extraction chain walking — on-chain transaction graph traversal
+// ---------------------------------------------------------------------------
+
+use opticrum_protocol::{MATCH_ARGS_LEN, ORDER_ARGS_LEN};
+
+/// Result of walking the extraction chain backward from a live match cell.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ExtractionChain {
+    /// Total shannons extracted across all extractions.
+    pub total_extracted: u64,
+    /// Individual extraction events (chronological: oldest first → newest last).
+    pub extractions: Vec<ExtractionEvent>,
+}
+
+/// A single rent extraction event discovered from on-chain data.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ExtractionEvent {
+    /// Transaction hash of the extraction transaction.
+    pub tx_hash: String,
+    /// Block number where this extraction was confirmed.
+    pub block_number: u64,
+    /// Amount extracted in this event (shannons), computed as
+    /// `consumed_cell.capacity - new_cell.capacity`.
+    pub extracted_amount: u64,
+}
+
+/// Walk backward through the CKB transaction graph to reconstruct extraction
+/// history for a match cell.
+///
+/// # Algorithm
+///
+/// 1. Start with the current live match cell at `(tx_hash, index)`.
+/// 2. Fetch the transaction that created this cell.
+/// 3. Check each input's previous_output — if it points to a cell with the
+///    **same lock script** (same `code_hash`, same `hash_type`, 133-byte args
+///    = `MatchArgs`), this transaction is an **extraction**. Record the event
+///    using `consumed_capacity - new_capacity` as the extracted amount, then
+///    recurse with the consumed cell's outpoint.
+/// 4. If an input points to a cell with the same `code_hash`/`hash_type` but
+///    **65-byte args** (`OrderArgs`), this is the **original match creation**
+///    transaction. Stop.
+/// 5. The events are collected newest-first and reversed to chronological
+///    order before returning.
+pub async fn walk_extraction_chain<P: ChainProvider + ?Sized>(
+    provider: &P,
+    match_info: &MatchInfo,
+) -> Result<ExtractionChain, AppError> {
+    let mut extractions: Vec<ExtractionEvent> = Vec::new();
+    let mut current_tx_hash = hex::encode(match_info.match_outpoint.tx_hash);
+    let mut current_index = match_info.match_outpoint.index;
+
+    loop {
+        let tx = match provider.get_transaction(&current_tx_hash).await {
+            Ok(tx) => tx,
+            Err(_) => break, // RPC unavailable or tx not found — return what we have
+        };
+
+        let output = match tx.outputs.get(current_index as usize) {
+            Some(o) => o,
+            None => break,
+        };
+
+        let mut found_continuation = false;
+        let mut reached_creation = false;
+
+        for input in &tx.inputs {
+            let prev_tx = match provider.get_transaction(&input.previous_tx_hash).await {
+                Ok(tx) => tx,
+                Err(_) => continue, // skip inputs we can't inspect
+            };
+
+            let prev_output = match prev_tx.outputs.get(input.previous_index as usize) {
+                Some(o) => o,
+                None => continue,
+            };
+
+            // Same Opticrum lock script?
+            if prev_output.lock_code_hash == output.lock_code_hash
+                && prev_output.lock_hash_type == output.lock_hash_type
+            {
+                if prev_output.lock_args_len == MATCH_ARGS_LEN {
+                    // Previous match cell → this tx is an EXTRACTION.
+                    let consumed_capacity = prev_output.capacity;
+                    let new_capacity = output.capacity;
+                    let extracted = consumed_capacity.saturating_sub(new_capacity);
+
+                    extractions.push(ExtractionEvent {
+                        tx_hash: current_tx_hash.clone(),
+                        block_number: tx.block_number,
+                        extracted_amount: extracted,
+                    });
+
+                    // Recurse: walk back to the previous match cell
+                    current_tx_hash = input.previous_tx_hash.clone();
+                    current_index = input.previous_index;
+                    found_continuation = true;
+                    break;
+                } else if prev_output.lock_args_len == ORDER_ARGS_LEN {
+                    // Order cell input → this tx is the MATCH CREATION.
+                    // We've reached the beginning of the chain.
+                    reached_creation = true;
+                    found_continuation = true;
+                    break;
+                }
+            }
+        }
+
+        if reached_creation {
+            break;
+        }
+
+        if !found_continuation {
+            // Neither an extraction nor a creation — reached a non-Opticrum
+            // origin or the chain is broken. Stop.
+            break;
+        }
+    }
+
+    // Reverse to chronological order (oldest first).
+    extractions.reverse();
+    let total_extracted = extractions.iter().map(|e| e.extracted_amount).sum();
+
+    Ok(ExtractionChain {
+        total_extracted,
+        extractions,
+    })
 }
 
 #[cfg(test)]

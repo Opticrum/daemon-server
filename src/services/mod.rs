@@ -7,7 +7,6 @@ pub mod address;
 pub mod chain_provider;
 pub mod console;
 pub mod crypto;
-pub mod external_signer;
 pub mod hd_wallet;
 pub mod hd_wallet_signer;
 pub mod internal_signer;

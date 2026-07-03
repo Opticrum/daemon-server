@@ -20,6 +20,7 @@ async fn full_match_flow_reuses_existing_channel() {
         state_name: "ChannelReady".into(),
         is_public: true,
         enabled: true,
+        created_at: 0,
     });
 
     // The match_order flow will scan_orders (empty), so the order won't be found.

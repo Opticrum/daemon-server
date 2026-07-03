@@ -31,7 +31,7 @@ const loading = ref(false);
 const scanned = ref(false);
 const error = ref<string | null>(null);
 const network = ref("testnet");
-const signerWallets = ref<SignerWalletItem[]>([]);
+
 const matchPhase = ref<"select" | "opening" | "waiting">("select");
 const matchForm = ref<MatchOrderRequest & { tx_hash: string }>({
   tx_hash: "",
@@ -211,31 +211,95 @@ function showProgressModal() {
 }
 
 async function showMatchModal(order: OrderScanItem) {
-  // Load available HD wallet addresses for the seller selector.
-  try {
-    signerWallets.value = await api.getSignerWallets();
-  } catch (e) {
-    console.error("Failed to load signer wallets:", e);
-    signerWallets.value = [];
-  }
+  const modalData = reactive({
+    wallets: [] as SignerWalletItem[],
+    walletsLoading: true,
+    needsUnlock: false,
+    unlocking: false,
+    unlockError: '',
+  });
 
   matchForm.value = {
     tx_hash: order.tx_hash,
     order_output_index: order.output_index,
-    seller_address:
-      signerWallets.value.length > 0 ? signerWallets.value[0].ckb_address : "",
+    seller_address: "",
   };
   matchPhase.value = "select";
+
+  async function handleUnlock(password: string) {
+    modalData.unlocking = true;
+    modalData.unlockError = '';
+    try {
+      await api.unlockWallet({ password });
+      modalData.needsUnlock = false;
+      modal.confirmText.value = t("orders.matchConfirm");
+      // Reload wallets — signer is now unlocked.
+      const wallets = await api.getSignerWallets();
+      modalData.wallets.splice(0, modalData.wallets.length, ...wallets);
+      if (!matchForm.value.seller_address && wallets.length > 0) {
+        matchForm.value = {
+          ...matchForm.value,
+          seller_address: wallets[0].ckb_address,
+        };
+      }
+      // Auto-proceed with the match now that the wallet is unlocked.
+      triggerMatch();
+    } catch (e: any) {
+      modalData.unlockError = e.message || t("orders.matchFailed");
+    } finally {
+      modalData.unlocking = false;
+    }
+  }
+
+  async function triggerMatch() {
+    const f = matchForm.value;
+    if (!f.seller_address) {
+      toast.warning(t("orders.fillAllParams"));
+      return;
+    }
+
+    modal.hide();
+    await new Promise((r) => setTimeout(r, 200));
+    matchPhase.value = "opening";
+    showProgressModal();
+
+    const phaseTimer = setTimeout(() => {
+      matchPhase.value = "waiting";
+    }, 5000);
+
+    try {
+      const result = await api.matchOrder(f.tx_hash, {
+        order_output_index: f.order_output_index,
+        seller_address: f.seller_address,
+      });
+      clearTimeout(phaseTimer);
+      modal.hide();
+      toast.success(
+        `${t("orders.matchSuccess")}! TX: ${truncateAddress(result.tx_hash)}`,
+      );
+      await scanOrders();
+    } catch (e: any) {
+      console.error("Failed to match order:", e);
+      clearTimeout(phaseTimer);
+      modal.hide();
+      toast.error(e.message || t("orders.matchFailed"));
+    }
+  }
 
   modal.show({
     title: t("orders.matchTitle"),
     content: MatchOrderForm,
     contentProps: {
       modelValue: matchForm.value,
-      wallets: signerWallets.value,
+      get wallets() { return modalData.wallets },
+      get walletsLoading() { return modalData.walletsLoading },
+      get needsUnlock() { return modalData.needsUnlock },
+      get unlocking() { return modalData.unlocking },
+      get unlockError() { return modalData.unlockError },
       "onUpdate:modelValue": (v: typeof matchForm.value) => {
         matchForm.value = v;
       },
+      "onUnlock": handleUnlock,
     },
     confirmText: t("orders.matchConfirm"),
     onConfirm: async () => {
@@ -245,37 +309,42 @@ async function showMatchModal(order: OrderScanItem) {
         return Promise.reject();
       }
 
-      // Switch to progress modal (fixed, non-closable).
-      modal.hide();
-      await new Promise((r) => setTimeout(r, 200)); // let hide animation complete
-      matchPhase.value = "opening";
-      showProgressModal();
-
-      // Transition to "waiting" phase after a few seconds if still running.
-      const phaseTimer = setTimeout(() => {
-        matchPhase.value = "waiting";
-      }, 5000);
-
+      // Check if the wallet is locked. If so, switch to password prompt
+      // IN the match dialog instead of immediately failing.
       try {
-        const result = await api.matchOrder(f.tx_hash, {
-          order_output_index: f.order_output_index,
-          seller_address: f.seller_address,
-        });
-        clearTimeout(phaseTimer);
-        modal.hide();
-        toast.success(
-          `${t("orders.matchSuccess")}! TX: ${truncateAddress(result.tx_hash)}`,
-        );
-        await scanOrders();
-      } catch (e: any) {
-        console.error("Failed to match order:", e);
-        clearTimeout(phaseTimer);
-        modal.hide();
-        toast.error(e.message || t("orders.matchFailed"));
+        const session = await api.getWalletSession();
+        if (!session.active) {
+          modalData.needsUnlock = true;
+          modal.confirmText.value = null;
+          return Promise.reject();
+        }
+      } catch {
+        // Can't check — proceed; the match endpoint will handle the error.
       }
+
+      await triggerMatch();
+      return Promise.reject(); // triggerMatch handles its own flow
     },
     onCancel: () => modal.hide(),
   });
+
+  // Load wallets in the background — always show addresses regardless of lock state.
+  api.getSignerWallets()
+    .then((wallets) => {
+      modalData.wallets.splice(0, modalData.wallets.length, ...wallets);
+      if (!matchForm.value.seller_address && wallets.length > 0) {
+        matchForm.value = {
+          ...matchForm.value,
+          seller_address: wallets[0].ckb_address,
+        };
+      }
+    })
+    .catch((e) => {
+      console.error("Failed to load signer wallets:", e);
+    })
+    .finally(() => {
+      modalData.walletsLoading = false;
+    });
 }
 
 onMounted(async () => {

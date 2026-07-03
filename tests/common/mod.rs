@@ -77,6 +77,7 @@ pub fn test_app_state() -> rust_server::api::AppState {
         auto_match_max_escrow_blocks: 432_000,
         auto_match_interval_secs: 120,
         keystore_path: "data/keystore.json".to_string(),
+        hd_wallet_password: None,
     };
 
     let scheduler_state = std::sync::Arc::new(std::sync::RwLock::new(

@@ -189,6 +189,8 @@ pub struct FiberChannelInfo {
     pub is_public: bool,
     /// Whether the channel is enabled for routing.
     pub enabled: bool,
+    /// Channel creation time in Unix milliseconds from the Fiber node.
+    pub created_at: u64,
 }
 
 /// Summary of an on-chain opticrum Match cell linked to a Fiber channel.
@@ -250,6 +252,32 @@ pub struct FiberNodeInfo {
     pub udt_cfg_infos: Vec<serde_json::Value>,
 }
 
+/// An input reference in a CKB transaction — points to a previous output.
+#[derive(Clone, Debug)]
+pub struct TxInputInfo {
+    /// Hex-encoded tx_hash of the previous transaction.
+    pub previous_tx_hash: String,
+    /// Output index in the previous transaction.
+    pub previous_index: u32,
+}
+
+/// An output in a CKB transaction with its lock script and data.
+#[derive(Clone, Debug)]
+pub struct TxOutputInfo {
+    /// Capacity in shannons.
+    pub capacity: u64,
+    /// Hex-encoded lock script code_hash (H256).
+    pub lock_code_hash: String,
+    /// Lock script hash type: "Type", "Data", "Data1", or "Data2".
+    pub lock_hash_type: String,
+    /// Hex-encoded lock script args bytes.
+    pub lock_args_hex: String,
+    /// Byte length of lock args (65 = Order cell, 133 = Match cell).
+    pub lock_args_len: usize,
+    /// Hex-encoded cell data (e.g. MatchData for match cells).
+    pub data_hex: String,
+}
+
 /// Full transaction data retrieved from the CKB chain.
 ///
 /// Used for extraction backtracking — walking the transaction graph
@@ -260,8 +288,23 @@ pub struct TransactionInfo {
     pub tx_hash: String,
     /// Block number where the transaction was confirmed, or 0 if pending.
     pub block_number: u64,
-    /// Raw transaction as hex-encoded bytes.
-    pub tx_hex: String,
+    /// Consumed cell references (inputs).
+    pub inputs: Vec<TxInputInfo>,
+    /// Created cells with lock scripts and data (outputs).
+    pub outputs: Vec<TxOutputInfo>,
+}
+
+impl TransactionInfo {
+    /// Construct a minimal TransactionInfo from tx_hex for backward
+    /// compatibility with callers that only have raw hex.
+    pub fn from_hex(tx_hash: String, block_number: u64, _tx_hex: &str) -> Self {
+        Self {
+            tx_hash,
+            block_number,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+        }
+    }
 }
 
 // OrderInfo and MatchInfo are imported from opticrum_calculator —

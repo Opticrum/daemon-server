@@ -65,6 +65,7 @@ pub async fn run_extraction_cycle(
     let opts = ExtractRentOptions {
         tx_assembler,
         signer,
+        min_extraction_shannons: min_extraction_amount_shannons,
     };
 
     let mut total_extracted = 0u64;

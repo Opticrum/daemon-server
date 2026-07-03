@@ -20,8 +20,7 @@ use std::sync::{Arc, RwLock};
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::match_service::{
-    wait_for_channel_ready, CHANNEL_CELL_OCCUPIED_RESERVE,
-    CHANNEL_READY_TIMEOUT_SECS,
+    wait_for_channel_ready, CHANNEL_CELL_OCCUPIED_RESERVE, CHANNEL_READY_TIMEOUT_SECS,
 };
 use crate::services::signer::{SignRequest, Signer};
 use crate::services::RuntimeConfig;

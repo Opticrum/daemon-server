@@ -19,10 +19,14 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   emptyText?: string
   pageSize?: number
+  expandedRowKeys?: Set<string | number>
+  rowKey?: string | ((row: T) => string | number)
 }>(), {
   loading: false,
   emptyText: '',
   pageSize: 15,
+  expandedRowKeys: () => new Set(),
+  rowKey: undefined,
 })
 
 const sortKey = ref<string | null>(null)
@@ -47,6 +51,12 @@ const paginatedRows = computed(() => {
   const start = (currentPage.value - 1) * props.pageSize
   return sortedRows.value.slice(start, start + props.pageSize)
 })
+
+function getRowKey(row: T, index: number): string | number {
+  if (!props.rowKey) return index
+  if (typeof props.rowKey === 'function') return props.rowKey(row)
+  return String(row[props.rowKey] ?? index)
+}
 
 function toggleSort(key: string) {
   if (sortKey.value === key) {
@@ -122,24 +132,37 @@ const pageNumbers = computed(() => {
             {{ emptyText || t('common.noData') }}
           </td>
         </tr>
-        <tr
+        <template
           v-for="(row, i) in paginatedRows"
           :key="i"
         >
-          <td
-            v-for="col in columns"
-            :key="col.key"
-            :class="[`align-${col.align || 'left'}`, `cell-${col.key}`]"
-          >
-            <slot
-              :name="`cell-${col.key}`"
-              :row="row"
-              :value="row[col.key]"
+          <tr :class="{ 'row-expanded': expandedRowKeys.has(getRowKey(row, i)) }">
+            <td
+              v-for="col in columns"
+              :key="col.key"
+              :class="[`align-${col.align || 'left'}`, `cell-${col.key}`]"
             >
-              {{ row[col.key] }}
-            </slot>
-          </td>
-        </tr>
+              <slot
+                :name="`cell-${col.key}`"
+                :row="row"
+                :value="row[col.key]"
+              >
+                {{ row[col.key] }}
+              </slot>
+            </td>
+          </tr>
+          <tr
+            v-if="expandedRowKeys.has(getRowKey(row, i))"
+            class="expanded-row"
+          >
+            <td :colspan="columns.length">
+              <slot
+                name="expanded"
+                :row="row"
+              />
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
 
@@ -228,6 +251,19 @@ const pageNumbers = computed(() => {
 }
 .data-table tbody tr:last-child td {
   border-bottom: none;
+}
+
+/* Expandable rows */
+.data-table tbody tr.row-expanded td {
+  border-bottom: none;
+}
+.data-table tbody tr.expanded-row td {
+  padding: 0;
+  background: var(--gray-25, #fafbfc);
+  border-bottom: 1px solid var(--border-light);
+}
+.data-table tbody tr.expanded-row:hover td {
+  background: var(--gray-25, #fafbfc);
 }
 
 .data-table th.align-left,

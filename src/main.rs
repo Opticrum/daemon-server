@@ -80,6 +80,28 @@ async fn main() -> std::io::Result<()> {
     let signer: Arc<HdWalletSigner> = Arc::new(HdWalletSigner::new());
     let wallet_session: Arc<WalletSessionManager> = Arc::new(WalletSessionManager::default());
 
+    // Auto-unlock the HD wallet on startup when a password is configured.
+    // This eliminates the need to manually unlock via the admin panel after
+    // every server restart. load_keys reads from the database (not the
+    // keystore file), so we don't gate on keystore existence.
+    if let Some(ref password) = config.hd_wallet_password {
+        match signer.load_keys(&pool, password) {
+            Ok(()) => {
+                info!(
+                    "HD wallet auto-unlocked ({} keys loaded)",
+                    signer.wallet_records().len()
+                );
+            }
+            Err(e) => {
+                error!(
+                    "HD wallet auto-unlock failed: {} — start the server with the \
+                     correct --hd-wallet-password or unlock via the admin panel",
+                    e
+                );
+            }
+        }
+    }
+
     // Consolidated startup summary
     info!(
         version = env!("CARGO_PKG_VERSION"),

@@ -1,177 +1,230 @@
 <script setup lang="ts">
-import { ref, onMounted, inject, computed, h } from 'vue'
-import { useApi } from '@/composables/useApi'
-import { useI18n } from '@/composables/useI18n'
-import { useFiber } from '@/composables/useFiber'
-import { truncateAddress, formatCKB } from '@/utils/format'
-import DataTable, { type ColumnDef } from '@/components/ui/DataTable.vue'
-import StatusTag from '@/components/ui/StatusTag.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
-import MatchDetailPanel, { type DetailSection } from '@/components/ui/MatchDetailPanel.vue'
-import type { ChannelWithMatch, ChannelMatchInfo } from '@/types/api'
+import { ref, onMounted, inject, computed, h } from "vue";
+import { useApi } from "@/composables/useApi";
+import { useI18n } from "@/composables/useI18n";
+import { useFiber } from "@/composables/useFiber";
+import { truncateAddress, formatCKB, formatChannelAge } from "@/utils/format";
+import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
+import StatusTag from "@/components/ui/StatusTag.vue";
+import EmptyState from "@/components/ui/EmptyState.vue";
+import MatchDetailPanel, {
+  type DetailSection,
+} from "@/components/ui/MatchDetailPanel.vue";
+import type { ChannelWithMatch, ChannelMatchInfo } from "@/types/api";
 
-const api = useApi()
-const { t } = useI18n()
-const toast = inject<any>('toast')!
-const modal = inject<any>('modal')!
+const api = useApi();
+const { t } = useI18n();
+const toast = inject<any>("toast")!;
+const modal = inject<any>("modal")!;
 
-const { rpcUrl, nodeInfo, connected, loading: nodeLoading, fetchNodeInfo } = useFiber()
+const {
+  rpcUrl,
+  nodeInfo,
+  connected,
+  loading: nodeLoading,
+  fetchNodeInfo,
+} = useFiber();
 
-const channels = ref<ChannelWithMatch[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
-const fiberKeyFilter = ref('')
-const nodeExpanded = ref(false)
+const channels = ref<ChannelWithMatch[]>([]);
+const loading = ref(false);
+const error = ref<string | null>(null);
+const fiberKeyFilter = ref("");
+const nodeExpanded = ref(false);
 
 // Auto-load everything on mount
 onMounted(async () => {
-  fetchNodeInfo()
-  await loadChannels()
-})
+  fetchNodeInfo();
+  await loadChannels();
+});
 
 async function loadChannels() {
-  loading.value = true
-  error.value = null
+  loading.value = true;
+  error.value = null;
   try {
-    channels.value = await api.scanChannels()
+    channels.value = await api.scanChannels();
   } catch (e: any) {
-    console.error('Failed to load channels:', e);
-    error.value = e.message || t('channels.loadFailed')
-    toast.error(error.value!)
+    console.error("Failed to load channels:", e);
+    error.value = e.message || t("channels.loadFailed");
+    toast.error(error.value!);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
 }
 
 // Filter channels by counterparty fiber key substring
 const filteredChannels = computed(() => {
-  if (!fiberKeyFilter.value.trim()) return channels.value
-  const q = fiberKeyFilter.value.trim().toLowerCase()
-  return channels.value.filter(c =>
-    c.counterparty_fiber_key.toLowerCase().includes(q) ||
-    c.tx_hash.toLowerCase().includes(q)
-  )
-})
+  if (!fiberKeyFilter.value.trim()) return channels.value;
+  const q = fiberKeyFilter.value.trim().toLowerCase();
+  return channels.value.filter(
+    (c) =>
+      c.counterparty_fiber_key.toLowerCase().includes(q) ||
+      c.tx_hash.toLowerCase().includes(q),
+  );
+});
 
 const columns: ColumnDef[] = [
-  { key: 'channel_id', label: t('channels.channelId'), align: 'center' },
-  { key: 'counterparty_fiber_key', label: t('channels.counterpartyFiberKey'), align: 'center' },
-  { key: 'capacity', label: t('channels.totalCapacity'), sortable: true, align: 'center' },
-  { key: 'state_name', label: t('channels.stateName'), align: 'center' },
-  { key: 'match_status', label: t('channels.matchStatus'), align: 'center' },
-  { key: 'actions', label: t('common.actions'), align: 'center' },
-]
+  { key: "channel_id", label: t("channels.channelId"), align: "center" },
+  {
+    key: "counterparty_fiber_key",
+    label: t("channels.counterpartyFiberKey"),
+    align: "center",
+  },
+  {
+    key: "capacity",
+    label: t("channels.totalCapacity"),
+    sortable: true,
+    align: "center",
+  },
+  { key: "state_name", label: t("channels.stateName"), align: "center" },
+  {
+    key: "created_at",
+    label: t("channels.age"),
+    sortable: true,
+    align: "center",
+  },
+  { key: "match_status", label: t("channels.matchStatus"), align: "center" },
+  { key: "actions", label: t("common.actions"), align: "center" },
+];
 
 function hexToNum(hex: string): number {
-  return parseInt(hex, 16) || 0
+  return parseInt(hex, 16) || 0;
 }
 
 function channelStateVariant(name: string): string {
   switch (name) {
-    case 'ChannelReady': return 'live'
-    case 'ShuttingDown': return 'warning'
-    case 'Closed': return 'destroyed'
-    default: return 'pending'
+    case "ChannelReady":
+      return "live";
+    case "ShuttingDown":
+      return "warning";
+    case "Closed":
+      return "destroyed";
+    default:
+      return "pending";
   }
 }
 
 async function copyToClipboard(text: string) {
   try {
-    await navigator.clipboard.writeText(text)
-    toast.success(t('common.copied'))
+    await navigator.clipboard.writeText(text);
+    toast.success(t("common.copied"));
   } catch {
-    console.warn('Clipboard API unavailable, using fallback');
+    console.warn("Clipboard API unavailable, using fallback");
     // Fallback for older browsers
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'; ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-    toast.success(t('common.copied'))
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    toast.success(t("common.copied"));
   }
 }
 
 async function closeChannel(channel: ChannelWithMatch) {
-  const channelId = channel.channel_id
+  const channelId = channel.channel_id;
   const confirmed = await modal.confirm(
-    t('channels.closeChannelWarning', { id: truncateAddress(channelId, 8, 8) }),
+    t("channels.closeChannelWarning", { id: truncateAddress(channelId, 8, 8) }),
     {
-      title: t('channels.closeChannelTitle'),
-      confirmText: t('channels.closeChannelConfirm'),
+      title: t("channels.closeChannelTitle"),
+      confirmText: t("channels.closeChannelConfirm"),
       danger: true,
     },
-  )
-  if (!confirmed) return
+  );
+  if (!confirmed) return;
   try {
-    await api.closeChannel(channelId)
-    toast.success(t('channels.closeSuccess'))
-    await loadChannels()
+    await api.closeChannel(channelId);
+    toast.success(t("channels.closeSuccess"));
+    await loadChannels();
   } catch (e: any) {
-    console.error('Failed to close channel:', e);
-    toast.error(e.message || t('channels.closeFailed'))
+    console.error("Failed to close channel:", e);
+    toast.error(e.message || t("channels.closeFailed"));
   }
 }
 
 async function deleteChannel(channel: ChannelWithMatch) {
-  const channelId = channel.channel_id
+  const channelId = channel.channel_id;
   const confirmed = await modal.confirm(
-    t('channels.deleteChannelWarning', { id: truncateAddress(channelId, 8, 8) }),
+    t("channels.deleteChannelWarning", {
+      id: truncateAddress(channelId, 8, 8),
+    }),
     {
-      title: t('channels.deleteChannelTitle'),
-      confirmText: t('channels.deleteChannelConfirm'),
+      title: t("channels.deleteChannelTitle"),
+      confirmText: t("channels.deleteChannelConfirm"),
       danger: true,
     },
-  )
-  if (!confirmed) return
+  );
+  if (!confirmed) return;
   try {
-    await api.deleteChannel(channelId)
-    toast.success(t('channels.deleteSuccess'))
-    await loadChannels()
+    await api.deleteChannel(channelId);
+    toast.success(t("channels.deleteSuccess"));
+    await loadChannels();
   } catch (e: any) {
-    console.error('Failed to delete channel:', e);
-    toast.error(e.message || t('channels.deleteFailed'))
+    console.error("Failed to delete channel:", e);
+    toast.error(e.message || t("channels.deleteFailed"));
   }
 }
 
 function showMatchDetail(channel: ChannelWithMatch) {
-  if (!channel.match_info) return
-  const info: ChannelMatchInfo = channel.match_info
+  if (!channel.match_info) return;
+  const info: ChannelMatchInfo = channel.match_info;
 
   const sections: DetailSection[] = [
     {
-      title: t('channels.matchTxInfo'),
+      title: t("channels.matchTxInfo"),
       fields: [
-        { label: t('common.txHash'), value: info.match_tx_hash, type: 'hash' },
-        { label: t('common.outputIndex'), value: String(info.match_output_index) },
-        { label: t('common.sellerLockHash'), value: info.seller_lock_hash, type: 'hash' },
+        { label: t("common.txHash"), value: info.match_tx_hash, type: "hash" },
+        {
+          label: t("common.outputIndex"),
+          value: String(info.match_output_index),
+        },
+        {
+          label: t("common.sellerLockHash"),
+          value: info.seller_lock_hash,
+          type: "hash",
+        },
       ],
     },
     {
-      title: t('channels.matchEconomics'),
+      title: t("channels.matchEconomics"),
       fields: [
-        { label: t('common.capacity'), value: formatCKB(info.ckb_capacity) },
-        { label: 'xUDT', value: info.xudt_amount > 0 ? `${info.xudt_amount} xUDT` : t('common.none') },
-        { label: t('common.ratePerBlock'), value: `${info.shannons_per_block} ${t('common.feeRateUnit')}` },
-        { label: t('matches.lastExtractionBlock'), value: String(info.last_extraction_block) },
+        { label: t("common.capacity"), value: formatCKB(info.ckb_capacity) },
+        {
+          label: "xUDT",
+          value:
+            info.xudt_amount > 0
+              ? `${info.xudt_amount} xUDT`
+              : t("common.none"),
+        },
+        {
+          label: t("common.ratePerBlock"),
+          value: `${info.shannons_per_block} ${t("common.feeRateUnit")}`,
+        },
+        {
+          label: t("matches.lastExtractionBlock"),
+          value:
+            info.last_extraction_block === 0
+              ? "N/A"
+              : String(info.last_extraction_block),
+        },
       ],
     },
-  ]
+  ];
 
   modal.show({
-    title: t('channels.matchDetailTitle'),
+    title: t("channels.matchDetailTitle"),
     wide: true,
     content: {
       components: { MatchDetailPanel },
       setup() {
-        return () => h(MatchDetailPanel, { sections })
+        return () => h(MatchDetailPanel, { sections });
       },
     },
     confirmText: null,
-    cancelText: t('common.close'),
+    cancelText: t("common.close"),
     onCancel: () => modal.hide(),
-  })
+  });
 }
 </script>
 
@@ -179,101 +232,104 @@ function showMatchDetail(channel: ChannelWithMatch) {
   <div class="page-channels">
     <div class="page-header">
       <h2 class="page-title">
-        {{ t('channels.title') }}
+        {{ t("channels.title") }}
       </h2>
     </div>
 
     <!-- Fiber Node Info Card (foldable) -->
     <div class="card node-info-card">
-      <div
-        class="card-header"
-        @click="nodeExpanded = !nodeExpanded"
-      >
+      <div class="card-header" @click="nodeExpanded = !nodeExpanded">
         <div class="card-header-left">
-          <span
-            class="fold-arrow"
-            :class="{ expanded: nodeExpanded }"
-          >&#9654;</span>
-          <h3>{{ t('channels.nodeInfo') }}</h3>
+          <span class="fold-arrow" :class="{ expanded: nodeExpanded }"
+            >&#9654;</span
+          >
+          <h3>{{ t("channels.nodeInfo") }}</h3>
         </div>
         <div class="card-header-right">
           <code
             v-if="!nodeLoading && nodeInfo"
             class="font-mono node-url-inline"
-          >{{ rpcUrl }}</code>
-          <span
-            v-if="nodeLoading"
-            class="spinner"
-          />
+            >{{ rpcUrl }}</code
+          >
+          <span v-if="nodeLoading" class="spinner" />
           <StatusTag
             v-else
             :status="connected ? 'live' : 'destroyed'"
-            :label="connected ? t('channels.connected') : t('channels.disconnected')"
+            :label="
+              connected ? t('channels.connected') : t('channels.disconnected')
+            "
           />
         </div>
       </div>
       <!-- Disconnected fallback -->
-      <div
-        v-if="!nodeLoading && !nodeInfo"
-        class="text-muted node-summary"
-      >
-        {{ t('channels.disconnected') }}
+      <div v-if="!nodeLoading && !nodeInfo" class="text-muted node-summary">
+        {{ t("channels.disconnected") }}
         <code
           v-if="rpcUrl"
           class="font-mono"
-          style="font-size:var(--fs-small); display:block; margin-top:var(--space-xs);"
-        >{{ rpcUrl }}</code>
+          style="
+            font-size: var(--fs-small);
+            display: block;
+            margin-top: var(--space-xs);
+          "
+          >{{ rpcUrl }}</code
+        >
       </div>
       <!-- Expanded details -->
-      <div
-        v-if="nodeExpanded && nodeInfo"
-        class="config-display"
-      >
+      <div v-if="nodeExpanded && nodeInfo" class="config-display">
         <div class="config-row">
-          <span class="config-label">{{ t('channels.nodeId') }}</span><code
+          <span class="config-label">{{ t("channels.nodeId") }}</span
+          ><code
             class="font-mono value-full"
-            style="font-size:var(--fs-caption)"
-          >{{ nodeInfo.pubkey }}</code>
+            style="font-size: var(--fs-caption)"
+            >{{ nodeInfo.pubkey }}</code
+          >
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t('channels.nodeVersion') }}</span><span>{{ nodeInfo.version }}</span>
+          <span class="config-label">{{ t("channels.nodeVersion") }}</span
+          ><span>{{ nodeInfo.version }}</span>
         </div>
-        <div
-          v-if="nodeInfo.addresses.length"
-          class="config-row"
-        >
-          <span class="config-label">{{ t('channels.nodeAddresses') }}</span>
+        <div v-if="nodeInfo.addresses.length" class="config-row">
+          <span class="config-label">{{ t("channels.nodeAddresses") }}</span>
           <div class="addresses-stack">
             <code
               v-for="(addr, i) in nodeInfo.addresses"
               :key="i"
               class="font-mono"
-              style="font-size:var(--fs-small)"
-            >{{ addr }}</code>
+              style="font-size: var(--fs-small)"
+              >{{ addr }}</code
+            >
           </div>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t('channels.channelCount') }}</span><span>{{ hexToNum(nodeInfo.channel_count) }}</span>
+          <span class="config-label">{{ t("channels.channelCount") }}</span
+          ><span>{{ hexToNum(nodeInfo.channel_count) }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t('channels.pendingChannelCount') }}</span><span>{{ hexToNum(nodeInfo.pending_channel_count) }}</span>
+          <span class="config-label">{{
+            t("channels.pendingChannelCount")
+          }}</span
+          ><span>{{ hexToNum(nodeInfo.pending_channel_count) }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t('channels.peerCount') }}</span><span>{{ hexToNum(nodeInfo.peers_count) }}</span>
+          <span class="config-label">{{ t("channels.peerCount") }}</span
+          ><span>{{ hexToNum(nodeInfo.peers_count) }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t('channels.chainHash') }}</span><code
+          <span class="config-label">{{ t("channels.chainHash") }}</span
+          ><code
             class="font-mono value-full"
-            style="font-size:var(--fs-caption)"
-          >{{ nodeInfo.chain_hash }}</code>
+            style="font-size: var(--fs-caption)"
+            >{{ nodeInfo.chain_hash }}</code
+          >
         </div>
       </div>
       <div
         v-if="nodeLoading"
         class="text-muted"
-        style="padding: var(--space-md) 0;"
+        style="padding: var(--space-md) 0"
       >
-        {{ t('common.loading') }}
+        {{ t("common.loading") }}
       </div>
     </div>
 
@@ -285,18 +341,11 @@ function showMatchDetail(channel: ChannelWithMatch) {
           type="text"
           class="search-input font-mono"
           :placeholder="t('channels.fiberKeyFilter')"
-        >
-      </div>
-      <button
-        class="btn btn-primary"
-        :disabled="loading"
-        @click="loadChannels"
-      >
-        <span
-          v-if="loading"
-          class="spinner"
         />
-        {{ loading ? t('channels.refreshing') : t('channels.refresh') }}
+      </div>
+      <button class="btn btn-primary" :disabled="loading" @click="loadChannels">
+        <span v-if="loading" class="spinner" />
+        {{ loading ? t("channels.refreshing") : t("channels.refresh") }}
       </button>
     </div>
 
@@ -320,14 +369,17 @@ function showMatchDetail(channel: ChannelWithMatch) {
       :loading="loading"
     >
       <template #cell-channel_id="{ value }">
-        <code class="font-mono">{{ truncateAddress(String(value), 8, 6) }}</code>
+        <code class="font-mono">{{
+          truncateAddress(String(value), 8, 6)
+        }}</code>
       </template>
       <template #cell-counterparty_fiber_key="{ value }">
         <code
           class="font-mono copyable fiber-key-cell"
           :title="String(value)"
           @click="copyToClipboard(String(value))"
-        >{{ truncateAddress(String(value), 20, 16) }}</code>
+          >{{ truncateAddress(String(value), 12, 10) }}</code
+        >
       </template>
       <template #cell-capacity="{ value }">
         {{ formatCKB(Number(value)) }}
@@ -338,6 +390,11 @@ function showMatchDetail(channel: ChannelWithMatch) {
           :label="String(value)"
         />
       </template>
+      <template #cell-created_at="{ value }">
+        <span class="font-mono created-at-cell">{{
+          formatChannelAge(Number(value))
+        }}</span>
+      </template>
       <template #cell-match_status="{ row }">
         <button
           v-if="row.match_info"
@@ -346,12 +403,9 @@ function showMatchDetail(channel: ChannelWithMatch) {
           @click="showMatchDetail(row)"
         >
           <span class="match-status-dot" />
-          <span>{{ t('channels.matchFound') }}</span>
+          <span>{{ t("channels.matchFound") }}</span>
         </button>
-        <span
-          v-else
-          class="match-none"
-        >{{ t('channels.matchNotFound') }}</span>
+        <span v-else class="match-none">{{ t("channels.matchNotFound") }}</span>
       </template>
       <template #cell-actions="{ row }">
         <button
@@ -359,14 +413,14 @@ function showMatchDetail(channel: ChannelWithMatch) {
           class="btn btn-sm btn-danger"
           @click="closeChannel(row)"
         >
-          {{ t('channels.closeChannel') }}
+          {{ t("channels.closeChannel") }}
         </button>
         <button
           v-else-if="row.state_name === 'Closed'"
           class="btn btn-sm btn-default"
           @click="deleteChannel(row)"
         >
-          {{ t('channels.deleteChannel') }}
+          {{ t("channels.deleteChannel") }}
         </button>
       </template>
     </DataTable>
@@ -374,43 +428,212 @@ function showMatchDetail(channel: ChannelWithMatch) {
 </template>
 
 <style scoped>
-.page-channels { max-width: 1200px; margin: 0 auto; }
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-xl); }
-.page-title { font-size: var(--fs-h2); font-weight: var(--fw-h2); line-height: var(--lh-h2); color: var(--text-primary); }
+.page-channels {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xl);
+}
+.page-title {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-h2);
+  line-height: var(--lh-h2);
+  color: var(--text-primary);
+}
 
 /* Node Info Card */
-.node-info-card { margin-bottom: var(--space-xl); }
-.node-info-card .spinner { width: 16px; height: 16px; border-width: 2px; }
-.card { background: var(--bg-card); border-radius: var(--radius-lg); border: 1px solid var(--border-light); box-shadow: var(--shadow-base); padding: var(--space-xl); }
-.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); cursor: pointer; user-select: none; }
-.card-header:hover { opacity: 0.85; }
-.card-header-left { display: flex; align-items: center; gap: var(--space-sm); }
-.card-header-right { display: flex; align-items: center; gap: var(--space-sm); }
-.card-header h3 { font-size: var(--fs-h3); font-weight: var(--fw-h3); margin: 0; }
-.fold-arrow { display: inline-block; font-size: var(--fs-small); transition: transform var(--transition-base); color: var(--text-secondary); }
-.fold-arrow.expanded { transform: rotate(90deg); }
-.node-url-inline { font-size: var(--fs-caption); color: var(--text-secondary); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-summary { padding-bottom: var(--space-md); border-bottom: 1px solid var(--border-light); font-size: var(--fs-body); }
-.config-display { display: flex; flex-direction: column; gap: var(--space-md); }
-.config-row { display: flex; justify-content: space-between; align-items: flex-start; padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-light); font-size: var(--fs-body); }
-.config-row:last-child { border-bottom: none; }
-.config-label { color: var(--text-secondary); flex-shrink: 0; margin-right: var(--space-md); }
-.value-full { max-width: 70%; word-break: break-all; text-align: right; }
-.addresses-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; max-width: 70%; word-break: break-all; }
+.node-info-card {
+  margin-bottom: var(--space-xl);
+}
+.node-info-card .spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+.card {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-base);
+  padding: var(--space-xl);
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-lg);
+  cursor: pointer;
+  user-select: none;
+}
+.card-header:hover {
+  opacity: 0.85;
+}
+.card-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.card-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.card-header h3 {
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-h3);
+  margin: 0;
+}
+.fold-arrow {
+  display: inline-block;
+  font-size: var(--fs-small);
+  transition: transform var(--transition-base);
+  color: var(--text-secondary);
+}
+.fold-arrow.expanded {
+  transform: rotate(90deg);
+}
+.node-url-inline {
+  font-size: var(--fs-caption);
+  color: var(--text-secondary);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-summary {
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border-light);
+  font-size: var(--fs-body);
+}
+.config-display {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.config-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: var(--fs-body);
+}
+.config-row:last-child {
+  border-bottom: none;
+}
+.config-label {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  margin-right: var(--space-md);
+}
+.value-full {
+  max-width: 70%;
+  word-break: break-all;
+  text-align: right;
+}
+.addresses-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  max-width: 70%;
+  word-break: break-all;
+}
 
 /* Toolbar */
-.toolbar { display: flex; gap: var(--space-sm); margin-bottom: var(--space-xl); align-items: center; }
-.search-bar { flex: 1; display: flex; }
-.search-input { flex: 1; height: 36px; padding: 0 var(--space-sm); border: 1px solid var(--border-dark); border-radius: var(--radius-md); font-size: var(--fs-caption); color: var(--text-primary); background: var(--bg-card); outline: none; transition: border-color var(--transition-base), box-shadow var(--transition-base); }
-.search-input::placeholder { color: var(--text-disabled); font-family: var(--font-family); font-size: var(--fs-body); }
-.search-input:focus { border-color: var(--primary-500); box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2); }
-.btn { display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-md); height: 36px; border: none; border-radius: var(--radius-md); font-size: var(--fs-body); font-family: inherit; cursor: pointer; transition: all var(--transition-base); font-weight: 500; white-space: nowrap; }
-.btn-primary { background: var(--primary-500); color: #fff; } .btn-primary:hover:not(:disabled) { background: var(--primary-400); } .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-default { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-dark); }
-.btn-default:hover:not(:disabled) { color: var(--primary-500); border-color: var(--primary-500); }
-.btn-danger { background: var(--danger); color: #fff; } .btn-danger:hover:not(:disabled) { background: #ff7875; }
-.btn-sm { height: 28px; font-size: var(--fs-caption); padding: 0 var(--space-sm); }
-.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+.toolbar {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xl);
+  align-items: center;
+}
+.search-bar {
+  flex: 1;
+  display: flex;
+}
+.search-input {
+  flex: 1;
+  height: 36px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-caption);
+  color: var(--text-primary);
+  background: var(--bg-card);
+  outline: none;
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
+}
+.search-input::placeholder {
+  color: var(--text-disabled);
+  font-family: var(--font-family);
+  font-size: var(--fs-body);
+}
+.search-input:focus {
+  border-color: var(--primary-500);
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-md);
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.btn-primary {
+  background: var(--primary-500);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-400);
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.btn-default {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-dark);
+}
+.btn-default:hover:not(:disabled) {
+  color: var(--primary-500);
+  border-color: var(--primary-500);
+}
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #ff7875;
+}
+.btn-sm {
+  height: 28px;
+  font-size: var(--fs-caption);
+  padding: 0 var(--space-sm);
+}
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
 
 /* Match status button */
 .btn-match-status {
@@ -453,24 +676,38 @@ function showMatchDetail(channel: ChannelWithMatch) {
   table-layout: fixed;
   width: 100%;
 }
+/* Column widths — 7 columns */
 .page-channels :deep(.data-table th:nth-child(1)),
 .page-channels :deep(.data-table td:nth-child(1)) {
   width: 14%;
 }
+/* col 2: counterparty_fiber_key */
 .page-channels :deep(.data-table th:nth-child(2)),
 .page-channels :deep(.data-table td:nth-child(2)) {
-  width: 32%;
+  width: 20%;
   overflow: hidden;
 }
 .page-channels :deep(.data-table th:nth-child(3)),
-.page-channels :deep(.data-table td:nth-child(3)),
+.page-channels :deep(.data-table td:nth-child(3)) {
+  width: 14%;
+}
 .page-channels :deep(.data-table th:nth-child(4)),
-.page-channels :deep(.data-table td:nth-child(4)),
+.page-channels :deep(.data-table td:nth-child(4)) {
+  width: 11%;
+}
+/* col 5: age */
 .page-channels :deep(.data-table th:nth-child(5)),
-.page-channels :deep(.data-table td:nth-child(5)),
+.page-channels :deep(.data-table td:nth-child(5)) {
+  width: 9%;
+}
 .page-channels :deep(.data-table th:nth-child(6)),
 .page-channels :deep(.data-table td:nth-child(6)) {
-  width: 13%;
+  width: 11%;
+}
+/* col 7: actions */
+.page-channels :deep(.data-table th:nth-child(7)),
+.page-channels :deep(.data-table td:nth-child(7)) {
+  width: 11%;
 }
 .page-channels :deep(.data-table th),
 .page-channels :deep(.data-table td) {
@@ -484,6 +721,12 @@ function showMatchDetail(channel: ChannelWithMatch) {
   vertical-align: middle;
 }
 
+.created-at-cell {
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
 /* Click-to-copy */
 .copyable {
   cursor: pointer;
@@ -493,5 +736,9 @@ function showMatchDetail(channel: ChannelWithMatch) {
   color: var(--primary-500);
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 </style>

@@ -118,6 +118,11 @@ pub async fn extract(
     path: web::Path<MatchPath>,
 ) -> Result<HttpResponse, AppError> {
     let p = path.into_inner();
+    let min_extraction = state
+        .runtime_config
+        .read()
+        .map(|rc| rc.min_extraction_amount_shannons)
+        .unwrap_or(0);
     let result = rent_service::extract_rent(
         state.chain_provider.as_ref(),
         &state.db,
@@ -126,6 +131,7 @@ pub async fn extract(
         &rent_service::ExtractRentOptions {
             tx_assembler: state.tx_assembler.as_ref(),
             signer: Some(state.signer.as_ref()),
+            min_extraction_shannons: min_extraction,
         },
     )
     .await?;
@@ -138,12 +144,9 @@ pub async fn destroy(
     path: web::Path<MatchPath>,
 ) -> Result<HttpResponse, AppError> {
     let p = path.into_inner();
-    let tx_hash = rent_service::destroy_match(
-        state.chain_provider.as_ref(),
-        &p.tx_hash,
-        p.output_index,
-    )
-    .await?;
+    let tx_hash =
+        rent_service::destroy_match(state.chain_provider.as_ref(), &p.tx_hash, p.output_index)
+            .await?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "tx_hash": tx_hash,

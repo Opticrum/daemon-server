@@ -26,6 +26,7 @@ use crate::services::chain_provider::{
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::match_service::{self, get_used_channel_outpoints, MatchOrderResult};
 use crate::services::rent_service;
+use crate::services::rent_service::walk_extraction_chain;
 use crate::services::runtime_config::{RuntimeConfig, RuntimeConfigPartial};
 use crate::services::signer::Signer;
 use crate::services::transaction_assembler::TransactionAssembler;
@@ -747,7 +748,7 @@ impl GatewayService {
         provider: &dyn ChainProvider,
         signer_lock_hashes: Option<&[String]>,
     ) -> Result<Vec<serde_json::Value>, AppError> {
-        let _tip_block = provider.get_tip_block_number().await.unwrap_or(0);
+        let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
         let on_chain = provider.scan_matches().await?;
 
         let mut conn = pool.get()?;
@@ -783,18 +784,21 @@ impl GatewayService {
                     .unwrap_or_else(|| format!("lock_hash:{seller_lh}"));
 
             // Get extraction totals from statistics cache
-            let extracted_total = match_db::extracted_for_match(
-                &mut conn,
-                &tx_hash,
-                output_index as i32,
-            )
-            .unwrap_or(0) as u64;
+            let extracted_total = walk_extraction_chain(provider, m)
+                .await
+                .map(|c| c.total_extracted)
+                .unwrap_or(0);
+
+            // How much rent is currently withdrawable from this match cell
+            let extractable = rent_service::preview_extractable_from_chain(m, tip_block);
 
             // Get match creation timestamp (Unix milliseconds) from the match tx's block
             let created_at: Option<u64> = match provider.get_tx_block_number(&tx_hash).await {
-                Ok(block_number) if block_number > 0 => {
-                    provider.get_block_timestamp(block_number).await.ok().filter(|&ts| ts > 0)
-                }
+                Ok(block_number) if block_number > 0 => provider
+                    .get_block_timestamp(block_number)
+                    .await
+                    .ok()
+                    .filter(|&ts| ts > 0),
                 _ => None,
             };
 
@@ -810,6 +814,7 @@ impl GatewayService {
                 "xudt_amount": m.match_data.xudt_amount,
                 "status": if is_exhausted { "exhausted" } else { "live" },
                 "extracted_total": extracted_total,
+                "extractable_shannons": extractable,
                 "created_at": created_at,
             }));
         }
@@ -852,10 +857,37 @@ impl GatewayService {
                 AppError::NotFound(format!("Match {tx_hash}:{output_index} not found on chain"))
             })?;
 
-        let extracted_total = match_db::extracted_for_match(&mut conn, tx_hash, output_index as i32)
-            .unwrap_or(0) as u64;
-        let history = match_db::get_extractions_for_match(&mut conn, tx_hash, output_index as i32)
-            .unwrap_or_default();
+        let chain = walk_extraction_chain(provider, m).await.unwrap_or_default();
+        let extracted_total = chain.total_extracted;
+
+        // Resolve timestamps for extraction events from on-chain block headers.
+        // We use the current tip block timestamp as an anchor and compute
+        // event timestamps via the CKB average block interval to avoid
+        // N individual RPC calls that may fail independently.
+        let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
+        let tip_timestamp = provider
+            .get_block_timestamp(tip_block)
+            .await
+            .ok()
+            .filter(|&ts| ts > 0);
+        // CKB average block interval ≈ 12 seconds = 12_000 ms
+        const AVG_BLOCK_MS: u64 = 12_000;
+
+        let mut history: Vec<serde_json::Value> = Vec::new();
+        for (i, e) in chain.extractions.iter().enumerate() {
+            let timestamp = tip_timestamp.map(|tip_ts| {
+                let blocks_behind = tip_block.saturating_sub(e.block_number);
+                tip_ts.saturating_sub(blocks_behind * AVG_BLOCK_MS)
+            });
+            history.push(serde_json::json!({
+                "id": i,
+                "tx_hash": e.tx_hash,
+                "block_number": e.block_number,
+                "tip_block": e.block_number,
+                "extracted_amount": e.extracted_amount,
+                "timestamp": timestamp,
+            }));
+        }
 
         let seller_lh = hex::encode(m.match_args.seller_lock_hash);
         let seller_address =
@@ -867,9 +899,11 @@ impl GatewayService {
 
         // Get match creation timestamp (Unix milliseconds) from the match tx's block
         let created_at: Option<u64> = match provider.get_tx_block_number(tx_hash).await {
-            Ok(block_number) if block_number > 0 => {
-                provider.get_block_timestamp(block_number).await.ok().filter(|&ts| ts > 0)
-            }
+            Ok(block_number) if block_number > 0 => provider
+                .get_block_timestamp(block_number)
+                .await
+                .ok()
+                .filter(|&ts| ts > 0),
             _ => None,
         };
 
@@ -897,6 +931,7 @@ impl GatewayService {
         output_index: u32,
         tx_assembler: Option<&TransactionAssembler>,
         signer: &HdWalletSigner,
+        min_extraction_shannons: u64,
     ) -> Result<rent_service::ExtractRentResult, AppError> {
         rent_service::extract_rent(
             provider,
@@ -906,6 +941,7 @@ impl GatewayService {
             &rent_service::ExtractRentOptions {
                 tx_assembler,
                 signer: Some(signer),
+                min_extraction_shannons,
             },
         )
         .await

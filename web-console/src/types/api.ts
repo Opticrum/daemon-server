@@ -233,16 +233,18 @@ export interface TrackedMatch {
   created_at: number | null
   /** Total extracted shannons for this match. */
   extracted_total: number
+  /** How many shannons the seller can withdraw right now. */
+  extractable_shannons: number
 }
 
 export interface ExtractionHistoryItem {
   id: number
-  match_tx_hash: string
-  match_output_index: number
-  extracted_amount: number
-  tip_block: number
   tx_hash: string
-  timestamp: string
+  block_number: number
+  tip_block: number
+  extracted_amount: number
+  /** Unix milliseconds timestamp of the block, or null if unavailable. */
+  timestamp: number | null
 }
 
 export interface MatchDetail {
@@ -297,6 +299,7 @@ export interface FiberChannelInfo {
   state_name: string
   is_public: boolean
   enabled: boolean
+  created_at: number
 }
 
 export interface ChannelMatchInfo {
