@@ -639,7 +639,4 @@ function badgeLabel(w: SignerWalletItem): string {
   50% { opacity: 0.4; }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 </style>

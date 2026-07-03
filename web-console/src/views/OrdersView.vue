@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, inject, h } from "vue";
+import { ref, reactive, computed, onMounted, inject, h } from "vue";
 import { useRouter } from "vue-router";
 import { useApi } from "@/composables/useApi";
 import { useI18n } from "@/composables/useI18n";
@@ -43,7 +43,7 @@ const matchForm = ref<MatchOrderRequest & { tx_hash: string }>({
 const readiness = reactive<Record<string, MatchReadiness | null>>({});
 const pollingTimers: Record<string, ReturnType<typeof setInterval>> = {};
 
-const columns: ColumnDef[] = [
+const columns = computed<ColumnDef[]>(() => [
   {
     key: "tx_hash",
     label: t("common.txHash"),
@@ -81,7 +81,7 @@ const columns: ColumnDef[] = [
     align: "center",
     width: "95px",
   },
-];
+]);
 
 async function scanOrders() {
   loading.value = true;
@@ -89,15 +89,16 @@ async function scanOrders() {
   try {
     orders.value = await api.scanOrders();
     scanned.value = true;
-    // Refresh readiness for all orders
-    for (const o of orders.value) {
-      fetchReadiness(o.tx_hash);
-    }
+    loading.value = false;
+    // Fire all readiness checks in parallel — each updates the reactive
+    // readiness map independently so rows appear progressively.
+    await Promise.allSettled(
+      orders.value.map((o) => fetchReadiness(o.tx_hash)),
+    );
   } catch (e: any) {
     console.error("Failed to scan orders:", e);
     error.value = e.message || t("orders.scanFailed");
     toast.error(error.value!);
-  } finally {
     loading.value = false;
   }
 }
@@ -439,8 +440,10 @@ onMounted(async () => {
           />
           <span
             v-else
-            class="text-muted"
-          >...</span>
+            class="inline-skeleton"
+          >
+            <span class="inline-skeleton-bar" />
+          </span>
           <span class="status-sep">/</span>
           <StatusTag
             v-if="readiness[row.tx_hash]?.compatible_channel"
@@ -463,8 +466,10 @@ onMounted(async () => {
           />
           <span
             v-else
-            class="text-muted"
-          >...</span>
+            class="inline-skeleton"
+          >
+            <span class="inline-skeleton-bar" />
+          </span>
         </div>
       </template>
       <template #cell-actions="{ row }">
@@ -624,6 +629,28 @@ onMounted(async () => {
   font-size: var(--fs-caption);
   padding: 0 var(--space-sm);
 }
+
+/* Inline skeleton for readiness placeholder */
+.inline-skeleton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.inline-skeleton-bar {
+  display: inline-block;
+  width: 50px;
+  height: 10px;
+  border-radius: var(--radius-sm);
+  background-color: var(--gray-100);
+  background-image: linear-gradient(
+    100deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.5) 50%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
 </style>
 
 <!-- Global styles for progress modal (teleported to body, scoped won't reach) -->
@@ -650,13 +677,7 @@ onMounted(async () => {
   text-align: center;
   margin: 0;
 }
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 
-/* Peer connection check modal */
 .peer-check {
   display: flex;
   flex-direction: column;

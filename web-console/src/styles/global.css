@@ -92,8 +92,18 @@ a:hover {
   display: inline-block;
 }
 
-/* ── Skeleton shimmer ── */
-@keyframes shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* ── Shared keyframes (defined once, referenced by all components) ── */
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes table-row-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes progress-slide {
+  0%   { left: -35%; }
+  100% { left: 100%; }
 }

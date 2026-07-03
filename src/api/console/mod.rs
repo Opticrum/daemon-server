@@ -155,6 +155,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             )
             // Channels
             .route("/channels", web::get().to(scan_channels))
+            .route("/channels-only", web::get().to(scan_channels_only))
+            .route("/channel-matches", web::get().to(scan_channel_matches))
             // Fiber node info
             .route("/fiber-node-info", web::get().to(fiber_node_info))
             // Runtime config (mutable at runtime)
@@ -698,6 +700,22 @@ pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, A
     let channels =
         GatewayService::get_channels_with_matches(&state.db, state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(channels))
+}
+
+/// GET /api/console/channels-only — fast path: channels without match cross-referencing.
+/// The frontend calls this first to render the channel table immediately.
+pub async fn scan_channels_only(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let channels =
+        GatewayService::get_channels_only(state.chain_provider.as_ref()).await?;
+    Ok(HttpResponse::Ok().json(channels))
+}
+
+/// GET /api/console/channel-matches — cross-reference channels with on-chain match cells.
+/// The frontend calls this after channels-only to progressively fill in match status.
+pub async fn scan_channel_matches(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let cwms =
+        GatewayService::get_channel_matches(state.chain_provider.as_ref()).await?;
+    Ok(HttpResponse::Ok().json(cwms))
 }
 
 #[derive(Deserialize)]

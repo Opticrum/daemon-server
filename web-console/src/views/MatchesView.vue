@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, inject, h } from 'vue'
+import { ref, computed, onMounted, inject, h } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
 import { truncateAddress, formatCKB, explorerTxUrl } from '@/utils/format'
@@ -19,6 +19,7 @@ const error = ref<string | null>(null)
 const filterStatus = ref<string>('')
 const network = ref('testnet')
 const signerLockHashes = ref<string[]>([])
+const minExtractionShannons = ref(0)
 
 // ── Expand / fold state ──
 const expandedRows = ref<Set<string>>(new Set())
@@ -62,20 +63,21 @@ const filters = [
   { labelKey: 'matches.destroyed', value: 'destroyed' },
 ]
 
-const columns: ColumnDef[] = [
+const columns = computed<ColumnDef[]>(() => [
   { key: '_expand', label: '', width: '40px', align: 'center' },
   { key: 'tx_hash', label: t('common.txHash'), align: 'center' },
   { key: 'created_at', label: t('matches.matchTime'), align: 'center' },
-  { key: 'rate', label: t('common.rate'), sortable: true, align: 'center' },
+  { key: 'remaining_days', label: t('matches.remainingDays'), sortable: true, align: 'center' },
   { key: 'extractable', label: t('matches.extractable'), sortable: true, align: 'center' },
   { key: 'rent', label: t('matches.rent'), align: 'center' },
   { key: 'status', label: t('common.status'), align: 'center' },
   { key: 'actions', label: t('common.actions'), align: 'center' },
-]
+])
 
 const totalRent = (m: TrackedMatch) => m.ckb_capacity || 0
 const extractedRent = (m: TrackedMatch) => m.extracted_total ?? 0
 const extractableAmount = (m: TrackedMatch) => m.extractable_shannons ?? 0
+const isExtractableMet = (m: TrackedMatch) => extractableAmount(m) >= minExtractionShannons.value
 
 async function loadSignerLockHashes() {
   try {
@@ -193,6 +195,10 @@ async function doDestroyMatch(match: TrackedMatch) {
 
 onMounted(async () => {
   try { const info = await api.getServerInfo(); network.value = info.network } catch { /* ignore */ }
+  try {
+    const cfg = await api.getRuntimeConfig()
+    minExtractionShannons.value = cfg.min_extraction_amount_shannons
+  } catch { /* ignore */ }
   await loadSignerLockHashes()
   await loadMatches()
 })
@@ -209,7 +215,10 @@ onMounted(async () => {
         :disabled="loading"
         @click="loadMatches"
       >
-        <span v-if="loading" class="spinner-sm" /> {{ loading ? t('common.loading') : t('matches.refresh') }}
+        <span
+          v-if="loading"
+          class="spinner-sm"
+        /> {{ loading ? t('common.loading') : t('matches.refresh') }}
       </button>
     </div>
     <div class="filter-tabs">
@@ -242,13 +251,11 @@ onMounted(async () => {
       :loading="loading"
       :expanded-row-keys="expandedRows"
       :row-key="matchKey"
+      :clickable-rows="true"
+      @row-click="toggleExpand"
     >
       <template #cell-_expand="{ row }">
-        <button
-          class="expand-toggle"
-          :title="isExpanded(row) ? t('nav.collapse') : t('nav.expand')"
-          @click="toggleExpand(row)"
-        >
+        <span class="expand-indicator">
           <span
             v-if="loadingDetail.has(matchKey(row))"
             class="expand-spinner"
@@ -256,8 +263,9 @@ onMounted(async () => {
           <span
             v-else
             class="expand-chevron"
-          >{{ isExpanded(row) ? '▼' : '▶' }}</span>
-        </button>
+            :class="{ expanded: isExpanded(row) }"
+          >▶</span>
+        </span>
       </template>
       <template #cell-tx_hash="{ value }">
         <a
@@ -270,11 +278,21 @@ onMounted(async () => {
       <template #cell-created_at="{ value }">
         <span class="match-time">{{ value ? new Date(Number(value)).toLocaleString() : '—' }}</span>
       </template>
-      <template #cell-rate="{ row }">
-        {{ row.shannons_per_block }} {{ t('common.feeRateUnit') }}
+      <template #cell-remaining_days="{ value }">
+        <span :class="{ 'text-exhausted': Number(value) <= 0 }">
+          {{ Number(value) <= 0 ? '—' : Number(value).toFixed(1) + ' d' }}
+        </span>
       </template>
       <template #cell-extractable="{ row }">
-        {{ formatCKB(extractableAmount(row)) }}
+        <span
+          :class="[
+            isExtractableMet(row) ? 'text-extractable-met' : 'text-extractable-low',
+            !isExtractableMet(row) ? 'tooltip-trigger' : '',
+          ]"
+          :data-tooltip="isExtractableMet(row) ? '' : t('matches.extractBelowThreshold')"
+        >
+          {{ formatCKB(extractableAmount(row)) }}
+        </span>
       </template>
       <template #cell-rent="{ row }">
         {{ formatCKB(extractedRent(row)) }} / {{ formatCKB(totalRent(row)) }}
@@ -285,9 +303,16 @@ onMounted(async () => {
       <template #cell-actions="{ row }">
         <div class="actions-group">
           <button
-            v-if="row.status === 'live'"
+            v-if="row.status === 'live' && isExtractableMet(row)"
             class="btn btn-sm btn-primary"
             @click="extractRent(row)"
+          >
+            {{ t('matches.extract') }}
+          </button>
+          <button
+            v-else-if="row.status === 'live'"
+            class="btn btn-sm btn-disabled"
+            disabled
           >
             {{ t('matches.extract') }}
           </button>
@@ -313,7 +338,41 @@ onMounted(async () => {
               {{ t('matches.rent') }}: {{ formatCKB(matchDetails[matchKey(row)].extracted_total_shannons) }} / {{ formatCKB(row.ckb_capacity) }}
             </span>
           </div>
-          <table class="extraction-table">
+
+          <!-- Loading skeleton -->
+          <table
+            v-if="loadingDetail.has(matchKey(row))"
+            class="extraction-table"
+          >
+            <thead>
+              <tr>
+                <th>{{ t('matches.rent').split('/')[0].trim() }}</th>
+                <th>{{ t('matches.lastExtractionBlock') }}</th>
+                <th>{{ t('common.txHash') }}</th>
+                <th>{{ t('common.createdAt') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="i in 3"
+                :key="`skel-${i}`"
+                class="skeleton-row"
+              >
+                <td
+                  v-for="j in 4"
+                  :key="j"
+                >
+                  <span class="skeleton-bar" />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- Loaded data -->
+          <table
+            v-else
+            class="extraction-table"
+          >
             <thead>
               <tr>
                 <th>{{ t('matches.rent').split('/')[0].trim() }}</th>
@@ -357,12 +416,68 @@ onMounted(async () => {
 
 <style scoped>
 .page-matches { max-width: 1200px; margin: 0 auto; }
+.page-matches :deep(.table-wrapper) { overflow: visible !important; }
+.page-matches :deep(.data-table td) { overflow: visible !important; }
+.page-matches :deep(.data-table tbody tr) { overflow: visible !important; }
 .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-md); }
 .page-title { font-size: var(--fs-h2); font-weight: var(--fw-h2); line-height: var(--lh-h2); color: var(--text-primary); }
 .filter-tabs { display: flex; gap: var(--space-xs); margin-bottom: var(--space-lg); }
 .filter-tab { padding: var(--space-xs) var(--space-md); border: 1px solid var(--border-dark); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-secondary); font-size: var(--fs-body); cursor: pointer; transition: all var(--transition-base); }
 .filter-tab:hover { color: var(--primary-500); border-color: var(--primary-500); } .filter-tab.active { background: var(--primary-500); border-color: var(--primary-500); color: #fff; }
 .tx-link { color: var(--primary-500); text-decoration: none; } .tx-link:hover { text-decoration: underline; }
+.text-exhausted { color: var(--text-disabled); }
+.text-extractable-met { color: #52c41a; font-weight: 600; }
+.text-extractable-low { color: #ff4d4f; }
+.btn-disabled { background: var(--gray-200); color: var(--text-disabled); cursor: not-allowed; border: 1px solid var(--border-light); }
+.btn-disabled:hover { background: var(--gray-200); }
+
+/* Custom hover tooltip with arrow */
+.tooltip-trigger {
+  position: relative;
+  cursor: help;
+}
+/* Tooltip body */
+.tooltip-trigger::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: var(--fs-caption, 12px);
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: nowrap;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease 0.3s;
+  z-index: 999;
+}
+/* Tooltip arrow (downward triangle) */
+.tooltip-trigger::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease 0.3s;
+  z-index: 999;
+}
+.tooltip-trigger:hover::after,
+.tooltip-trigger:hover::before {
+  opacity: 1;
+}
 .copyable { cursor: pointer; transition: color var(--transition-base); }
 .copyable:hover { color: var(--primary-500); }
 .actions-group { display: flex; gap: 4px; justify-content: center; }
@@ -375,39 +490,31 @@ onMounted(async () => {
 .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--gray-300); border-top-color: var(--primary-500); border-radius: 50%; animation: spin 0.6s linear infinite; display: inline-block; }
 .md-footer-actions { display: flex; gap: 8px; }
 
-/* Expand toggle */
-.expand-toggle {
+/* Expand indicator */
+.expand-indicator {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all var(--transition-base);
-}
-.expand-toggle:hover {
-  background: var(--gray-100);
-  color: var(--primary-500);
+  width: 20px;
+  height: 20px;
 }
 .expand-chevron {
+  display: inline-block;
   font-size: 10px;
   line-height: 1;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+.expand-chevron.expanded {
+  transform: rotate(90deg);
 }
 .expand-spinner {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border: 2px solid var(--border-light);
   border-top-color: var(--primary-500);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 /* Expanded content */
@@ -432,7 +539,8 @@ onMounted(async () => {
   font-variant-numeric: tabular-nums;
 }
 .extraction-table {
-  width: 100%;
+  width: 88%;
+  margin: 0 auto;
   border-collapse: collapse;
   font-size: var(--fs-caption);
   background: var(--bg-card);
@@ -467,6 +575,25 @@ onMounted(async () => {
   padding: var(--space-md) 0 !important;
   font-style: italic;
 }
+
+/* Sub-table skeleton loading */
+.skeleton-row td {
+  padding: 8px 10px;
+}
+.skeleton-bar {
+  display: block;
+  height: 12px;
+  border-radius: var(--radius-sm, 4px);
+  background: linear-gradient(
+    90deg,
+    var(--gray-100, #f0f0f0) 25%,
+    var(--gray-200, #e0e0e0) 50%,
+    var(--gray-100, #f0f0f0) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
 </style>
 
 <!-- Global styles for unlock modal (teleported to body, scoped won't reach) -->

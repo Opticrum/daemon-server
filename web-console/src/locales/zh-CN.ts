@@ -167,6 +167,8 @@ export default {
     loadFailed: '加载匹配列表失败',
     lastExtractionBlock: '最后提取区块',
     matchTime: '匹配时间',
+    remainingDays: '剩余时间',
+    extractBelowThreshold: '低于最低提取门槛 — 可在系统设置中调整',
   },
   channels: {
     title: 'Fiber 通道管理',

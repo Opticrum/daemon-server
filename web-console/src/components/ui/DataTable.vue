@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends Record<string, any>">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 
 export interface ColumnDef {
   key: string
@@ -21,13 +21,23 @@ const props = withDefaults(defineProps<{
   pageSize?: number
   expandedRowKeys?: Set<string | number>
   rowKey?: string | ((row: T) => string | number)
+  /** Number of skeleton placeholder rows to show when loading with no data. */
+  skeletonRows?: number
+  /** When true, rows get pointer cursor and emit row-click on click. */
+  clickableRows?: boolean
 }>(), {
   loading: false,
   emptyText: '',
   pageSize: 15,
   expandedRowKeys: () => new Set(),
   rowKey: undefined,
+  skeletonRows: 0,
+  clickableRows: false,
 })
+
+const emit = defineEmits<{
+  'row-click': [row: T, index: number]
+}>()
 
 const sortKey = ref<string | null>(null)
 const sortDir = ref<'asc' | 'desc'>('asc')
@@ -50,6 +60,22 @@ const totalPages = computed(() => Math.max(1, Math.ceil(sortedRows.value.length 
 const paginatedRows = computed(() => {
   const start = (currentPage.value - 1) * props.pageSize
   return sortedRows.value.slice(start, start + props.pageSize)
+})
+
+// Staggered row entrance animation trigger
+const justLoaded = ref(false)
+let enterTimer: ReturnType<typeof setTimeout> | null = null
+
+watch([() => props.loading, () => props.rows.length], ([loading, len]) => {
+  if (!loading && len > 0) {
+    justLoaded.value = true
+    if (enterTimer) clearTimeout(enterTimer)
+    enterTimer = setTimeout(() => { justLoaded.value = false }, 700)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (enterTimer) clearTimeout(enterTimer)
 })
 
 function getRowKey(row: T, index: number): string | number {
@@ -95,6 +121,13 @@ const pageNumbers = computed(() => {
 
 <template>
   <div class="table-wrapper">
+    <!-- Partial-loading progress bar: sliding blue bar when refreshing with data -->
+    <div
+      v-if="loading && rows.length > 0"
+      class="table-progress-bar-wrapper"
+    >
+      <div class="table-progress-bar" />
+    </div>
     <table class="data-table">
       <thead>
         <tr>
@@ -115,16 +148,22 @@ const pageNumbers = computed(() => {
           </th>
         </tr>
       </thead>
-      <tbody>
-        <tr v-if="loading && rows.length === 0">
+      <tbody :class="{ 'table-entering': justLoaded }">
+        <!-- Skeleton rows: loading with no data yet -->
+        <tr
+          v-for="i in (loading && rows.length === 0 ? (skeletonRows || 5) : 0)"
+          :key="`skel-${i}`"
+          class="skeleton-row"
+        >
           <td
-            :colspan="columns.length"
-            class="loading-cell"
+            v-for="col in columns"
+            :key="col.key"
+            :class="[`align-${col.align || 'left'}`, `cell-${col.key}`]"
           >
-            <span class="spinner" /> {{ t('common.loading') }}
+            <span class="skeleton-bar" />
           </td>
         </tr>
-        <tr v-else-if="!rows.length">
+        <tr v-if="!loading && !rows.length">
           <td
             :colspan="columns.length"
             class="empty-cell"
@@ -136,7 +175,13 @@ const pageNumbers = computed(() => {
           v-for="(row, i) in paginatedRows"
           :key="i"
         >
-          <tr :class="{ 'row-expanded': expandedRowKeys.has(getRowKey(row, i)) }">
+          <tr
+            :class="{
+              'row-expanded': expandedRowKeys.has(getRowKey(row, i)),
+              'row-clickable': clickableRows,
+            }"
+            @click="clickableRows && emit('row-click', row, i)"
+          >
             <td
               v-for="col in columns"
               :key="col.key"
@@ -249,6 +294,12 @@ const pageNumbers = computed(() => {
 .data-table tbody tr:hover td {
   background: var(--gray-50);
 }
+.data-table tbody tr.row-clickable {
+  cursor: pointer;
+}
+.data-table tbody tr.row-clickable:hover td {
+  background: rgba(24, 144, 255, 0.06);
+}
 .data-table tbody tr:last-child td {
   border-bottom: none;
 }
@@ -285,6 +336,73 @@ const pageNumbers = computed(() => {
   justify-content: center;
   gap: var(--space-xs);
 }
+
+/* Skeleton rows */
+.skeleton-row td {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-light);
+}
+.skeleton-bar {
+  display: block;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background-color: var(--gray-100);
+  background-image: linear-gradient(
+    100deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+/* Variable widths for realistic table geometry */
+.skeleton-row td:nth-child(odd) .skeleton-bar  { width: 85%; }
+.skeleton-row td:nth-child(even) .skeleton-bar { width: 60%; }
+.skeleton-row td:last-child .skeleton-bar       { width: 40%; }
+
+/* Table progress bar: sliding blue gradient when refreshing with data */
+.table-progress-bar-wrapper {
+  height: 3px;
+  background: var(--gray-100);
+  position: relative;
+  overflow: hidden;
+}
+.table-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 35%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--primary-400) 50%,
+    transparent 100%
+  );
+  animation: progress-slide 1.4s ease-in-out infinite;
+  border-radius: 1.5px;
+}
+
+/* Staggered row entrance animation */
+.data-table tbody.table-entering > tr:not(.skeleton-row) {
+  animation: table-row-enter 0.4s ease backwards;
+}
+.data-table tbody.table-entering > tr:nth-child(1)  { animation-delay: 0.00s; }
+.data-table tbody.table-entering > tr:nth-child(2)  { animation-delay: 0.05s; }
+.data-table tbody.table-entering > tr:nth-child(3)  { animation-delay: 0.10s; }
+.data-table tbody.table-entering > tr:nth-child(4)  { animation-delay: 0.15s; }
+.data-table tbody.table-entering > tr:nth-child(5)  { animation-delay: 0.20s; }
+.data-table tbody.table-entering > tr:nth-child(6)  { animation-delay: 0.25s; }
+.data-table tbody.table-entering > tr:nth-child(7)  { animation-delay: 0.30s; }
+.data-table tbody.table-entering > tr:nth-child(8)  { animation-delay: 0.35s; }
+.data-table tbody.table-entering > tr:nth-child(9)  { animation-delay: 0.40s; }
+.data-table tbody.table-entering > tr:nth-child(10) { animation-delay: 0.45s; }
+.data-table tbody.table-entering > tr:nth-child(11) { animation-delay: 0.50s; }
+.data-table tbody.table-entering > tr:nth-child(12) { animation-delay: 0.55s; }
+.data-table tbody.table-entering > tr:nth-child(13) { animation-delay: 0.60s; }
+.data-table tbody.table-entering > tr:nth-child(14) { animation-delay: 0.65s; }
+.data-table tbody.table-entering > tr:nth-child(15) { animation-delay: 0.70s; }
 
 .pagination {
   display: flex;

@@ -167,6 +167,8 @@ export default {
     loadFailed: 'Failed to load matches',
     lastExtractionBlock: 'Last Extraction Block',
     matchTime: 'Match Time',
+    remainingDays: 'Remaining',
+    extractBelowThreshold: 'Below minimum extraction threshold — adjust in Settings',
   },
   channels: {
     title: 'Fiber Channel Management',

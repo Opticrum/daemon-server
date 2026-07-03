@@ -235,6 +235,10 @@ export interface TrackedMatch {
   extracted_total: number
   /** How many shannons the seller can withdraw right now. */
   extractable_shannons: number
+  /** Estimated remaining days before rent is exhausted. */
+  remaining_days: number
+  /** Current chain tip block number. */
+  tip_block: number
 }
 
 export interface ExtractionHistoryItem {

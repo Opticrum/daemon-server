@@ -10,7 +10,11 @@ import EmptyState from "@/components/ui/EmptyState.vue";
 import MatchDetailPanel, {
   type DetailSection,
 } from "@/components/ui/MatchDetailPanel.vue";
-import type { ChannelWithMatch, ChannelMatchInfo } from "@/types/api";
+import type {
+  ChannelWithMatch,
+  ChannelMatchInfo,
+  FiberChannelInfo,
+} from "@/types/api";
 
 const api = useApi();
 const { t } = useI18n();
@@ -25,8 +29,12 @@ const {
   fetchNodeInfo,
 } = useFiber();
 
-const channels = ref<ChannelWithMatch[]>([]);
+/// Progressive loading: channels load first (fast), match info backfills async.
+const channels = ref<FiberChannelInfo[]>([]);
+/// Match info cross-reference: channel_id → match_info.
+const matchMap = ref<Record<string, ChannelMatchInfo | null>>({});
 const loading = ref(false);
+const matchLoading = ref(false);
 const error = ref<string | null>(null);
 const fiberKeyFilter = ref("");
 const nodeExpanded = ref(false);
@@ -34,35 +42,71 @@ const nodeExpanded = ref(false);
 // Auto-load everything on mount
 onMounted(async () => {
   fetchNodeInfo();
-  await loadChannels();
+  await loadChannelsProgressive();
 });
 
-async function loadChannels() {
+/// Progressive loading: channels first (fast from channels-only endpoint),
+/// then match cross-references backfill in the background.
+async function loadChannelsProgressive() {
   loading.value = true;
+  matchLoading.value = true;
   error.value = null;
   try {
-    channels.value = await api.scanChannels();
+    // Phase 1: load channels immediately (no match cross-referencing)
+    channels.value = await api.scanChannelsOnly();
+    loading.value = false;
   } catch (e: any) {
     console.error("Failed to load channels:", e);
     error.value = e.message || t("channels.loadFailed");
     toast.error(error.value!);
-  } finally {
     loading.value = false;
+    matchLoading.value = false;
+    return;
+  }
+
+  // Phase 2: load match cross-references in background
+  try {
+    const cwms = await api.scanChannelMatches();
+    const map: Record<string, ChannelMatchInfo | null> = {};
+    for (const cwm of cwms) {
+      map[cwm.channel_id] = cwm.match_info;
+    }
+    matchMap.value = map;
+  } catch (e: any) {
+    console.error("Failed to load channel matches:", e);
+    // Non-fatal: channels are already displayed
+  } finally {
+    matchLoading.value = false;
   }
 }
 
+/// Full reload (for refresh button) — also progressive.
+async function loadChannels() {
+  await loadChannelsProgressive();
+}
+
+/// Merge channels with async-loaded match info for the table.
+const channelsWithMatch = computed<ChannelWithMatch[]>(() => {
+  return channels.value.map((ch) => ({
+    ...ch,
+    match_info: matchMap.value[ch.channel_id] ?? null,
+    match_status: matchMap.value[ch.channel_id] ? "matched" : "not_found",
+  }));
+});
+
 // Filter channels by counterparty fiber key substring
 const filteredChannels = computed(() => {
-  if (!fiberKeyFilter.value.trim()) return channels.value;
+  const list = channelsWithMatch.value;
+  if (!fiberKeyFilter.value.trim()) return list;
   const q = fiberKeyFilter.value.trim().toLowerCase();
-  return channels.value.filter(
+  return list.filter(
     (c) =>
       c.counterparty_fiber_key.toLowerCase().includes(q) ||
       c.tx_hash.toLowerCase().includes(q),
   );
 });
 
-const columns: ColumnDef[] = [
+const columns = computed<ColumnDef[]>(() => [
   { key: "channel_id", label: t("channels.channelId"), align: "center" },
   {
     key: "counterparty_fiber_key",
@@ -84,7 +128,7 @@ const columns: ColumnDef[] = [
   },
   { key: "match_status", label: t("channels.matchStatus"), align: "center" },
   { key: "actions", label: t("common.actions"), align: "center" },
-];
+]);
 
 function hexToNum(hex: string): number {
   return parseInt(hex, 16) || 0;
@@ -238,20 +282,26 @@ function showMatchDetail(channel: ChannelWithMatch) {
 
     <!-- Fiber Node Info Card (foldable) -->
     <div class="card node-info-card">
-      <div class="card-header" @click="nodeExpanded = !nodeExpanded">
+      <div
+        class="card-header"
+        @click="nodeExpanded = !nodeExpanded"
+      >
         <div class="card-header-left">
-          <span class="fold-arrow" :class="{ expanded: nodeExpanded }"
-            >&#9654;</span
-          >
+          <span
+            class="fold-arrow"
+            :class="{ expanded: nodeExpanded }"
+          >&#9654;</span>
           <h3>{{ t("channels.nodeInfo") }}</h3>
         </div>
         <div class="card-header-right">
           <code
             v-if="!nodeLoading && nodeInfo"
             class="font-mono node-url-inline"
-            >{{ rpcUrl }}</code
-          >
-          <span v-if="nodeLoading" class="spinner" />
+          >{{ rpcUrl }}</code>
+          <span
+            v-if="nodeLoading"
+            class="spinner"
+          />
           <StatusTag
             v-else
             :status="connected ? 'live' : 'destroyed'"
@@ -262,7 +312,10 @@ function showMatchDetail(channel: ChannelWithMatch) {
         </div>
       </div>
       <!-- Disconnected fallback -->
-      <div v-if="!nodeLoading && !nodeInfo" class="text-muted node-summary">
+      <div
+        v-if="!nodeLoading && !nodeInfo"
+        class="text-muted node-summary"
+      >
         {{ t("channels.disconnected") }}
         <code
           v-if="rpcUrl"
@@ -272,24 +325,26 @@ function showMatchDetail(channel: ChannelWithMatch) {
             display: block;
             margin-top: var(--space-xs);
           "
-          >{{ rpcUrl }}</code
-        >
+        >{{ rpcUrl }}</code>
       </div>
       <!-- Expanded details -->
-      <div v-if="nodeExpanded && nodeInfo" class="config-display">
+      <div
+        v-if="nodeExpanded && nodeInfo"
+        class="config-display"
+      >
         <div class="config-row">
-          <span class="config-label">{{ t("channels.nodeId") }}</span
-          ><code
+          <span class="config-label">{{ t("channels.nodeId") }}</span><code
             class="font-mono value-full"
             style="font-size: var(--fs-caption)"
-            >{{ nodeInfo.pubkey }}</code
-          >
+          >{{ nodeInfo.pubkey }}</code>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t("channels.nodeVersion") }}</span
-          ><span>{{ nodeInfo.version }}</span>
+          <span class="config-label">{{ t("channels.nodeVersion") }}</span><span>{{ nodeInfo.version }}</span>
         </div>
-        <div v-if="nodeInfo.addresses.length" class="config-row">
+        <div
+          v-if="nodeInfo.addresses.length"
+          class="config-row"
+        >
           <span class="config-label">{{ t("channels.nodeAddresses") }}</span>
           <div class="addresses-stack">
             <code
@@ -297,31 +352,25 @@ function showMatchDetail(channel: ChannelWithMatch) {
               :key="i"
               class="font-mono"
               style="font-size: var(--fs-small)"
-              >{{ addr }}</code
-            >
+            >{{ addr }}</code>
           </div>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t("channels.channelCount") }}</span
-          ><span>{{ hexToNum(nodeInfo.channel_count) }}</span>
+          <span class="config-label">{{ t("channels.channelCount") }}</span><span>{{ hexToNum(nodeInfo.channel_count) }}</span>
         </div>
         <div class="config-row">
           <span class="config-label">{{
             t("channels.pendingChannelCount")
-          }}</span
-          ><span>{{ hexToNum(nodeInfo.pending_channel_count) }}</span>
+          }}</span><span>{{ hexToNum(nodeInfo.pending_channel_count) }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t("channels.peerCount") }}</span
-          ><span>{{ hexToNum(nodeInfo.peers_count) }}</span>
+          <span class="config-label">{{ t("channels.peerCount") }}</span><span>{{ hexToNum(nodeInfo.peers_count) }}</span>
         </div>
         <div class="config-row">
-          <span class="config-label">{{ t("channels.chainHash") }}</span
-          ><code
+          <span class="config-label">{{ t("channels.chainHash") }}</span><code
             class="font-mono value-full"
             style="font-size: var(--fs-caption)"
-            >{{ nodeInfo.chain_hash }}</code
-          >
+          >{{ nodeInfo.chain_hash }}</code>
         </div>
       </div>
       <div
@@ -341,10 +390,17 @@ function showMatchDetail(channel: ChannelWithMatch) {
           type="text"
           class="search-input font-mono"
           :placeholder="t('channels.fiberKeyFilter')"
-        />
+        >
       </div>
-      <button class="btn btn-primary" :disabled="loading" @click="loadChannels">
-        <span v-if="loading" class="spinner" />
+      <button
+        class="btn btn-primary"
+        :disabled="loading"
+        @click="loadChannels"
+      >
+        <span
+          v-if="loading"
+          class="spinner"
+        />
         {{ loading ? t("channels.refreshing") : t("channels.refresh") }}
       </button>
     </div>
@@ -363,10 +419,11 @@ function showMatchDetail(channel: ChannelWithMatch) {
       :message="t('channels.noChannels')"
     />
     <DataTable
-      v-else
+      v-else-if="channels.length || loading"
       :columns="columns"
       :rows="filteredChannels"
       :loading="loading"
+      :skeleton-rows="5"
     >
       <template #cell-channel_id="{ value }">
         <code class="font-mono">{{
@@ -378,8 +435,7 @@ function showMatchDetail(channel: ChannelWithMatch) {
           class="font-mono copyable fiber-key-cell"
           :title="String(value)"
           @click="copyToClipboard(String(value))"
-          >{{ truncateAddress(String(value), 12, 10) }}</code
-        >
+        >{{ truncateAddress(String(value), 12, 10) }}</code>
       </template>
       <template #cell-capacity="{ value }">
         {{ formatCKB(Number(value)) }}
@@ -396,8 +452,15 @@ function showMatchDetail(channel: ChannelWithMatch) {
         }}</span>
       </template>
       <template #cell-match_status="{ row }">
+        <!-- Still loading match cross-references -->
+        <span
+          v-if="matchLoading"
+          class="match-loading"
+        >
+          <span class="spinner-inline" />
+        </span>
         <button
-          v-if="row.match_info"
+          v-else-if="row.match_info"
           class="btn-match-status"
           :title="t('channels.viewMatchDetail')"
           @click="showMatchDetail(row)"
@@ -405,7 +468,10 @@ function showMatchDetail(channel: ChannelWithMatch) {
           <span class="match-status-dot" />
           <span>{{ t("channels.matchFound") }}</span>
         </button>
-        <span v-else class="match-none">{{ t("channels.matchNotFound") }}</span>
+        <span
+          v-else
+          class="match-none"
+        >{{ t("channels.matchNotFound") }}</span>
       </template>
       <template #cell-actions="{ row }">
         <button
@@ -670,6 +736,20 @@ function showMatchDetail(channel: ChannelWithMatch) {
   font-size: var(--fs-body);
   font-style: italic;
 }
+.match-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.spinner-inline {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-light);
+  border-top-color: var(--primary-500);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
 
 /* Channel table — centered like on-chain orders */
 .page-channels :deep(.data-table) {
@@ -736,9 +816,4 @@ function showMatchDetail(channel: ChannelWithMatch) {
   color: var(--primary-500);
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 </style>

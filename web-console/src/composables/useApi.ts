@@ -1,4 +1,4 @@
-import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus, type SchedulerStatusResponse } from '@/types/api'
+import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberChannelInfo, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus, type SchedulerStatusResponse } from '@/types/api'
 
 // ═══════════════════════════════════════════
 // Fetch wrapper
@@ -109,6 +109,12 @@ export function useApi() {
     // ── Channels ──
     scanChannels: (): Promise<ChannelWithMatch[]> =>
       request('/console/channels'),
+    /// Fast path: channels only, no match cross-referencing.
+    scanChannelsOnly: (): Promise<FiberChannelInfo[]> =>
+      request('/console/channels-only'),
+    /// Cross-reference channels with on-chain match cells.
+    scanChannelMatches: (): Promise<ChannelWithMatch[]> =>
+      request('/console/channel-matches'),
     closeChannel: (channelId: string, force?: boolean): Promise<{ closed: boolean }> =>
       request(
         `/console/channels/${encodeURIComponent(channelId)}/close`,

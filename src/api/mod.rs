@@ -183,6 +183,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 web::delete().to(console::delete_channel),
             )
             .route(
+                "/console/channels-only",
+                web::get().to(console::scan_channels_only),
+            )
+            .route(
+                "/console/channel-matches",
+                web::get().to(console::scan_channel_matches),
+            )
+            .route(
                 "/console/scheduler/status",
                 web::get().to(console::scheduler_status),
             )

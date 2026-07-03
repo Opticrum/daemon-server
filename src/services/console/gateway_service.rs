@@ -172,15 +172,24 @@ impl GatewayService {
         let started = Instant::now();
         let mut conn = pool.get()?;
 
-        // Match counts from on-chain scan (single query instead of 4 DB queries)
-        let (on_chain_matches, _) = match provider.scan_matches().await {
+        // Run the three independent chain scans + tip block in parallel.
+        // Each targets a different backend (CKB indexer / Fiber node / CKB RPC)
+        // so they don't contend on the same resource.
+        let (matches_result, orders_result, channels_result, tip_result) = tokio::join!(
+            provider.scan_matches(),
+            provider.scan_orders(),
+            provider.scan_fiber_channels(&[]),
+            provider.get_tip_block_number(),
+        );
+
+        let (on_chain_matches, _) = match matches_result {
             Ok(m) => (m, false),
             Err(e) => {
                 warn!(error = %e, "Dashboard: scan_matches failed");
                 (vec![], true)
             }
         };
-        let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
+        let tip_block = tip_result.unwrap_or(0);
         let live = on_chain_matches.len() as u64;
         // "exhausted" = match cells with zero capacity remaining
         let exhausted = on_chain_matches
@@ -193,14 +202,14 @@ impl GatewayService {
         let total_extracted = match_db::total_extracted(&mut conn)? as u64;
         let wallets = wallet_db::list_wallets(&mut conn)?;
 
-        let (orders, orders_err) = match provider.scan_orders().await {
+        let (orders, orders_err) = match orders_result {
             Ok(o) => (o, false),
             Err(e) => {
                 warn!(error = %e, "Dashboard: scan_orders failed");
                 (vec![], true)
             }
         };
-        let (channels, _) = match provider.scan_fiber_channels(&[]).await {
+        let (channels, _) = match channels_result {
             Ok(c) => (c, false),
             Err(e) => {
                 warn!(error = %e, "Dashboard: scan_fiber_channels failed");
@@ -642,13 +651,19 @@ impl GatewayService {
 
         let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
         let required_capacity = order.order_data.channel_capacity;
-        let order_block = provider
-            .get_tx_block_number(order_tx_hash)
-            .await
-            .unwrap_or(0);
+
+        // Run three independent queries in parallel: peer list, fiber channels,
+        // and the order's own block number. None depend on each other.
+        let (peers_result, channels_result, order_block_result) = tokio::join!(
+            provider.list_peers(),
+            provider.scan_fiber_channels(&[]),
+            provider.get_tx_block_number(order_tx_hash),
+        );
+        let peers = peers_result?;
+        let channels = channels_result?;
+        let order_block = order_block_result.unwrap_or(0);
 
         // Check peer connectivity (tolerant of 0x prefix)
-        let peers = provider.list_peers().await?;
         let peer_connected = peers.iter().any(|p| {
             p.pubkey.trim_start_matches("0x") == fiber_pubkey_hex.trim_start_matches("0x")
         });
@@ -658,7 +673,7 @@ impl GatewayService {
         // + not already used in another match.
         // Only ChannelReady counts as usable; in-progress channels are reported
         // separately as pending_channel.
-        let channels = provider.scan_fiber_channels(&[]).await?;
+        // (channels already fetched in parallel above)
         let used_outpoints = get_used_channel_outpoints(provider).await?;
         let mut compatible = None;
         let mut pending = None;
@@ -792,6 +807,25 @@ impl GatewayService {
             // How much rent is currently withdrawable from this match cell
             let extractable = rent_service::preview_extractable_from_chain(m, tip_block);
 
+            // Estimate remaining days before the match cell's rent is exhausted.
+            // escrow_blocks = total blocks the current capacity can sustain at the given rate.
+            // baseline = the block from which rent started accumulating (match_current_block
+            //   for never-extracted matches, last_extraction_block after each extraction).
+            // CKB block time ≈ 12 s → 7200 blocks/day.
+            let remaining_days: f64 = if m.match_data.shannons_per_block > 0 {
+                let escrow_blocks = m.ckb_capacity / m.match_data.shannons_per_block;
+                let baseline = if m.match_data.last_extraction_block == 0 {
+                    m.match_current_block
+                } else {
+                    m.match_data.last_extraction_block
+                };
+                let blocks_elapsed = tip_block.saturating_sub(baseline);
+                let remaining_blocks = escrow_blocks.saturating_sub(blocks_elapsed);
+                remaining_blocks as f64 / 7200.0
+            } else {
+                0.0
+            };
+
             // Get match creation timestamp (Unix milliseconds) from the match tx's block
             let created_at: Option<u64> = match provider.get_tx_block_number(&tx_hash).await {
                 Ok(block_number) if block_number > 0 => provider
@@ -816,6 +850,8 @@ impl GatewayService {
                 "extracted_total": extracted_total,
                 "extractable_shannons": extractable,
                 "created_at": created_at,
+                "remaining_days": remaining_days,
+                "tip_block": tip_block,
             }));
         }
 
@@ -968,11 +1004,17 @@ impl GatewayService {
         _pool: &DbPool,
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
-        let channels = provider.scan_fiber_channels(&[]).await?;
+        // Run channels scan and matches scan in parallel — they target
+        // different backends (Fiber node vs CKB indexer) and are independent.
+        let (channels_result, matches_result) = tokio::join!(
+            provider.scan_fiber_channels(&[]),
+            provider.scan_matches(),
+        );
+        let channels = channels_result?;
 
         // Scan on-chain matches — if it fails, still return channels without
         // match info rather than failing the whole request.
-        let matches = match provider.scan_matches().await {
+        let matches = match matches_result {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(
@@ -982,6 +1024,58 @@ impl GatewayService {
                 vec![]
             }
         };
+
+        Ok(channels
+            .into_iter()
+            .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
+            .map(|ch| {
+                let match_info = find_match_for_channel(&ch, &matches);
+                let match_status = if match_info.is_some() {
+                    "matched"
+                } else {
+                    "not_found"
+                };
+                ChannelWithMatch {
+                    channel: ch,
+                    match_info,
+                    match_status: match_status.to_string(),
+                }
+            })
+            .collect())
+    }
+
+    /// List all Fiber channels only (no match cross-referencing).
+    /// Fast path for progressive loading — the frontend calls this first to
+    /// render the channel table immediately, then calls `get_channel_matches`
+    /// to backfill match status.
+    pub async fn get_channels_only(
+        provider: &dyn ChainProvider,
+    ) -> Result<Vec<FiberChannelInfo>, AppError> {
+        let channels = provider.scan_fiber_channels(&[]).await?;
+        Ok(channels
+            .into_iter()
+            .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
+            .collect())
+    }
+
+    /// Cross-reference all Fiber channels with their on-chain match cells.
+    /// Returns a map from channel_id → match_info so the frontend can
+    /// progressively enrich an already-rendered channel table.
+    pub async fn get_channel_matches(
+        provider: &dyn ChainProvider,
+    ) -> Result<Vec<ChannelWithMatch>, AppError> {
+        let (channels_result, matches_result) = tokio::join!(
+            provider.scan_fiber_channels(&[]),
+            provider.scan_matches(),
+        );
+        let channels = channels_result?;
+        let matches = matches_result.unwrap_or_else(|e| {
+            tracing::warn!(
+                "Failed to scan on-chain matches for channel-matches: {}",
+                e
+            );
+            vec![]
+        });
 
         Ok(channels
             .into_iter()
