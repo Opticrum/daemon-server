@@ -5,6 +5,7 @@
 //! aggregate statistics (total extracted, per-match sums, monthly stats).
 
 use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Text};
 use diesel::sqlite::SqliteConnection;
 
 use crate::db::schema::extraction_history;
@@ -99,4 +100,89 @@ pub fn get_extractions_for_match(
         .order(extraction_history::id.desc())
         .load(conn)
         .map_err(AppError::from)
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard aggregation queries
+// ---------------------------------------------------------------------------
+
+/// A single day's aggregated extraction data.
+#[derive(QueryableByName, Debug)]
+pub struct DailyExtraction {
+    #[diesel(sql_type = Text)]
+    pub date: String,
+    #[diesel(sql_type = BigInt)]
+    pub total_extracted: i64,
+}
+
+/// Group extraction_history by date (YYYY-MM-DD) and sum amounts.
+/// Returns up to `limit` most recent days.
+pub fn get_daily_extractions(
+    conn: &mut SqliteConnection,
+    limit: i64,
+) -> Result<Vec<DailyExtraction>, AppError> {
+    diesel::sql_query(
+        "SELECT DATE(timestamp) as date, CAST(SUM(extracted_amount) AS BIGINT) as total_extracted \
+         FROM extraction_history \
+         GROUP BY DATE(timestamp) \
+         ORDER BY DATE(timestamp) DESC \
+         LIMIT :limit",
+    )
+    .bind::<BigInt, _>(limit)
+    .load(conn)
+    .map_err(AppError::from)
+}
+
+/// Get the last N extracted amounts in chronological order (for sparklines).
+pub fn get_recent_extraction_amounts(
+    conn: &mut SqliteConnection,
+    limit: i64,
+) -> Result<Vec<i64>, AppError> {
+    let rows: Vec<i64> = extraction_history::table
+        .select(extraction_history::extracted_amount)
+        .order(extraction_history::id.desc())
+        .limit(limit)
+        .load(conn)?;
+    Ok(rows)
+}
+
+/// Count extraction events grouped by day for the last N days (for sparklines).
+#[derive(QueryableByName, Debug)]
+pub struct DailyCount {
+    #[diesel(sql_type = BigInt)]
+    pub cnt: i64,
+}
+
+/// Get daily extraction counts for the last `days` days (for sparklines).
+pub fn get_daily_extraction_counts(
+    conn: &mut SqliteConnection,
+    days: i64,
+) -> Result<Vec<i64>, AppError> {
+    let rows: Vec<DailyCount> = diesel::sql_query(
+        "SELECT COUNT(*) as cnt \
+         FROM extraction_history \
+         WHERE timestamp >= DATE('now', :days_ago) \
+         GROUP BY DATE(timestamp) \
+         ORDER BY DATE(timestamp) ASC",
+    )
+    .bind::<Text, _>(format!("-{} days", days))
+    .load(conn)?;
+    Ok(rows.into_iter().map(|r| r.cnt).collect())
+}
+
+/// Get daily extraction revenue for the last `days` days (for sparklines).
+pub fn get_daily_extraction_revenue(
+    conn: &mut SqliteConnection,
+    days: i64,
+) -> Result<Vec<i64>, AppError> {
+    let rows: Vec<DailyExtraction> = diesel::sql_query(
+        "SELECT DATE(timestamp) as date, CAST(SUM(extracted_amount) AS BIGINT) as total_extracted \
+         FROM extraction_history \
+         WHERE timestamp >= DATE('now', :days_ago) \
+         GROUP BY DATE(timestamp) \
+         ORDER BY DATE(timestamp) ASC",
+    )
+    .bind::<Text, _>(format!("-{} days", days))
+    .load(conn)?;
+    Ok(rows.into_iter().map(|r| r.total_extracted).collect())
 }

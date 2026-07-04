@@ -70,10 +70,20 @@ export interface CycleStatus {
   last_error: string | null
 }
 
+export interface SchedulerEvent {
+  id: number
+  ts_ms: number
+  source: string
+  level: string
+  message: string
+}
+
 export interface SchedulerStatusResponse {
   extractor: CycleStatus
   matcher: CycleStatus
   tip_block: number
+  latest_event_id: number
+  events: SchedulerEvent[]
 }
 
 // ── Wallets ──
@@ -354,7 +364,7 @@ export interface UnsignedTx {
 }
 
 // ═══════════════════════════════════════════
-// Mock Data Types (for Dashboard charts)
+// Dashboard Chart Data Types
 // ═══════════════════════════════════════════
 
 export interface TrendDataPoint {
@@ -366,17 +376,4 @@ export interface DistributionItem {
   label: string
   value: number
   color: string
-}
-
-export interface MonthlyDataPoint {
-  month: string
-  matches: number
-  revenue: number
-}
-
-export interface RankingItem {
-  address: string
-  label: string
-  extracted: number
-  rating: number
 }

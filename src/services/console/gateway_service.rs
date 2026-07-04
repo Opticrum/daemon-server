@@ -57,11 +57,9 @@ pub struct DashboardResponse {
     // Chart data
     pub extraction_history: Vec<ExtractionPoint>,
     pub match_distribution: Vec<DistributionItem>,
-    pub monthly_stats: Vec<MonthlyPoint>,
-    pub top_sellers: Vec<SellerRanking>,
 
-    // Sparklines
-    pub sparklines: HashMap<String, Vec<u64>>,
+    /// Sparklines (values in CKB for monetary keys).
+    pub sparklines: HashMap<String, Vec<f64>>,
 
     // Scheduler snapshot
     pub scheduler: SchedulerStatusResponse,
@@ -79,7 +77,8 @@ pub struct KpiTrend {
 #[derive(Serialize, Debug)]
 pub struct ExtractionPoint {
     pub date: String,
-    pub value: u64,
+    /// Extracted amount in CKB (normalized from shannons).
+    pub value: f64,
 }
 
 #[derive(Serialize, Debug)]
@@ -90,18 +89,12 @@ pub struct DistributionItem {
 }
 
 #[derive(Serialize, Debug)]
-pub struct MonthlyPoint {
-    pub month: String,
-    pub matches: u64,
-    pub revenue: u64,
-}
-
-#[derive(Serialize, Debug)]
-pub struct SellerRanking {
-    pub address: String,
-    pub label: String,
-    pub extracted: u64,
-    pub rating: f64,
+pub struct SchedulerEventResponse {
+    pub id: u64,
+    pub ts_ms: u64,
+    pub source: String,
+    pub level: String,
+    pub message: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -109,6 +102,8 @@ pub struct SchedulerStatusResponse {
     pub extractor: CycleStatus,
     pub matcher: CycleStatus,
     pub tip_block: u64,
+    pub latest_event_id: u64,
+    pub events: Vec<SchedulerEventResponse>,
 }
 
 #[derive(Serialize, Debug)]
@@ -247,50 +242,45 @@ impl GatewayService {
             },
         ];
 
-        // Monthly stats: extract from extraction_history with SQL grouping
-        let monthly = Self::build_monthly_stats(&mut conn)?;
-
-        // Top sellers: group matches by seller_address, sum by extraction history
-        let top_sellers = Self::build_top_sellers(&mut conn)?;
-
-        // Sparklines: simple extraction history over last 12 records
+        // Sparklines: real daily-aggregated data from extraction_history
         let sparklines = Self::build_sparklines(&mut conn)?;
 
-        // Trends: placeholder (no previous-period data yet)
+        // Trends: current values from live data; deltas show 0 until
+        // previous-period tracking is added.
         let trends = vec![
             KpiTrend {
                 key: "matches".into(),
                 current: total_matches,
                 previous: 0,
-                delta_pct: 12.0,
+                delta_pct: 0.0,
                 delta_label: "较上月".into(),
             },
             KpiTrend {
                 key: "revenue".into(),
                 current: total_extracted,
                 previous: 0,
-                delta_pct: 8.0,
+                delta_pct: 0.0,
                 delta_label: "较上月".into(),
             },
             KpiTrend {
                 key: "orders".into(),
                 current: orders.len() as u64,
                 previous: 0,
-                delta_pct: -3.0,
+                delta_pct: 0.0,
                 delta_label: "较上月".into(),
             },
             KpiTrend {
                 key: "channels".into(),
                 current: channels.len() as u64,
                 previous: 0,
-                delta_pct: 5.0,
+                delta_pct: 0.0,
                 delta_label: "较上月".into(),
             },
             KpiTrend {
                 key: "extracted".into(),
                 current: total_extracted,
                 previous: 0,
-                delta_pct: 16.0,
+                delta_pct: 0.0,
                 delta_label: "较上月".into(),
             },
         ];
@@ -309,52 +299,76 @@ impl GatewayService {
             channel_count: channels.len() as u32,
             tip_block,
             trends,
-            extraction_history: vec![],
+            extraction_history: Self::build_extraction_history(&mut conn)?,
             match_distribution: distribution,
-            monthly_stats: monthly,
-            top_sellers,
             sparklines,
             scheduler: SchedulerStatusResponse {
                 extractor: CycleStatus::from(&s),
                 matcher: CycleStatus::from(&m),
                 tip_block,
+                latest_event_id: state.latest_event_id(),
+                events: vec![],
             },
         })
     }
 
-    fn build_monthly_stats(
-        _conn: &mut diesel::SqliteConnection,
-    ) -> Result<Vec<MonthlyPoint>, AppError> {
-        // Placeholder: real implementation groups extraction_history by month.
-        // For now return empty — the frontend will show empty chart until
-        // enough extraction data accumulates.
-        Ok(vec![])
-    }
+    /// Shannons → CKB conversion factor (1 CKB = 100,000,000 shannons).
+    const SHANNONS_PER_CKB: f64 = 100_000_000.0;
 
-    fn build_top_sellers(
-        _conn: &mut diesel::SqliteConnection,
-    ) -> Result<Vec<SellerRanking>, AppError> {
-        // Placeholder: real implementation joins tracked_matches with extraction_history
-        // and groups by seller_address.
-        Ok(vec![])
+    fn build_extraction_history(
+        conn: &mut diesel::SqliteConnection,
+    ) -> Result<Vec<ExtractionPoint>, AppError> {
+        let daily = match_db::get_daily_extractions(conn, 30)?;
+        // Reverse to chronological order (oldest first) for the trend chart.
+        let mut points: Vec<ExtractionPoint> = daily
+            .into_iter()
+            .map(|d| ExtractionPoint {
+                date: d.date,
+                value: d.total_extracted as f64 / Self::SHANNONS_PER_CKB,
+            })
+            .collect();
+        points.reverse();
+        Ok(points)
     }
 
     fn build_sparklines(
-        _conn: &mut diesel::SqliteConnection,
-    ) -> Result<HashMap<String, Vec<u64>>, AppError> {
+        conn: &mut diesel::SqliteConnection,
+    ) -> Result<HashMap<String, Vec<f64>>, AppError> {
         let mut map = HashMap::new();
+
+        // Match count sparkline: daily extraction event counts (not monetary).
+        let counts = match_db::get_daily_extraction_counts(conn, 12)?;
         map.insert(
             "matches".into(),
-            vec![12, 18, 15, 22, 19, 25, 30, 28, 35, 32, 38, 42],
+            counts.into_iter().map(|c| c as f64).collect(),
         );
+
+        // Revenue sparkline: daily extraction amounts in CKB.
+        let revenues = match_db::get_daily_extraction_revenue(conn, 12)?;
         map.insert(
             "revenue".into(),
-            vec![40, 38, 42, 35, 30, 32, 28, 25, 22, 20, 18, 15],
+            revenues
+                .into_iter()
+                .map(|v| v as f64 / Self::SHANNONS_PER_CKB)
+                .collect(),
         );
+
+        // Extracted sparkline: recent individual extraction amounts in CKB (chronological).
+        let amounts = match_db::get_recent_extraction_amounts(conn, 12)?;
         map.insert(
             "extracted".into(),
-            vec![10, 15, 12, 20, 18, 22, 28, 25, 30, 35, 32, 38],
+            amounts
+                .into_iter()
+                .rev()
+                .map(|v| v as f64 / Self::SHANNONS_PER_CKB)
+                .collect(),
         );
+
+        // Orders and channels sparklines: no historical data available yet,
+        // use empty arrays so the frontend renders gracefully.
+        map.insert("orders".into(), vec![]);
+        map.insert("channels".into(), vec![]);
+
         Ok(map)
     }
 
@@ -812,19 +826,20 @@ impl GatewayService {
             // baseline = the block from which rent started accumulating (match_current_block
             //   for never-extracted matches, last_extraction_block after each extraction).
             // CKB block time ≈ 12 s → 7200 blocks/day.
-            let remaining_days: f64 = if m.match_data.shannons_per_block > 0 {
-                let escrow_blocks = m.ckb_capacity / m.match_data.shannons_per_block;
-                let baseline = if m.match_data.last_extraction_block == 0 {
-                    m.match_current_block
-                } else {
-                    m.match_data.last_extraction_block
-                };
-                let blocks_elapsed = tip_block.saturating_sub(baseline);
-                let remaining_blocks = escrow_blocks.saturating_sub(blocks_elapsed);
-                remaining_blocks as f64 / 7200.0
-            } else {
-                0.0
-            };
+            let remaining_days: f64 = m
+                .ckb_capacity
+                .checked_div(m.match_data.shannons_per_block)
+                .map(|escrow_blocks| {
+                    let baseline = if m.match_data.last_extraction_block == 0 {
+                        m.match_current_block
+                    } else {
+                        m.match_data.last_extraction_block
+                    };
+                    let blocks_elapsed = tip_block.saturating_sub(baseline);
+                    let remaining_blocks = escrow_blocks.saturating_sub(blocks_elapsed);
+                    remaining_blocks as f64 / 7200.0
+                })
+                .unwrap_or(0.0);
 
             // Get match creation timestamp (Unix milliseconds) from the match tx's block
             let created_at: Option<u64> = match provider.get_tx_block_number(&tx_hash).await {
@@ -1006,10 +1021,8 @@ impl GatewayService {
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
         // Run channels scan and matches scan in parallel — they target
         // different backends (Fiber node vs CKB indexer) and are independent.
-        let (channels_result, matches_result) = tokio::join!(
-            provider.scan_fiber_channels(&[]),
-            provider.scan_matches(),
-        );
+        let (channels_result, matches_result) =
+            tokio::join!(provider.scan_fiber_channels(&[]), provider.scan_matches(),);
         let channels = channels_result?;
 
         // Scan on-chain matches — if it fails, still return channels without
@@ -1064,16 +1077,11 @@ impl GatewayService {
     pub async fn get_channel_matches(
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
-        let (channels_result, matches_result) = tokio::join!(
-            provider.scan_fiber_channels(&[]),
-            provider.scan_matches(),
-        );
+        let (channels_result, matches_result) =
+            tokio::join!(provider.scan_fiber_channels(&[]), provider.scan_matches(),);
         let channels = channels_result?;
         let matches = matches_result.unwrap_or_else(|e| {
-            tracing::warn!(
-                "Failed to scan on-chain matches for channel-matches: {}",
-                e
-            );
+            tracing::warn!("Failed to scan on-chain matches for channel-matches: {}", e);
             vec![]
         });
 
@@ -1209,11 +1217,23 @@ impl GatewayService {
     // Scheduler status
     // ═══════════════════════════════════════════════════════
 
-    pub fn get_scheduler_status(state: &SchedulerState) -> SchedulerStatusResponse {
+    pub fn get_scheduler_status(state: &SchedulerState, since: u64) -> SchedulerStatusResponse {
         SchedulerStatusResponse {
             extractor: CycleStatus::from(&state.extractor),
             matcher: CycleStatus::from(&state.matcher),
             tip_block: state.tip_block,
+            latest_event_id: state.latest_event_id(),
+            events: state
+                .events_since(since)
+                .into_iter()
+                .map(|e| SchedulerEventResponse {
+                    id: e.id,
+                    ts_ms: e.ts_ms,
+                    source: e.source,
+                    level: e.level,
+                    message: e.message,
+                })
+                .collect(),
         }
     }
 

@@ -206,10 +206,18 @@ onMounted(async () => {
 
 <template>
   <div class="page-matches">
-    <div class="page-header">
-      <h2 class="page-title">
-        {{ t('matches.title') }}
-      </h2>
+    <div class="filter-bar">
+      <div class="filter-tabs">
+        <button
+          v-for="f in filters"
+          :key="f.value"
+          class="filter-tab"
+          :class="{ active: filterStatus === f.value }"
+          @click="setFilter(f.value)"
+        >
+          {{ t(f.labelKey) }}
+        </button>
+      </div>
       <button
         class="btn btn-default"
         :disabled="loading"
@@ -219,17 +227,6 @@ onMounted(async () => {
           v-if="loading"
           class="spinner-sm"
         /> {{ loading ? t('common.loading') : t('matches.refresh') }}
-      </button>
-    </div>
-    <div class="filter-tabs">
-      <button
-        v-for="f in filters"
-        :key="f.value"
-        class="filter-tab"
-        :class="{ active: filterStatus === f.value }"
-        @click="setFilter(f.value)"
-      >
-        {{ t(f.labelKey) }}
       </button>
     </div>
     <EmptyState
@@ -419,9 +416,8 @@ onMounted(async () => {
 .page-matches :deep(.table-wrapper) { overflow: visible !important; }
 .page-matches :deep(.data-table td) { overflow: visible !important; }
 .page-matches :deep(.data-table tbody tr) { overflow: visible !important; }
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-md); }
-.page-title { font-size: var(--fs-h2); font-weight: var(--fw-h2); line-height: var(--lh-h2); color: var(--text-primary); }
-.filter-tabs { display: flex; gap: var(--space-xs); margin-bottom: var(--space-lg); }
+.filter-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); }
+.filter-tabs { display: flex; gap: var(--space-xs); }
 .filter-tab { padding: var(--space-xs) var(--space-md); border: 1px solid var(--border-dark); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-secondary); font-size: var(--fs-body); cursor: pointer; transition: all var(--transition-base); }
 .filter-tab:hover { color: var(--primary-500); border-color: var(--primary-500); } .filter-tab.active { background: var(--primary-500); border-color: var(--primary-500); color: #fff; }
 .tx-link { color: var(--primary-500); text-decoration: none; } .tx-link:hover { text-decoration: underline; }

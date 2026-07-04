@@ -58,4 +58,11 @@ pub trait Signer: Send + Sync {
 
     /// Human-readable label for this signer (e.g. "Internal", "JoyID").
     fn label(&self) -> &str;
+
+    /// Whether the signer is currently unlocked and able to sign.
+    /// Returns `true` by default — override for signers that can be locked
+    /// (e.g. HD wallet that requires a password).
+    fn is_unlocked(&self) -> bool {
+        true
+    }
 }

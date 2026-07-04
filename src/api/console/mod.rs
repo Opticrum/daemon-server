@@ -705,16 +705,14 @@ pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, A
 /// GET /api/console/channels-only — fast path: channels without match cross-referencing.
 /// The frontend calls this first to render the channel table immediately.
 pub async fn scan_channels_only(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let channels =
-        GatewayService::get_channels_only(state.chain_provider.as_ref()).await?;
+    let channels = GatewayService::get_channels_only(state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(channels))
 }
 
 /// GET /api/console/channel-matches — cross-reference channels with on-chain match cells.
 /// The frontend calls this after channels-only to progressively fill in match status.
 pub async fn scan_channel_matches(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let cwms =
-        GatewayService::get_channel_matches(state.chain_provider.as_ref()).await?;
+    let cwms = GatewayService::get_channel_matches(state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(cwms))
 }
 
@@ -816,7 +814,16 @@ pub async fn reset_runtime_config(state: web::Data<AppState>) -> Result<HttpResp
 // Scheduler
 // ═══════════════════════════════════════════════════════
 
-pub async fn scheduler_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+#[derive(Deserialize, Default)]
+pub struct SchedulerStatusQuery {
+    #[serde(default)]
+    pub since: u64,
+}
+
+pub async fn scheduler_status(
+    state: web::Data<AppState>,
+    query: web::Query<SchedulerStatusQuery>,
+) -> Result<HttpResponse, AppError> {
     let s = {
         let guard = state
             .scheduler_state
@@ -824,6 +831,6 @@ pub async fn scheduler_status(state: web::Data<AppState>) -> Result<HttpResponse
             .map_err(|e| AppError::Internal(format!("Scheduler state lock: {}", e)))?;
         guard.clone()
     };
-    let status = GatewayService::get_scheduler_status(&s);
+    let status = GatewayService::get_scheduler_status(&s, query.since);
     Ok(HttpResponse::Ok().json(status))
 }

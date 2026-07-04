@@ -19,6 +19,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
+use crate::services::console::scheduler_state::{push_event, trunc_hex, SharedSchedulerState};
 use crate::services::match_service::{
     wait_for_channel_ready, CHANNEL_CELL_OCCUPIED_RESERVE, CHANNEL_READY_TIMEOUT_SECS,
 };
@@ -34,7 +35,28 @@ pub async fn run_auto_match_cycle(
     chain_provider: &(dyn ChainProvider + Send + Sync),
     signer: &(dyn Signer + Send + Sync),
     runtime_config: &Arc<RwLock<RuntimeConfig>>,
+    scheduler_state: Option<&SharedSchedulerState>,
 ) -> Result<u64, AppError> {
+    push_event(
+        scheduler_state,
+        "matcher",
+        "info",
+        "Cycle started — scanning on-chain orders",
+    );
+
+    // Bail early if the signer is locked — don't waste chain resources
+    // opening channels we can't sign for.
+    if !signer.is_unlocked() {
+        debug!("Auto-match: HD wallet locked — skipping cycle");
+        push_event(
+            scheduler_state,
+            "matcher",
+            "warn",
+            "HD wallet locked — cycle skipped (no signing)",
+        );
+        return Ok(0);
+    }
+
     let (min_capacity, max_escrow_blocks) = {
         let rc = runtime_config.read().unwrap();
         if !rc.auto_match_enabled {
@@ -50,6 +72,17 @@ pub async fn run_auto_match_cycle(
     // Build dedup set from on-chain match cells (order outpoint matching)
     let on_chain_matches = chain_provider.scan_matches().await?;
 
+    push_event(
+        scheduler_state,
+        "matcher",
+        "info",
+        format!(
+            "Chain scan — {} live orders, {} on-chain matches",
+            orders.len(),
+            on_chain_matches.len()
+        ),
+    );
+
     // Build set of already-matched order outpoints from on-chain match data
     // Each MatchInfo has the order_args which can identify the order
     let matched_order_keys: HashSet<(String,)> = on_chain_matches
@@ -63,6 +96,12 @@ pub async fn run_auto_match_cycle(
 
     let mut matched_count = 0u64;
     let max_per_cycle = 10u64; // safety cap to avoid runaway matching
+    let mut skip_already_matched = 0u64;
+    let mut skip_low_capacity = 0u64;
+    let mut skip_high_escrow = 0u64;
+    let mut skip_open_channel = 0u64;
+    let mut skip_channel_ready = 0u64;
+    let mut skip_sign_locked = 0u64;
 
     for order in &orders {
         if matched_count >= max_per_cycle {
@@ -72,6 +111,7 @@ pub async fn run_auto_match_cycle(
         // Skip if already matched (dedup by fiber_pubkey)
         let order_key = (hex::encode(order.order_args.fiber_pubkey.to_bytes()),);
         if matched_order_keys.contains(&order_key) {
+            skip_already_matched += 1;
             continue;
         }
 
@@ -82,6 +122,7 @@ pub async fn run_auto_match_cycle(
                 min = min_capacity,
                 "Auto-match: skipped — capacity below minimum"
             );
+            skip_low_capacity += 1;
             continue;
         }
         // Derive effective escrow blocks from capacity / rent rate.
@@ -97,6 +138,7 @@ pub async fn run_auto_match_cycle(
                     max = max_escrow_blocks,
                     "Auto-match: skipped — escrow blocks above maximum"
                 );
+                skip_high_escrow += 1;
                 continue;
             }
         }
@@ -114,6 +156,16 @@ pub async fn run_auto_match_cycle(
             amount = required_capacity,
             "Auto-match: opening fresh channel"
         );
+        push_event(
+            scheduler_state,
+            "matcher",
+            "info",
+            format!(
+                "Opening Fiber channel — peer {} · capacity {} shannons",
+                trunc_hex(&fiber_pubkey_hex, 8, 6),
+                required_capacity
+            ),
+        );
         if let Err(e) = chain_provider
             .open_channel(&fiber_pubkey_hex, required_capacity)
             .await
@@ -122,6 +174,17 @@ pub async fn run_auto_match_cycle(
                 error = %e,
                 peer = %fiber_pubkey_hex,
                 "Auto-match: open_channel failed — skipping order"
+            );
+            skip_open_channel += 1;
+            push_event(
+                scheduler_state,
+                "matcher",
+                "warn",
+                format!(
+                    "open_channel failed for peer {} — {}",
+                    trunc_hex(&fiber_pubkey_hex, 8, 6),
+                    e
+                ),
             );
             continue;
         }
@@ -142,6 +205,17 @@ pub async fn run_auto_match_cycle(
                     peer = %fiber_pubkey_hex,
                     "Auto-match: channel did not become ready — skipping order"
                 );
+                skip_channel_ready += 1;
+                push_event(
+                    scheduler_state,
+                    "matcher",
+                    "warn",
+                    format!(
+                        "Channel not ready for peer {} — {}",
+                        trunc_hex(&fiber_pubkey_hex, 8, 6),
+                        e
+                    ),
+                );
                 continue;
             }
         };
@@ -149,6 +223,16 @@ pub async fn run_auto_match_cycle(
             channel_id = %channel.channel_id,
             tx_hash = %channel.tx_hash,
             "Auto-match: fresh channel ready"
+        );
+        push_event(
+            scheduler_state,
+            "matcher",
+            "info",
+            format!(
+                "Channel ready — {}:{}",
+                trunc_hex(&channel.tx_hash, 8, 6),
+                channel.output_index
+            ),
         );
 
         // Attempt to match
@@ -187,6 +271,7 @@ pub async fn run_auto_match_cycle(
                     "Auto-match: HD wallet is locked — skipping order {}",
                     hex::encode(order.order_outpoint.tx_hash)
                 );
+                skip_sign_locked += 1;
                 continue;
             }
         };
@@ -194,16 +279,65 @@ pub async fn run_auto_match_cycle(
         // Submit to chain
         let tx_hash = chain_provider.send_transaction(&signed_tx_hex).await?;
 
+        let order_tx = hex::encode(order.order_outpoint.tx_hash);
         info!(
-            order_tx = %hex::encode(order.order_outpoint.tx_hash),
+            order_tx = %order_tx,
             channel = %channel.tx_hash,
             channel_index = channel.output_index,
             match_tx = %tx_hash,
             "Auto-match: order matched"
         );
+        push_event(
+            scheduler_state,
+            "matcher",
+            "info",
+            format!(
+                "Match submitted — order {}:{} → match tx {}",
+                trunc_hex(&order_tx, 8, 6),
+                order.order_outpoint.index,
+                trunc_hex(&tx_hash, 8, 6)
+            ),
+        );
 
         matched_count += 1;
         // The match cell is now on-chain — no DB write needed.
+    }
+
+    let total_skipped = skip_already_matched
+        + skip_low_capacity
+        + skip_high_escrow
+        + skip_open_channel
+        + skip_channel_ready
+        + skip_sign_locked;
+    if total_skipped > 0 {
+        push_event(
+            scheduler_state,
+            "matcher",
+            "info",
+            format!(
+                "Cycle finished — matched {}, skipped {} (already matched {}, low capacity {}, high escrow {}, open_channel {}, channel ready {}, sign locked {}) of {} orders",
+                matched_count,
+                total_skipped,
+                skip_already_matched,
+                skip_low_capacity,
+                skip_high_escrow,
+                skip_open_channel,
+                skip_channel_ready,
+                skip_sign_locked,
+                orders.len()
+            ),
+        );
+    } else {
+        push_event(
+            scheduler_state,
+            "matcher",
+            "info",
+            format!(
+                "Cycle finished — {} matched of {} orders scanned",
+                matched_count,
+                orders.len()
+            ),
+        );
     }
 
     if matched_count > 0 {

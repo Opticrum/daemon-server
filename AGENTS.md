@@ -11,6 +11,7 @@
 - Admin panel title is "Opticrum Admin Console" / "Opticrum 管理控制台" (i18n in `web-console/src/locales/`).
 - Transaction signing uses the built-in HD wallet only (`HdWalletSigner`); external signing and unsigned-transaction queue UI/routes were removed.
 - HD wallet signing keys load into memory when the user unlocks the keystore in Wallet Management; auto-match skips when the wallet is locked.
-- Wallet unlock persists for 1 hour via an HttpOnly cookie (`opticrum_wallet_session`); the password stays in server RAM only and sessions are lost on server restart.
+- Wallet unlock uses an HttpOnly cookie (`opticrum_wallet_session`) with sliding expiry; the password stays in server RAM only and sessions are lost on server restart. Admin copy should not describe a timed auto-lock—unlock stays active until the user disables automation, resets config, or refreshes the page.
+- System Settings includes a foldable Automation Console (`AutomationConsole.vue`) that polls `/api/console/scheduler/status` when expanded to monitor auto-match and rent-extraction cycles.
 - HD wallet CKB addresses and lock hashes must match ckb-cli/ckb-sdk (BIP32 path `m/44'/309'/0'/0/0` with normal derivation for the last two segments; CKB2021 bech32m addresses).
 - On-chain CKB balances are queried via the CKB indexer using lock args decoded from each wallet's `ckb_address`.

@@ -363,10 +363,8 @@ onMounted(async () => {
 
 <template>
   <div class="page-orders">
-    <div class="page-header">
-      <h2 class="page-title">
-        {{ t("orders.title") }}
-      </h2>
+    <div class="toolbar">
+      <div class="toolbar-spacer" />
       <button
         class="btn btn-primary"
         :disabled="loading"
@@ -579,17 +577,14 @@ onMounted(async () => {
 .page-orders :deep(.fiber-key-cell:hover) {
   color: var(--primary-500);
 }
-.page-header {
+.toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-sm);
   margin-bottom: var(--space-xl);
 }
-.page-title {
-  font-size: var(--fs-h2);
-  font-weight: var(--fw-h2);
-  line-height: var(--lh-h2);
-  color: var(--text-primary);
+.toolbar-spacer {
+  flex: 1;
 }
 .btn {
   display: inline-flex;

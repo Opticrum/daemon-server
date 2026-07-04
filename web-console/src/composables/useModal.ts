@@ -10,7 +10,7 @@ export interface ModalOptions {
   danger?: boolean
   wide?: boolean
   extra?: Component
-  onConfirm?: () => void | Promise<void>
+  onConfirm?: () => void | boolean | Promise<void | boolean>
   onCancel?: () => void
 }
 
@@ -27,7 +27,7 @@ export function useModal() {
   const extra: Ref<Component | undefined> = ref(undefined)
   const loading = ref(false)
 
-  let pendingConfirm: (() => void | Promise<void>) | undefined
+  let pendingConfirm: (() => void | boolean | Promise<void | boolean>) | undefined
 
   function show(opts: ModalOptions) {
     title.value = opts.title
@@ -53,11 +53,17 @@ export function useModal() {
   async function onConfirm() {
     if (pendingConfirm) {
       loading.value = true
+      let shouldHide = true
       try {
-        await pendingConfirm()
+        const result = await pendingConfirm()
+        if (result === false) shouldHide = false
+      } catch {
+        shouldHide = false
       } finally {
         loading.value = false
       }
+      if (shouldHide) hide()
+      return
     }
     hide()
   }

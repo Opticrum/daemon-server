@@ -141,6 +141,10 @@ export function useApi() {
     resetRuntimeConfig: (): Promise<RuntimeConfig> =>
       request('/console/runtime-config/reset', { method: 'POST' }),
 
+    // ── Scheduler ──
+    getSchedulerStatus: (since = 0): Promise<SchedulerStatusResponse> =>
+      request(`/console/scheduler/status?since=${since}`),
+
     // ── Server Info ──
     getServerInfo: (): Promise<ServerInfo> =>
       request('/console/server-info'),
@@ -165,8 +169,6 @@ export interface DashboardResponse {
   trends: KpiTrendItem[]
   extraction_history: { date: string; value: number }[]
   match_distribution: { label: string; value: number; color: string }[]
-  monthly_stats: { month: string; matches: number; revenue: number }[]
-  top_sellers: { address: string; label: string; extracted: number; rating: number }[]
   sparklines: Record<string, number[]>
   scheduler: SchedulerStatusResponse
 }

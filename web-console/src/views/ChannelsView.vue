@@ -274,12 +274,6 @@ function showMatchDetail(channel: ChannelWithMatch) {
 
 <template>
   <div class="page-channels">
-    <div class="page-header">
-      <h2 class="page-title">
-        {{ t("channels.title") }}
-      </h2>
-    </div>
-
     <!-- Fiber Node Info Card (foldable) -->
     <div class="card node-info-card">
       <div
@@ -498,19 +492,6 @@ function showMatchDetail(channel: ChannelWithMatch) {
   max-width: 1200px;
   margin: 0 auto;
 }
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  font-size: var(--fs-h2);
-  font-weight: var(--fw-h2);
-  line-height: var(--lh-h2);
-  color: var(--text-primary);
-}
-
 /* Node Info Card */
 .node-info-card {
   margin-bottom: var(--space-xl);

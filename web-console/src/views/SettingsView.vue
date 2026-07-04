@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted, inject } from "vue";
+import { ref, onMounted, inject, h } from "vue";
 import { useApi } from "@/composables/useApi";
 import { useI18n } from "@/composables/useI18n";
 import StatusTag from "@/components/ui/StatusTag.vue";
+import AutomationUnlockForm from "@/components/ui/AutomationUnlockForm.vue";
+import AutomationConsole from "@/components/ui/AutomationConsole.vue";
 import type { RuntimeConfig, ServerInfo } from "@/types/api";
 
 const api = useApi();
 const { t } = useI18n();
 const toast = inject<any>("toast")!;
+const modal = inject<any>("modal")!;
 
 const activeTab = ref<"auto-match" | "rent-extraction" | "network">(
   "auto-match",
@@ -73,18 +76,77 @@ function cancelEditingNetwork() {
   editingNetwork.value = false;
 }
 
+async function doSaveConfig() {
+  const updated = await api.updateRuntimeConfig(editForm.value);
+  config.value = updated;
+  editForm.value = { ...updated };
+  editingMatch.value = false;
+  editingRent.value = false;
+  editingNetwork.value = false;
+}
+
+function promptUnlockThenSave() {
+  const pw = ref('')
+  const err = ref('')
+  modal.show({
+    title: t('settings.unlockToEnable'),
+    content: {
+      setup() {
+        return () => h(AutomationUnlockForm, {
+          password: pw.value,
+          error: err.value,
+          'onUpdate:password': (value: string) => {
+            pw.value = value
+            err.value = ''
+          },
+        })
+      },
+    },
+    confirmText: t('settings.unlockAndSave'),
+    onConfirm: async () => {
+      if (!pw.value) {
+        err.value = t('wallets.fillRequired')
+        return false
+      }
+      try {
+        await api.unlockWallet({ password: pw.value })
+        await doSaveConfig()
+        toast.success(t('settings.configSaved'))
+      } catch (e: any) {
+        err.value = e.message || t('settings.configSaveFailed')
+        return false
+      }
+    },
+    onCancel: () => modal.hide(),
+  })
+}
+
 async function saveConfig() {
+  const enablingAutoMatch =
+    editForm.value.auto_match_enabled && !config.value?.auto_match_enabled
+  const enablingRentExtraction =
+    editForm.value.rent_extraction_enabled &&
+    !config.value?.rent_extraction_enabled
+
+  if (enablingAutoMatch || enablingRentExtraction) {
+    let sessionActive = false
+    try {
+      sessionActive = (await api.getWalletSession()).active
+    } catch {
+      // can't check session — prompt for unlock to be safe
+    }
+    if (!sessionActive) {
+      promptUnlockThenSave()
+      return
+    }
+  }
+
   try {
-    const updated = await api.updateRuntimeConfig(editForm.value);
-    toast.success(t("settings.configSaved"));
-    config.value = updated;
-    editForm.value = { ...updated };
-    editingMatch.value = false;
-    editingRent.value = false;
-    editingNetwork.value = false;
+    await doSaveConfig()
+    toast.success(t('settings.configSaved'))
   } catch (e: any) {
-    console.error("Failed to save config:", e);
-    toast.error(e.message || t("settings.configSaveFailed"));
+    console.error('Failed to save config:', e)
+    toast.error(e.message || t('settings.configSaveFailed'))
   }
 }
 
@@ -120,9 +182,6 @@ onMounted(() => {
 
 <template>
   <div class="page-settings">
-    <h2 class="page-title">
-      {{ t("settings.title") }}
-    </h2>
     <div class="sub-tabs">
       <button
         class="sub-tab"
@@ -480,6 +539,12 @@ onMounted(() => {
         {{ t("common.loading") }}
       </div>
     </div>
+
+    <AutomationConsole
+      v-if="config"
+      :auto-match-enabled="config.auto_match_enabled"
+      :rent-extraction-enabled="config.rent_extraction_enabled"
+    />
   </div>
 </template>
 
@@ -487,13 +552,6 @@ onMounted(() => {
 .page-settings {
   max-width: 900px;
   margin: 0 auto;
-}
-.page-title {
-  font-size: var(--fs-h2);
-  font-weight: var(--fw-h2);
-  line-height: var(--lh-h2);
-  color: var(--text-primary);
-  margin-bottom: var(--space-lg);
 }
 .sub-tabs {
   display: flex;

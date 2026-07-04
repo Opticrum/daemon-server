@@ -17,7 +17,7 @@ use std::time::Instant;
 use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::{
-    record_error, record_success, set_tip_block, SharedSchedulerState,
+    push_event, record_error, record_success, set_tip_block, SharedSchedulerState,
 };
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::signer::Signer;
@@ -67,6 +67,7 @@ pub fn spawn_schedulers(
                 cp_ext.as_ref(),
                 tx_assembler_ext.as_ref(),
                 Some(signer_ext.as_ref()),
+                Some(&state_ext),
             )
             .await
             {
@@ -82,7 +83,14 @@ pub fn spawn_schedulers(
                 }
                 Err(e) => {
                     let _elapsed = started.elapsed();
-                    record_error(&state_ext, |s| &mut s.extractor, &e.to_string());
+                    let msg = e.to_string();
+                    record_error(&state_ext, |s| &mut s.extractor, &msg);
+                    push_event(
+                        Some(&state_ext),
+                        "extractor",
+                        "error",
+                        format!("Cycle failed — {msg}"),
+                    );
                     tracing::error!(error = %e, "Extraction cycle failed");
                 }
             }
@@ -112,8 +120,13 @@ pub fn spawn_schedulers(
             }
 
             let started = Instant::now();
-            match auto_matcher::run_auto_match_cycle(cp_am.as_ref(), signer_am.as_ref(), &rc_am)
-                .await
+            match auto_matcher::run_auto_match_cycle(
+                cp_am.as_ref(),
+                signer_am.as_ref(),
+                &rc_am,
+                Some(&state_am),
+            )
+            .await
             {
                 Ok(n) => {
                     let elapsed = started.elapsed();
@@ -124,7 +137,14 @@ pub fn spawn_schedulers(
                 }
                 Err(e) => {
                     let _elapsed = started.elapsed();
-                    record_error(&state_am, |s| &mut s.matcher, &e.to_string());
+                    let msg = e.to_string();
+                    record_error(&state_am, |s| &mut s.matcher, &msg);
+                    push_event(
+                        Some(&state_am),
+                        "matcher",
+                        "error",
+                        format!("Cycle failed — {msg}"),
+                    );
                     tracing::error!(error = %e, "Auto-match cycle failed");
                 }
             }

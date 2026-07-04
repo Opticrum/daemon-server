@@ -1,42 +1,36 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useApi, type DashboardResponse } from '@/composables/useApi'
-import { useI18n } from '@/composables/useI18n'
-import { formatNumber, formatCKB } from '@/utils/format'
-import KpiCard from '@/components/ui/KpiCard.vue'
-import ChartCard from '@/components/ui/ChartCard.vue'
-import TrendChart from '@/components/charts/TrendChart.vue'
-import DonutChart from '@/components/charts/DonutChart.vue'
-import BarChart from '@/components/charts/BarChart.vue'
-import RankingBar from '@/components/charts/RankingBar.vue'
+import { ref, onMounted } from "vue";
+import { useApi, type DashboardResponse } from "@/composables/useApi";
+import { useI18n } from "@/composables/useI18n";
+import { formatNumber, formatCKB } from "@/utils/format";
+import KpiCard from "@/components/ui/KpiCard.vue";
+import ChartCard from "@/components/ui/ChartCard.vue";
+import TrendChart from "@/components/charts/TrendChart.vue";
+import DonutChart from "@/components/charts/DonutChart.vue";
 
-const api = useApi()
-const { t } = useI18n()
+const api = useApi();
+const { t } = useI18n();
 
-const dash = ref<DashboardResponse | null>(null)
-const loading = ref(true)
+const dash = ref<DashboardResponse | null>(null);
+const loading = ref(true);
 
 onMounted(async () => {
   try {
-    dash.value = await api.getDashboard()
+    dash.value = await api.getDashboard();
   } catch (e) {
-    console.error('Failed to load dashboard:', e)
+    console.error("Failed to load dashboard:", e);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-})
+});
 
 function findTrend(key: string) {
-  return dash.value?.trends?.find(trend => trend.key === key)
+  return dash.value?.trends?.find((trend) => trend.key === key);
 }
 </script>
 
 <template>
   <div class="dashboard">
-    <h2 class="page-title">
-      {{ t('dashboard.title') }}
-    </h2>
-
     <div class="kpi-grid">
       <KpiCard
         :title="t('dashboard.totalMatches')"
@@ -47,7 +41,11 @@ function findTrend(key: string) {
       />
       <KpiCard
         :title="t('dashboard.monthlyRevenue')"
-        :value="dash ? `¥${formatNumber(dash.total_extracted_shannons / 100_000_000)}` : '—'"
+        :value="
+          dash
+            ? `¥${formatNumber(dash.total_extracted_shannons / 100_000_000)}`
+            : '—'
+        "
         :unit="t('common.CKB')"
         :trend="findTrend('revenue')?.delta_pct"
         :sparkline-data="dash?.sparklines?.revenue"
@@ -57,14 +55,14 @@ function findTrend(key: string) {
         :value="dash?.active_orders_count ?? '—'"
         :unit="t('dashboard.orders')"
         :trend="findTrend('orders')?.delta_pct"
-        :sparkline-data="dash?.sparklines?.revenue"
+        :sparkline-data="dash?.sparklines?.orders"
       />
       <KpiCard
         :title="t('dashboard.availChannels')"
         :value="dash?.channel_count ?? '—'"
         :unit="t('dashboard.channels')"
         :trend="findTrend('channels')?.delta_pct"
-        :sparkline-data="dash?.sparklines?.revenue"
+        :sparkline-data="dash?.sparklines?.channels"
       />
       <KpiCard
         :title="t('dashboard.totalExtracted')"
@@ -98,43 +96,63 @@ function findTrend(key: string) {
         />
       </ChartCard>
     </div>
-
-    <div class="chart-row">
-      <ChartCard
-        :title="t('dashboard.monthlyMatch')"
-        :loading="loading"
-        class="chart-col-14"
-      >
-        <BarChart
-          v-if="dash?.monthly_stats?.length"
-          :data="dash.monthly_stats"
-        />
-      </ChartCard>
-      <ChartCard
-        :title="t('dashboard.topSellers')"
-        :loading="loading"
-        class="chart-col-10"
-      >
-        <RankingBar
-          v-if="dash?.top_sellers?.length"
-          :data="dash.top_sellers"
-        />
-      </ChartCard>
-    </div>
   </div>
 </template>
 
 <style scoped>
-.dashboard { max-width: 1440px; margin: 0 auto; }
-.page-title { font-size: var(--fs-h2); font-weight: var(--fw-h2); line-height: var(--lh-h2); color: var(--text-primary); margin-bottom: var(--space-xl); }
-.kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-md); margin-bottom: var(--space-md); }
-.chart-row { display: grid; grid-template-columns: repeat(24, 1fr); gap: var(--space-md); margin-bottom: var(--space-md); }
-.chart-col-16 { grid-column: span 16; }
-.chart-col-14 { grid-column: span 14; }
-.chart-col-10 { grid-column: span 10; }
-.chart-col-8  { grid-column: span 8; }
-@media (max-width: 1439px) { .kpi-grid { grid-template-columns: repeat(4, 1fr); } .chart-col-16, .chart-col-14 { grid-column: span 16; } .chart-col-10, .chart-col-8 { grid-column: span 8; } }
-@media (max-width: 1199px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } .chart-row { grid-template-columns: 1fr; } .chart-col-16, .chart-col-14, .chart-col-10, .chart-col-8 { grid-column: span 1; } }
-@media (max-width: 991px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 767px) { .kpi-grid { grid-template-columns: 1fr; } }
+.dashboard {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.chart-col-16 {
+  grid-column: span 16;
+}
+.chart-col-8 {
+  grid-column: span 8;
+}
+@media (max-width: 1439px) {
+  .kpi-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .chart-col-16 {
+    grid-column: span 16;
+  }
+  .chart-col-8 {
+    grid-column: span 8;
+  }
+}
+@media (max-width: 1199px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .chart-row {
+    grid-template-columns: 1fr;
+  }
+  .chart-col-16,
+  .chart-col-8 {
+    grid-column: span 1;
+  }
+}
+@media (max-width: 991px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 767px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

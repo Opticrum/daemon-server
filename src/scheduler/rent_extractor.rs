@@ -12,6 +12,7 @@ use crate::db::wallets as wallet_db;
 use crate::db::DbPool;
 use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
+use crate::services::console::scheduler_state::{push_event, trunc_hex, SharedSchedulerState};
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::rent_service::{self, preview_extractable_from_chain, ExtractRentOptions};
 use crate::services::transaction_assembler::TransactionAssembler;
@@ -25,12 +26,26 @@ pub async fn run_extraction_cycle(
     provider: &(dyn ChainProvider + Send + Sync),
     tx_assembler: Option<&TransactionAssembler>,
     signer: Option<&HdWalletSigner>,
+    scheduler_state: Option<&SharedSchedulerState>,
 ) -> Result<u64, AppError> {
+    push_event(
+        scheduler_state,
+        "extractor",
+        "info",
+        "Cycle started — scanning managed match cells",
+    );
+
     let mut conn = pool.get()?;
 
     let wallets = wallet_db::list_wallets(&mut conn)?;
     if wallets.is_empty() {
         debug!("Rent extraction: no managed wallets — skipping cycle");
+        push_event(
+            scheduler_state,
+            "extractor",
+            "info",
+            "No managed wallets — cycle skipped",
+        );
         return Ok(0);
     }
 
@@ -38,6 +53,12 @@ pub async fn run_extraction_cycle(
         let unlocked = signer.map(HdWalletSigner::is_unlocked).unwrap_or(false);
         if !unlocked {
             debug!("Rent extraction: HD wallet locked — skipping cycle");
+            push_event(
+                scheduler_state,
+                "extractor",
+                "warn",
+                "HD wallet locked — cycle skipped (no signing)",
+            );
             return Ok(0);
         }
     }
@@ -59,8 +80,25 @@ pub async fn run_extraction_cycle(
 
     if managed_matches.is_empty() {
         debug!("Rent extraction: no managed match cells on chain — skipping cycle");
+        push_event(
+            scheduler_state,
+            "extractor",
+            "info",
+            format!("Tip #{tip_block} — no managed match cells on chain"),
+        );
         return Ok(0);
     }
+
+    push_event(
+        scheduler_state,
+        "extractor",
+        "info",
+        format!(
+            "Tip #{tip_block} — {} managed match cells (min extract {} shannons)",
+            managed_matches.len(),
+            min_extraction_amount_shannons
+        ),
+    );
 
     let opts = ExtractRentOptions {
         tx_assembler,
@@ -70,16 +108,20 @@ pub async fn run_extraction_cycle(
 
     let mut total_extracted = 0u64;
     let mut extractions = 0u32;
+    let mut below_threshold = 0u32;
+    let mut failed = 0u32;
 
     for m in &managed_matches {
         let extractable = preview_extractable_from_chain(m, tip_block);
 
         if extractable < min_extraction_amount_shannons || extractable == 0 {
+            below_threshold += 1;
             continue;
         }
 
         let tx_hash_hex = hex::encode(m.match_outpoint.tx_hash);
         let outpoint_index = m.match_outpoint.index;
+        let cell_label = format!("{}:{}", trunc_hex(&tx_hash_hex, 8, 6), outpoint_index);
 
         match rent_service::extract_rent(provider, pool, &tx_hash_hex, outpoint_index, &opts).await
         {
@@ -93,15 +135,54 @@ pub async fn run_extraction_cycle(
                     tip_block,
                     "Rent extracted"
                 );
+                push_event(
+                    scheduler_state,
+                    "extractor",
+                    "info",
+                    format!(
+                        "Rent extracted — cell {cell_label} · {} shannons · tx {}",
+                        result.extracted_amount,
+                        trunc_hex(&result.tx_hash, 8, 6)
+                    ),
+                );
             }
             Err(e) => {
+                failed += 1;
                 warn!(
                     match_cell = %format!("{tx_hash_hex}:{outpoint_index}"),
                     error = %e,
                     "Rent extraction skipped for match"
                 );
+                push_event(
+                    scheduler_state,
+                    "extractor",
+                    "warn",
+                    format!("Extract failed for cell {cell_label} — {e}"),
+                );
             }
         }
+    }
+
+    if extractions == 0 {
+        push_event(
+            scheduler_state,
+            "extractor",
+            "info",
+            format!(
+                "Cycle finished — nothing extracted ({} cells below threshold, {} failed)",
+                below_threshold, failed
+            ),
+        );
+    } else {
+        push_event(
+            scheduler_state,
+            "extractor",
+            "info",
+            format!(
+                "Cycle finished — {} extraction(s), {} shannons total ({} below threshold, {} failed)",
+                extractions, total_extracted, below_threshold, failed
+            ),
+        );
     }
 
     if extractions > 0 {
@@ -138,7 +219,7 @@ mod tests {
     async fn no_wallets_no_extraction() {
         let pool = db::init_test_db();
         let provider = test_provider();
-        let extracted = run_extraction_cycle(&pool, 1000, &provider, None, None)
+        let extracted = run_extraction_cycle(&pool, 1000, &provider, None, None, None)
             .await
             .unwrap();
         assert_eq!(extracted, 0);
@@ -164,7 +245,7 @@ mod tests {
         .unwrap();
 
         // No matches on chain → should return 0
-        let extracted = run_extraction_cycle(&pool, 1000, &provider, None, None)
+        let extracted = run_extraction_cycle(&pool, 1000, &provider, None, None, None)
             .await
             .unwrap();
         assert_eq!(extracted, 0);

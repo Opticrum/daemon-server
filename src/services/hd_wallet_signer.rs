@@ -108,6 +108,13 @@ impl Default for HdWalletSigner {
 
 #[async_trait]
 impl Signer for HdWalletSigner {
+    fn is_unlocked(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|inner| !inner.keys.is_empty())
+            .unwrap_or(false)
+    }
+
     async fn sign(&self, request: SignRequest) -> Result<SignResult, AppError> {
         let inner = self
             .inner

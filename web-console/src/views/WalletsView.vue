@@ -319,12 +319,6 @@ onMounted(async () => {
 
 <template>
   <div class="page-wallets">
-    <div class="page-header">
-      <h2 class="page-title">
-        {{ t('wallets.title') }}
-      </h2>
-    </div>
-
     <!-- Mnemonic display (shown once after creation) -->
     <div
       v-if="showMnemonic"
@@ -549,8 +543,6 @@ onMounted(async () => {
 
 <style scoped>
 .page-wallets { max-width: 1200px; margin: 0 auto; }
-.page-header { margin-bottom: var(--space-xl); }
-.page-title { font-size: var(--fs-h2); font-weight: var(--fw-h2); color: var(--text-primary); }
 
 .card { background: var(--bg-card); border-radius: var(--radius-lg); border: 1px solid var(--border-light); box-shadow: var(--shadow-base); padding: var(--space-xl); }
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); }

@@ -23,6 +23,15 @@ cd web-console && npm run lint       # ESLint — zero errors AND zero warnings 
 cd web-console && npm run build      # Frontend build
 ```
 
+## Output Convention
+
+**At the end of every response**, append a `_Skills used:_` line listing the skills invoked during that prompt execution. If no skills were used, write `_Skills used: none_`. This provides an audit trail of which project skills were triggered per turn.
+
+_Example:_
+```
+_Skills used: systematic-debugging, verify_
+```
+
 ## Architecture
 
 This is an actix-web 4 REST API + background service for the Opticrum/Fiber decentralized liquidity marketplace on CKB (Nervos). It wraps the `opticrum-calculator` crate into an HTTP server with managed wallets, SQLite persistence, and an automated rent extraction scheduler.
