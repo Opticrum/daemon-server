@@ -372,7 +372,6 @@ mod tests {
     #[actix_rt::test]
     async fn match_order_fails_when_order_not_on_chain() {
         let provider = MockChainProvider::new();
-
         let result = match_order(&provider, "order_not_found", 0, "ckt1q...seller").await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -391,8 +390,6 @@ mod tests {
     #[actix_rt::test]
     async fn match_order_no_channels_attempts_open() {
         let provider = MockChainProvider::new();
-
-        // No orders on chain, no channels → fails at order lookup first.
         let result = match_order(&provider, "any_order", 0, "ckt1q...seller").await;
         assert!(result.is_err());
 

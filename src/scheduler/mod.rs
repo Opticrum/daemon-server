@@ -1,20 +1,14 @@
-//! Background scheduler — spawns the rent extraction loop and auto-matcher.
-//!
-//! The extractor runs on a configurable interval, scanning the chain
-//! for managed matches and automatically extracting rent.
-//! The auto-matcher scans for new on-chain orders and matches them
-//! against available Fiber channels when enabled.
-//!
-//! Both loops read `RuntimeConfig` from an `Arc<RwLock<>>` at the start of
-//! each cycle, so runtime config changes take effect without a restart.
+//! Background scheduler — spawns the chain indexer, rent extraction loop, and auto-matcher.
 
 pub mod auto_matcher;
+pub mod chain_indexer;
 pub mod rent_extractor;
 
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use crate::db::DbPool;
+use crate::services::chain_cache::SharedChainCache;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::{
     push_event, record_error, record_success, set_tip_block, SharedSchedulerState,
@@ -24,16 +18,24 @@ use crate::services::signer::Signer;
 use crate::services::transaction_assembler::TransactionAssembler;
 use crate::services::RuntimeConfig;
 
-/// Spawn all background tasks: rent extractor and auto-matcher.
+/// Spawn all background tasks: chain indexer, rent extractor, and auto-matcher.
 pub fn spawn_schedulers(
     pool: DbPool,
     runtime_config: Arc<RwLock<RuntimeConfig>>,
     chain_provider: Arc<dyn ChainProvider>,
+    inner_provider: Arc<dyn ChainProvider>,
+    chain_cache: SharedChainCache,
     signer: Arc<HdWalletSigner>,
     tx_assembler: Option<TransactionAssembler>,
     scheduler_state: SharedSchedulerState,
 ) {
-    // Rent extractor
+    chain_indexer::spawn_chain_indexer(
+        chain_cache,
+        runtime_config.clone(),
+        inner_provider,
+        scheduler_state.clone(),
+    );
+
     let pool_ext = pool.clone();
     let rc_ext = runtime_config.clone();
     let cp_ext = chain_provider.clone();
@@ -55,7 +57,6 @@ pub fn spawn_schedulers(
             };
 
             if !enabled {
-                tracing::debug!("Rent extraction disabled, sleeping");
                 tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
                 continue;
             }
@@ -74,15 +75,11 @@ pub fn spawn_schedulers(
                 Ok(extracted) => {
                     let elapsed = started.elapsed();
                     record_success(&state_ext, |s| &mut s.extractor, elapsed, extracted);
-                    if extracted > 0 {
-                        tracing::debug!(extracted, "Extraction cycle");
-                    }
                     if let Ok(tip) = cp_ext.get_tip_block_number().await {
                         set_tip_block(&state_ext, tip);
                     }
                 }
                 Err(e) => {
-                    let _elapsed = started.elapsed();
                     let msg = e.to_string();
                     record_error(&state_ext, |s| &mut s.extractor, &msg);
                     push_event(
@@ -99,7 +96,6 @@ pub fn spawn_schedulers(
         }
     });
 
-    // Auto-matcher
     let rc_am = runtime_config;
     let cp_am = chain_provider;
     let signer_am: Arc<dyn Signer> = signer;
@@ -129,14 +125,9 @@ pub fn spawn_schedulers(
             .await
             {
                 Ok(n) => {
-                    let elapsed = started.elapsed();
-                    record_success(&state_am, |s| &mut s.matcher, elapsed, n);
-                    if n > 0 {
-                        tracing::debug!(matched = n, "Auto-match cycle");
-                    }
+                    record_success(&state_am, |s| &mut s.matcher, started.elapsed(), n);
                 }
                 Err(e) => {
-                    let _elapsed = started.elapsed();
                     let msg = e.to_string();
                     record_error(&state_am, |s| &mut s.matcher, &msg);
                     push_event(
@@ -145,7 +136,6 @@ pub fn spawn_schedulers(
                         "error",
                         format!("Cycle failed — {msg}"),
                     );
-                    tracing::error!(error = %e, "Auto-match cycle failed");
                 }
             }
 

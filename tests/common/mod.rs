@@ -6,7 +6,10 @@ use opticrum_calculator::types::MatchInfo;
 use opticrum_protocol::{CompressedPubkey, MatchArgs, MatchData, OrderArgs, OutPoint};
 
 use rust_server::db;
+use rust_server::services::cached_chain_provider::CachedChainProvider;
+use rust_server::services::chain_cache::ChainCache;
 use rust_server::services::chain_provider::{CellOutput, MockChainProvider};
+use std::sync::{Arc, RwLock};
 
 /// Create an in-memory SQLite database with all migrations applied.
 pub fn test_db() -> rust_server::db::DbPool {
@@ -76,29 +79,40 @@ pub fn test_app_state() -> rust_server::api::AppState {
         auto_match_min_capacity: 10_000_000_000,
         auto_match_max_escrow_blocks: 432_000,
         auto_match_interval_secs: 120,
+        chain_cache_enabled: true,
+        chain_cache_interval_secs: 30,
         keystore_path: "data/keystore.json".to_string(),
         hd_wallet_password: None,
     };
 
-    let scheduler_state = std::sync::Arc::new(std::sync::RwLock::new(
+    let scheduler_state = Arc::new(RwLock::new(
         rust_server::services::console::scheduler_state::SchedulerState::new(),
     ));
-    let runtime_config = std::sync::Arc::new(std::sync::RwLock::new(
+    let runtime_config = Arc::new(RwLock::new(
         rust_server::services::runtime_config::RuntimeConfig::from_config(&config),
+    ));
+    let inner = Arc::new(MockChainProvider::new());
+    let chain_cache = Arc::new(ChainCache::new());
+    let cached_chain = Arc::new(CachedChainProvider::new(
+        inner,
+        chain_cache.clone(),
+        runtime_config.clone(),
     ));
 
     rust_server::api::AppState {
         db: test_db(),
         config,
         runtime_config,
-        chain_provider: std::sync::Arc::new(rust_server::services::MockChainProvider::new()),
-        signer: std::sync::Arc::new(rust_server::services::hd_wallet_signer::HdWalletSigner::new()),
-        wallet_session: std::sync::Arc::new(
+        chain_provider: cached_chain.clone(),
+        cached_chain,
+        signer: Arc::new(rust_server::services::hd_wallet_signer::HdWalletSigner::new()),
+        wallet_session: Arc::new(
             rust_server::services::wallet_session::WalletSessionManager::default(),
         ),
         tx_assembler: None,
         keystore_path: "data/keystore.json".to_string(),
         scheduler_state,
+        chain_cache,
         own_fiber_pubkey: None,
     }
 }

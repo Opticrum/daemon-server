@@ -98,7 +98,7 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
     output_index: u32,
     opts: &ExtractRentOptions<'_>,
 ) -> Result<ExtractRentResult, AppError> {
-    let tip_block = provider.get_tip_block_number().await?;
+    let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
 
     // Find match on chain (authoritative source)
     let match_info = find_match_info_on_chain(provider, tx_hash, output_index).await?;
@@ -183,7 +183,7 @@ pub async fn destroy_match<P: ChainProvider + ?Sized>(
     tx_hash: &str,
     output_index: u32,
 ) -> Result<String, AppError> {
-    let tip_block = provider.get_tip_block_number().await?;
+    let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
 
     // Find match on chain
     let match_info = find_match_info_on_chain(provider, tx_hash, output_index).await?;
@@ -386,9 +386,6 @@ mod tests {
     async fn extract_rent_mock_path() {
         let pool = db::init_test_db();
         let provider = MockChainProvider::new();
-        provider.set_tip_block(2000);
-
-        // No matches on chain → extract_rent will fail with "not found"
         let result = extract_rent(
             &provider,
             &pool,
@@ -404,6 +401,7 @@ mod tests {
     async fn destroy_match_mock_path() {
         let _pool = db::init_test_db();
         let provider = MockChainProvider::new();
+        provider.set_tip_block(2000);
 
         let result = destroy_match(&provider, "nonexistent", 0).await;
         assert!(result.is_err());

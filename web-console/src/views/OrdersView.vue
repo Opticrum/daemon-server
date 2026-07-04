@@ -368,7 +368,7 @@ onMounted(async () => {
       <button
         class="btn btn-primary"
         :disabled="loading"
-        @click="scanOrders"
+        @click="scanOrders()"
       >
         <span
           v-if="loading"

@@ -23,7 +23,7 @@ pub async fn list_channels(
     state: web::Data<AppState>,
     query: web::Query<FiberChannelsQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let owner_lock_hash = match &query.owner {
+    let _owner_lock_hash = match &query.owner {
         Some(hex_str) => {
             let bytes = hex::decode(hex_str)
                 .map_err(|e| AppError::BadRequest(format!("Invalid hex: {e}")))?;
@@ -45,7 +45,7 @@ pub async fn list_channels(
 
     let channels = state
         .chain_provider
-        .scan_fiber_channels(&owner_lock_hash)
+        .scan_fiber_channels(&_owner_lock_hash)
         .await?;
 
     Ok(HttpResponse::Ok().json(channels))

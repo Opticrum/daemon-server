@@ -83,6 +83,7 @@ pub async fn do_match(
         &body.seller_address,
     )
     .await?;
+    state.cached_chain.spawn_cache_refresh();
 
     Ok(HttpResponse::Ok().json(result))
 }

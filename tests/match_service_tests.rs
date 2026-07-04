@@ -23,12 +23,8 @@ async fn full_match_flow_reuses_existing_channel() {
         created_at: 0,
     });
 
-    // The match_order flow will scan_orders (empty), so the order won't be found.
-    // This is expected in mock — the order must exist on-chain.
-    // We test that the DB insert works correctly after a successful placeholder
-    // tx is sent.
-    let result =
-        match_service::match_order(&provider, "order_not_on_chain", 0, "ckt1q...seller").await;
+    let result = match_service::match_order(&provider, "order_not_on_chain", 0, "ckt1q...seller")
+        .await;
 
     // No orders on chain → should fail with "not found".
     assert!(result.is_err());
@@ -40,9 +36,8 @@ async fn full_match_flow_reuses_existing_channel() {
 async fn match_order_no_channels_attempts_open() {
     let provider = MockChainProvider::new();
 
-    // No channels at all — the service will attempt open_channel (mock records it).
-    let result =
-        match_service::match_order(&provider, "order_not_on_chain", 0, "ckt1q...seller").await;
+    let result = match_service::match_order(&provider, "order_not_on_chain", 0, "ckt1q...seller")
+        .await;
 
     // Still fails because the order isn't on chain, but we can verify
     // open_channel was NOT called (since order lookup fails first).

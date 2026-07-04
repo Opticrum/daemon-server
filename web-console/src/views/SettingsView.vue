@@ -5,7 +5,7 @@ import { useI18n } from "@/composables/useI18n";
 import StatusTag from "@/components/ui/StatusTag.vue";
 import AutomationUnlockForm from "@/components/ui/AutomationUnlockForm.vue";
 import AutomationConsole from "@/components/ui/AutomationConsole.vue";
-import type { RuntimeConfig, ServerInfo } from "@/types/api";
+import type { RuntimeConfig, ServerInfo, SignerWalletItem } from "@/types/api";
 
 const api = useApi();
 const { t } = useI18n();
@@ -31,6 +31,9 @@ const editForm = ref<RuntimeConfig>({
   auto_match_min_capacity: 0,
   auto_match_max_escrow_blocks: 0,
   auto_match_interval_secs: 0,
+  automation_signer_address: "",
+  chain_cache_enabled: true,
+  chain_cache_interval_secs: 30,
   ckb_rpc_url: "",
   ckb_indexer_url: "",
   fiber_rpc_url: "",
@@ -86,15 +89,46 @@ async function doSaveConfig() {
 }
 
 function promptUnlockThenSave() {
+  const selectedAddress = ref('')
   const pw = ref('')
   const err = ref('')
+  const showPassword = ref(false)
+  const wallets = ref<SignerWalletItem[]>([])
+  const walletsLoading = ref(true)
+
+  api.getSignerWallets()
+    .then((list) => {
+      wallets.value = list
+      const current = config.value?.automation_signer_address
+      if (current && list.some((w) => w.ckb_address === current)) {
+        selectedAddress.value = current
+      } else if (list.length > 0) {
+        selectedAddress.value = list[0].ckb_address
+      }
+    })
+    .catch(() => {
+      err.value = t('settings.loadSignerWalletsFailed')
+    })
+    .finally(() => {
+      walletsLoading.value = false
+    })
+
   modal.show({
-    title: t('settings.unlockToEnable'),
+    title: t('settings.selectSignerToEnable'),
+    wide: true,
     content: {
       setup() {
         return () => h(AutomationUnlockForm, {
+          selectedAddress: selectedAddress.value,
           password: pw.value,
           error: err.value,
+          wallets: wallets.value,
+          walletsLoading: walletsLoading.value,
+          showPassword: showPassword.value,
+          'onUpdate:selectedAddress': (value: string) => {
+            selectedAddress.value = value
+            err.value = ''
+          },
           'onUpdate:password': (value: string) => {
             pw.value = value
             err.value = ''
@@ -102,8 +136,39 @@ function promptUnlockThenSave() {
         })
       },
     },
-    confirmText: t('settings.unlockAndSave'),
+    confirmText: t('common.continue'),
     onConfirm: async () => {
+      if (!selectedAddress.value) {
+        err.value = t('settings.selectSignerRequired')
+        return false
+      }
+
+      editForm.value.automation_signer_address = selectedAddress.value
+
+      if (!showPassword.value) {
+        let sessionActive = false
+        try {
+          sessionActive = (await api.getWalletSession()).active
+        } catch {
+          // treat as locked — proceed to password step
+        }
+        if (!sessionActive) {
+          showPassword.value = true
+          modal.title.value = t('settings.unlockToEnable')
+          modal.confirmText.value = t('settings.unlockAndSave')
+          return false
+        }
+
+        try {
+          await doSaveConfig()
+          toast.success(t('settings.configSaved'))
+        } catch (e: any) {
+          err.value = e.message || t('settings.configSaveFailed')
+          return false
+        }
+        return
+      }
+
       if (!pw.value) {
         err.value = t('wallets.fillRequired')
         return false
@@ -129,16 +194,8 @@ async function saveConfig() {
     !config.value?.rent_extraction_enabled
 
   if (enablingAutoMatch || enablingRentExtraction) {
-    let sessionActive = false
-    try {
-      sessionActive = (await api.getWalletSession()).active
-    } catch {
-      // can't check session — prompt for unlock to be safe
-    }
-    if (!sessionActive) {
-      promptUnlockThenSave()
-      return
-    }
+    promptUnlockThenSave()
+    return
   }
 
   try {
@@ -262,6 +319,15 @@ onMounted(() => {
           <div class="config-row">
             <span class="config-label">{{ t("settings.interval") }}</span><span>{{ config.auto_match_interval_secs }}
               {{ t("settings.seconds") }}</span>
+          </div>
+          <div
+            v-if="config.automation_signer_address"
+            class="config-row"
+          >
+            <span class="config-label">{{ t("settings.signerAddress") }}</span><span
+              class="font-mono"
+              :title="config.automation_signer_address"
+            >{{ config.automation_signer_address }}</span>
           </div>
         </div>
         <div

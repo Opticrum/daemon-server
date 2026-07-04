@@ -2,6 +2,12 @@ export default {
   app: {
     title: 'Opticrum 管理控制台',
   },
+  header: {
+    chainDataAge: '链上数据更新于 {age}',
+    chainDataJustNow: '刚刚',
+    chainDataRefresh: '更新链上数据',
+    chainDataRefreshing: '更新中…',
+  },
   nav: {
     dataCenter: '数据中心',
     overview: '运营概览',
@@ -33,6 +39,10 @@ export default {
     topSellers: 'TOP 5 卖家',
     totalMatchesLabel: '总计匹配',
     prevMonth: '较上月',
+    refresh: '刷新',
+    refreshing: '刷新中…',
+    cacheAge: '链上数据更新于 {age}',
+    cacheAgeJustNow: '刚刚',
   },
   wallets: {
     title: '钱包管理',
@@ -241,6 +251,13 @@ export default {
     configResetFailed: '重置配置失败',
     restartNote: '注：配置变更需重启服务才能生效',
     unlockToEnable: '解锁钱包',
+    selectSignerToEnable: '启用自动化',
+    selectSignerAddress: '签名地址',
+    selectSignerHint: '选择用于自动签名操作的 HD 钱包地址，然后继续。',
+    selectSignerRequired: '请选择签名地址。',
+    loadSignerWalletsFailed: '加载钱包地址失败',
+    signerAddress: '签名地址',
+    unlockPasswordLabel: '钱包密码',
     unlockHint:
       '输入钱包密码以启用自动化。解锁状态会保持，直至关闭自动化、重置配置或刷新页面。',
     unlockAndSave: '解锁并保存',
@@ -254,6 +271,7 @@ export default {
     consoleAllDisabled: '自动化均已关闭',
     consoleNoActivity: '暂无活动，等待调度器运行…',
     consoleTipBlock: 'CKB 区块',
+    chainCache: '链上缓存',
     consoleCycles: '次',
     consoleWallet: '钱包',
     consoleWalletLocked: 'HD 钱包已锁定 — 周期仍会运行，但无法签署交易',
@@ -288,6 +306,7 @@ export default {
   common: {
     confirm: '确定',
     cancel: '取消',
+    continue: '继续',
     retry: '重试',
     loading: '加载中...',
     noData: '暂无数据',

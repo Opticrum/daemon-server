@@ -57,19 +57,21 @@ pub async fn run_auto_match_cycle(
         return Ok(0);
     }
 
-    let (min_capacity, max_escrow_blocks) = {
+    let (min_capacity, max_escrow_blocks, automation_signer_address) = {
         let rc = runtime_config.read().unwrap();
         if !rc.auto_match_enabled {
             return Ok(0);
         }
-        (rc.auto_match_min_capacity, rc.auto_match_max_escrow_blocks)
+        (
+            rc.auto_match_min_capacity,
+            rc.auto_match_max_escrow_blocks,
+            rc.automation_signer_address.clone(),
+        )
     };
 
-    // Scan all live orders and matches on chain
     let orders = chain_provider.scan_orders().await?;
     debug!(on_chain_orders = orders.len(), "Auto-match: scanned chain");
 
-    // Build dedup set from on-chain match cells (order outpoint matching)
     let on_chain_matches = chain_provider.scan_matches().await?;
 
     push_event(
@@ -236,7 +238,11 @@ pub async fn run_auto_match_cycle(
         );
 
         // Attempt to match
-        let seller_address = "auto-matcher"; // Phase 6: derive from signer wallet
+        let seller_address = if automation_signer_address.is_empty() {
+            "auto-matcher".to_string()
+        } else {
+            automation_signer_address.clone()
+        };
         let tx_hex = format!(
             "auto_match:{}:{}:{}:{}",
             hex::encode(order.order_outpoint.tx_hash),
@@ -246,6 +252,11 @@ pub async fn run_auto_match_cycle(
         );
 
         // Sign the match transaction
+        let signer_address = if automation_signer_address.is_empty() {
+            None
+        } else {
+            Some(automation_signer_address.clone())
+        };
         let sign_request = SignRequest {
             operation: "match_order".into(),
             tx_hex: tx_hex.clone(),
@@ -260,7 +271,7 @@ pub async fn run_auto_match_cycle(
                 },
                 "seller_address": seller_address,
             }),
-            signer_address: None,
+            signer_address,
         };
 
         let sign_result = signer.sign(sign_request).await?;

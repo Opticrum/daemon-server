@@ -45,6 +45,9 @@ export interface RuntimeConfig {
   auto_match_min_capacity: number
   auto_match_max_escrow_blocks: number
   auto_match_interval_secs: number
+  automation_signer_address: string
+  chain_cache_enabled: boolean
+  chain_cache_interval_secs: number
   ckb_rpc_url: string
   ckb_indexer_url: string
   fiber_rpc_url: string
@@ -81,9 +84,21 @@ export interface SchedulerEvent {
 export interface SchedulerStatusResponse {
   extractor: CycleStatus
   matcher: CycleStatus
+  indexer: CycleStatus
   tip_block: number
   latest_event_id: number
   events: SchedulerEvent[]
+}
+
+export interface ChainCacheStatusResponse {
+  updated_at_ms: number
+  order_count: number
+  match_count: number
+  channel_count: number
+  tip_block: number
+  extraction_chain_count: number
+  refreshing: boolean
+  last_error: string | null
 }
 
 // ── Wallets ──

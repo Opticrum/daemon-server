@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { ref, provide } from 'vue'
+import { ref, provide, onMounted } from 'vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useModal } from '@/composables/useModal'
+import { useChainCache } from '@/composables/useChainCache'
 import { provideI18n } from '@/composables/useI18n'
 
 provideI18n()
+
+const { loadStatus, startPolling } = useChainCache()
 
 const sidebarCollapsed = ref(false)
 const sidebarMobileOpen = ref(false)
@@ -26,6 +29,11 @@ const toast = useToast()
 const modal = useModal()
 provide('toast', toast)
 provide('modal', modal)
+
+onMounted(async () => {
+  await loadStatus()
+  startPolling(15000)
+})
 </script>
 
 <template>

@@ -194,12 +194,11 @@ async function doDestroyMatch(match: TrackedMatch) {
 }
 
 onMounted(async () => {
-  try { const info = await api.getServerInfo(); network.value = info.network } catch { /* ignore */ }
-  try {
-    const cfg = await api.getRuntimeConfig()
-    minExtractionShannons.value = cfg.min_extraction_amount_shannons
-  } catch { /* ignore */ }
-  await loadSignerLockHashes()
+  await Promise.all([
+    api.getServerInfo().then(info => { network.value = info.network }).catch(() => {}),
+    api.getRuntimeConfig().then(cfg => { minExtractionShannons.value = cfg.min_extraction_amount_shannons }).catch(() => {}),
+    loadSignerLockHashes(),
+  ])
   await loadMatches()
 })
 </script>
@@ -221,7 +220,7 @@ onMounted(async () => {
       <button
         class="btn btn-default"
         :disabled="loading"
-        @click="loadMatches"
+        @click="loadMatches()"
       >
         <span
           v-if="loading"

@@ -39,11 +39,16 @@ const POLL_MS = 2000
 const SOURCE_LABEL: Record<string, string> = {
   matcher: 'MATCH',
   extractor: 'RENT',
+  indexer: 'INDEX',
   system: 'SYS',
 }
 
 const hasError = computed(() =>
-  Boolean(status.value?.matcher.last_error || status.value?.extractor.last_error),
+  Boolean(
+    status.value?.matcher.last_error
+    || status.value?.extractor.last_error
+    || status.value?.indexer?.last_error,
+  ),
 )
 
 const summary = computed(() => {
@@ -243,6 +248,12 @@ onUnmounted(stopPolling)
           <span class="stat-chip__value">
             {{ rentExtractionEnabled ? t('settings.enabledLabel') : t('settings.disabledLabel') }}
             · {{ status?.extractor.cycles?.toLocaleString() ?? 0 }} {{ t('settings.consoleCycles') }}
+          </span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-chip__label">{{ t('settings.chainCache') }}</span>
+          <span class="stat-chip__value">
+            · {{ status?.indexer?.cycles?.toLocaleString() ?? 0 }} {{ t('settings.consoleCycles') }}
           </span>
         </div>
         <div class="stat-chip">
@@ -487,6 +498,11 @@ onUnmounted(stopPolling)
 .log-line__tag--extractor {
   color: #b392f0;
   background: rgba(114, 46, 209, 0.12);
+}
+
+.log-line__tag--indexer {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.12);
 }
 
 .log-line__tag--system,

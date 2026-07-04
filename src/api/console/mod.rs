@@ -168,6 +168,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             )
             // Scheduler
             .route("/scheduler/status", web::get().to(scheduler_status))
+            // Chain cache
+            .route("/chain-cache/status", web::get().to(chain_cache_status))
+            .route("/chain-cache/refresh", web::post().to(chain_cache_refresh))
             // Server info
             .route("/server-info", web::get().to(server_info)),
     );
@@ -195,7 +198,13 @@ pub async fn dashboard(state: web::Data<AppState>) -> Result<HttpResponse, AppEr
             .map_err(|e| AppError::Internal(format!("Scheduler state lock: {}", e)))?;
         guard.clone()
     };
-    let dash = GatewayService::get_dashboard(&state.db, state.chain_provider.as_ref(), &s).await?;
+    let dash = GatewayService::get_dashboard(
+        &state.db,
+        state.chain_provider.as_ref(),
+        &s,
+        state.chain_cache.updated_at_ms(),
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(dash))
 }
 
@@ -579,6 +588,7 @@ pub async fn match_order(
         tx_assembler,
     )
     .await?;
+    state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -588,9 +598,12 @@ pub async fn match_readiness(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let tx_hash = path.into_inner();
-    let status =
-        GatewayService::get_match_readiness(state.chain_provider.as_ref(), &state.db, &tx_hash)
-            .await?;
+    let status = GatewayService::get_match_readiness(
+        state.chain_provider.as_ref(),
+        &state.db,
+        &tx_hash,
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(status))
 }
 
@@ -600,8 +613,9 @@ pub async fn create_order_channel(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let tx_hash = path.into_inner();
-    let result =
-        GatewayService::create_order_channel(state.chain_provider.as_ref(), &tx_hash).await?;
+    let result = GatewayService::create_order_channel(state.chain_provider.as_ref(), &tx_hash)
+        .await?;
+    state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -619,7 +633,7 @@ pub async fn match_detail(
         &state.db,
         &tx_hash,
         output_index,
-        state.chain_provider.as_ref(),
+        state.cached_chain.as_ref(),
     )
     .await?;
     Ok(HttpResponse::Ok().json(detail))
@@ -645,7 +659,7 @@ pub async fn list_matches(
     let matches = GatewayService::list_matches(
         &state.db,
         query.status.as_deref(),
-        state.chain_provider.as_ref(),
+        state.cached_chain.as_ref(),
         signer_lock_hashes.as_deref(),
     )
     .await?;
@@ -673,6 +687,7 @@ pub async fn extract_rent(
         min_extraction,
     )
     .await?;
+    state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -688,6 +703,7 @@ pub async fn destroy_match(
         output_index,
     )
     .await?;
+    state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok()
         .json(serde_json::json!({"tx_hash": tx_hash_result, "status": "destroyed"})))
 }
@@ -697,8 +713,11 @@ pub async fn destroy_match(
 // ═══════════════════════════════════════════════════════
 
 pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let channels =
-        GatewayService::get_channels_with_matches(&state.db, state.chain_provider.as_ref()).await?;
+    let channels = GatewayService::get_channels_with_matches(
+        &state.db,
+        state.chain_provider.as_ref(),
+    )
+    .await?;
     Ok(HttpResponse::Ok().json(channels))
 }
 
@@ -741,7 +760,13 @@ pub async fn delete_channel(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let channel_id = path.into_inner();
-    GatewayService::delete_channel(&state.db, state.chain_provider.as_ref(), &channel_id).await?;
+    GatewayService::delete_channel(
+        &state.db,
+        state.chain_provider.as_ref(),
+        &channel_id,
+    )
+    .await?;
+    state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
 }
 
@@ -833,4 +858,17 @@ pub async fn scheduler_status(
     };
     let status = GatewayService::get_scheduler_status(&s, query.since);
     Ok(HttpResponse::Ok().json(status))
+}
+
+// ═══════════════════════════════════════════════════════
+// Chain cache
+// ═══════════════════════════════════════════════════════
+
+pub async fn chain_cache_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    Ok(HttpResponse::Ok().json(state.chain_cache.status()))
+}
+
+pub async fn chain_cache_refresh(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    state.cached_chain.refresh_cache().await?;
+    Ok(HttpResponse::Ok().json(state.chain_cache.status()))
 }

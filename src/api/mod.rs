@@ -14,6 +14,8 @@ use tracing::{debug, error, warn};
 use crate::config::Config;
 use crate::db::DbPool;
 use crate::services::chain_provider::ChainProvider;
+use crate::services::cached_chain_provider::CachedChainProvider;
+use crate::services::chain_cache::SharedChainCache;
 use crate::services::console::scheduler_state::SharedSchedulerState;
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::transaction_assembler::TransactionAssembler;
@@ -38,8 +40,10 @@ pub struct AppState {
     /// Runtime-configurable settings (fee rate, extraction, auto-match, etc.).
     /// Backed by `Arc<RwLock<>>` so changes take effect immediately.
     pub runtime_config: Arc<RwLock<RuntimeConfig>>,
-    /// Chain provider for CKB RPC and indexer access.
+    /// Chain provider — scan reads transparently use cache when enabled.
     pub chain_provider: Arc<dyn ChainProvider>,
+    /// Cached wrapper (refresh / post-mutation hooks).
+    pub cached_chain: Arc<CachedChainProvider>,
     /// HD wallet signing provider (unlock via admin panel).
     pub signer: Arc<HdWalletSigner>,
     /// In-memory unlock session (1-hour HttpOnly cookie).
@@ -48,6 +52,8 @@ pub struct AppState {
     pub tx_assembler: Option<TransactionAssembler>,
     /// Shared scheduler state for console observability.
     pub scheduler_state: SharedSchedulerState,
+    /// In-memory cache of on-chain orders, matches, and Fiber channels.
+    pub chain_cache: SharedChainCache,
     /// HD wallet keystore file path.
     pub keystore_path: String,
     /// Own Fiber node pubkey (cached at startup) — used to filter out
@@ -193,6 +199,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/console/scheduler/status",
                 web::get().to(console::scheduler_status),
+            )
+            .route(
+                "/console/chain-cache/status",
+                web::get().to(console::chain_cache_status),
+            )
+            .route(
+                "/console/chain-cache/refresh",
+                web::post().to(console::chain_cache_refresh),
             )
             .route("/console/server-info", web::get().to(console::server_info))
             // Runtime config (mutable at runtime)

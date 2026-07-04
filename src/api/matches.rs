@@ -34,7 +34,11 @@ pub async fn list(
     state: web::Data<AppState>,
     query: web::Query<ListMatchesQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let tip_block = state.chain_provider.get_tip_block_number().await?;
+    let tip_block = state
+        .chain_provider
+        .get_tip_block_number()
+        .await
+        .unwrap_or(0);
     let on_chain = state.chain_provider.scan_matches().await?;
 
     let items: Vec<serde_json::Value> = on_chain
@@ -135,6 +139,7 @@ pub async fn extract(
         },
     )
     .await?;
+    state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -144,9 +149,13 @@ pub async fn destroy(
     path: web::Path<MatchPath>,
 ) -> Result<HttpResponse, AppError> {
     let p = path.into_inner();
-    let tx_hash =
-        rent_service::destroy_match(state.chain_provider.as_ref(), &p.tx_hash, p.output_index)
-            .await?;
+    let tx_hash = rent_service::destroy_match(
+        state.chain_provider.as_ref(),
+        &p.tx_hash,
+        p.output_index,
+    )
+    .await?;
+    state.cached_chain.spawn_cache_refresh();
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "tx_hash": tx_hash,

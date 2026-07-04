@@ -4,6 +4,8 @@
 //! a `MockChainProvider` without a real CKB node.
 
 pub mod address;
+pub mod chain_cache;
+pub mod cached_chain_provider;
 pub mod chain_provider;
 pub mod console;
 pub mod crypto;
@@ -20,6 +22,8 @@ pub mod transaction_assembler;
 pub mod wallet_service;
 pub mod wallet_session;
 
+pub use cached_chain_provider::CachedChainProvider;
+pub use chain_cache::ChainCache;
 pub use chain_provider::MockChainProvider;
 pub use real_chain_provider::RealChainProvider;
 pub use runtime_config::RuntimeConfig;

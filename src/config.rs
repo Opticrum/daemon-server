@@ -127,6 +127,18 @@ pub struct Config {
     /// Auto-match cycle interval in seconds
     #[arg(long, env = "OPTICRUM_AUTO_MATCH_INTERVAL_SECS", default_value = "120")]
     pub auto_match_interval_secs: u64,
+
+    /// Enable background chain cache indexer (orders/matches/channels)
+    #[arg(long, env = "OPTICRUM_CHAIN_CACHE_ENABLED", default_value = "true")]
+    pub chain_cache_enabled: bool,
+
+    /// Chain cache refresh interval in seconds
+    #[arg(
+        long,
+        env = "OPTICRUM_CHAIN_CACHE_INTERVAL_SECS",
+        default_value = "30"
+    )]
+    pub chain_cache_interval_secs: u64,
 }
 
 impl Default for Config {
@@ -148,6 +160,8 @@ impl Default for Config {
             auto_match_min_capacity: 10_000_000_000,
             auto_match_max_escrow_blocks: 432_000,
             auto_match_interval_secs: 120,
+            chain_cache_enabled: true,
+            chain_cache_interval_secs: 30,
             keystore_path: "data/keystore.json".into(),
             hd_wallet_password: None,
         }
@@ -300,6 +314,18 @@ impl Config {
                 cli.auto_match_interval_secs
             } else {
                 file.auto_match_interval_secs
+            },
+            chain_cache_enabled: if cli.chain_cache_enabled != defaults.chain_cache_enabled {
+                cli.chain_cache_enabled
+            } else {
+                file.chain_cache_enabled
+            },
+            chain_cache_interval_secs: if cli.chain_cache_interval_secs
+                != defaults.chain_cache_interval_secs
+            {
+                cli.chain_cache_interval_secs
+            } else {
+                file.chain_cache_interval_secs
             },
             keystore_path: if cli.keystore_path != defaults.keystore_path {
                 cli.keystore_path

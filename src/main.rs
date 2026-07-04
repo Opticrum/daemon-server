@@ -11,6 +11,8 @@ use tracing::{error, info, warn};
 
 use rust_server::config::Config;
 use rust_server::services::chain_provider::ChainProvider;
+use rust_server::services::cached_chain_provider::CachedChainProvider;
+use rust_server::services::chain_cache::ChainCache;
 use rust_server::services::console::scheduler_state::{SchedulerState, SharedSchedulerState};
 use rust_server::services::hd_wallet_signer::HdWalletSigner;
 use rust_server::services::transaction_assembler::TransactionAssembler;
@@ -74,16 +76,34 @@ async fn main() -> std::io::Result<()> {
         config.fee_rate,
     ));
 
-    let chain_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
+    let inner_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
+
+    // Fetch own Fiber node pubkey once at startup (before wrapping with cache).
+    let own_fiber_pubkey = inner_provider
+        .get_fiber_node_info()
+        .await
+        .ok()
+        .flatten()
+        .map(|info| info.pubkey);
+
+    // Runtime-configurable settings — changes take effect immediately
+    // without a server restart.
+    let runtime_config = Arc::new(RwLock::new(RuntimeConfig::from_config(&config)));
+
+    // Wrap inner provider with transparent cache layer.
+    let chain_cache: Arc<ChainCache> = Arc::new(ChainCache::new());
+    let cached_chain = Arc::new(CachedChainProvider::new(
+        inner_provider.clone(),
+        chain_cache.clone(),
+        runtime_config.clone(),
+    ));
+    let chain_provider: Arc<dyn ChainProvider> = cached_chain.clone();
 
     // Signing: built-in HD wallet (unlock via admin panel)
     let signer: Arc<HdWalletSigner> = Arc::new(HdWalletSigner::new());
     let wallet_session: Arc<WalletSessionManager> = Arc::new(WalletSessionManager::default());
 
     // Auto-unlock the HD wallet on startup when a password is configured.
-    // This eliminates the need to manually unlock via the admin panel after
-    // every server restart. load_keys reads from the database (not the
-    // keystore file), so we don't gate on keystore existence.
     if let Some(ref password) = config.hd_wallet_password {
         match signer.load_keys(&pool, password) {
             Ok(()) => {
@@ -102,7 +122,6 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
-    // Consolidated startup summary
     info!(
         version = env!("CARGO_PKG_VERSION"),
         port = config.port,
@@ -119,15 +138,6 @@ async fn main() -> std::io::Result<()> {
     // Shared scheduler state for console observability
     let scheduler_state: SharedSchedulerState =
         Arc::new(std::sync::RwLock::new(SchedulerState::new()));
-
-    // Fetch own Fiber node pubkey once at startup (used to filter self-owned
-    // orders from chain scans).
-    let own_fiber_pubkey = chain_provider
-        .get_fiber_node_info()
-        .await
-        .ok()
-        .flatten()
-        .map(|info| info.pubkey);
 
     // Resolve keystore path to absolute so restarts from a different
     // working directory don't silently create a new keystore elsewhere.
@@ -148,10 +158,6 @@ async fn main() -> std::io::Result<()> {
     }
     let keystore_path = keystore_path.display().to_string();
 
-    // Runtime-configurable settings — changes take effect immediately
-    // without a server restart.
-    let runtime_config = Arc::new(RwLock::new(RuntimeConfig::from_config(&config)));
-
     let tx_assembler_for_scheduler = tx_assembler.clone();
 
     let state = api::AppState {
@@ -159,10 +165,12 @@ async fn main() -> std::io::Result<()> {
         config: config.clone(),
         runtime_config: runtime_config.clone(),
         chain_provider: chain_provider.clone(),
+        cached_chain: cached_chain.clone(),
         signer,
         wallet_session: wallet_session.clone(),
         tx_assembler,
         scheduler_state: scheduler_state.clone(),
+        chain_cache: chain_cache.clone(),
         keystore_path,
         own_fiber_pubkey,
     };
@@ -173,6 +181,8 @@ async fn main() -> std::io::Result<()> {
         pool,
         runtime_config,
         chain_provider,
+        inner_provider,
+        chain_cache,
         signer_bg,
         tx_assembler_for_scheduler,
         scheduler_state,

@@ -123,7 +123,14 @@ pub async fn run_extraction_cycle(
         let outpoint_index = m.match_outpoint.index;
         let cell_label = format!("{}:{}", trunc_hex(&tx_hash_hex, 8, 6), outpoint_index);
 
-        match rent_service::extract_rent(provider, pool, &tx_hash_hex, outpoint_index, &opts).await
+        match rent_service::extract_rent(
+            provider,
+            pool,
+            &tx_hash_hex,
+            outpoint_index,
+            &opts,
+        )
+        .await
         {
             Ok(result) => {
                 total_extracted += result.extracted_amount;

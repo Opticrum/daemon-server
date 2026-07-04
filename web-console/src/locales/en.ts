@@ -2,6 +2,12 @@ export default {
   app: {
     title: 'Opticrum Admin Console',
   },
+  header: {
+    chainDataAge: 'Chain data updated {age} ago',
+    chainDataJustNow: 'just now',
+    chainDataRefresh: 'Refresh chain data',
+    chainDataRefreshing: 'Refreshing…',
+  },
   nav: {
     dataCenter: 'Data Center',
     overview: 'Overview',
@@ -33,6 +39,10 @@ export default {
     topSellers: 'Top 5 Sellers',
     totalMatchesLabel: 'Total Matches',
     prevMonth: 'vs last month',
+    refresh: 'Refresh',
+    refreshing: 'Refreshing…',
+    cacheAge: 'Chain data updated {age}',
+    cacheAgeJustNow: 'just now',
   },
   wallets: {
     title: 'Wallet Management',
@@ -241,6 +251,13 @@ export default {
     configResetFailed: 'Failed to reset config',
     restartNote: 'Note: server restart required for changes to take effect',
     unlockToEnable: 'Unlock Wallet',
+    selectSignerToEnable: 'Enable Automation',
+    selectSignerAddress: 'Signing Address',
+    selectSignerHint: 'Choose the HD wallet address used for automated signing, then continue.',
+    selectSignerRequired: 'Please select a signing address.',
+    loadSignerWalletsFailed: 'Failed to load wallet addresses',
+    signerAddress: 'Signing Address',
+    unlockPasswordLabel: 'Wallet Password',
     unlockHint:
       'Enter wallet password to enable automation. Unlock persists until you disable automation, reset config, or refresh the page.',
     unlockAndSave: 'Unlock & Save',
@@ -254,6 +271,7 @@ export default {
     consoleAllDisabled: 'All automation disabled',
     consoleNoActivity: 'No activity yet — waiting for scheduler…',
     consoleTipBlock: 'CKB tip',
+    chainCache: 'Chain Cache',
     consoleCycles: 'cycles',
     consoleWallet: 'Wallet',
     consoleWalletLocked: 'HD wallet locked — cycles run but signing is skipped',
@@ -288,6 +306,7 @@ export default {
   common: {
     confirm: 'Confirm',
     cancel: 'Cancel',
+    continue: 'Continue',
     retry: 'Retry',
     loading: 'Loading...',
     noData: 'No data',

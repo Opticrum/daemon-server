@@ -12,7 +12,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::config::Config;
 use crate::db::matches as match_db;
@@ -20,13 +20,13 @@ use crate::db::unsigned_txs as unsigned_db;
 use crate::db::wallets as wallet_db;
 use crate::db::DbPool;
 use crate::error::AppError;
+use crate::services::cached_chain_provider::CachedChainProvider;
 use crate::services::chain_provider::{
     ChainProvider, ChannelMatchInfo, ChannelWithMatch, FiberChannelInfo,
 };
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::match_service::{self, get_used_channel_outpoints, MatchOrderResult};
 use crate::services::rent_service;
-use crate::services::rent_service::walk_extraction_chain;
 use crate::services::runtime_config::{RuntimeConfig, RuntimeConfigPartial};
 use crate::services::signer::Signer;
 use crate::services::transaction_assembler::TransactionAssembler;
@@ -63,6 +63,9 @@ pub struct DashboardResponse {
 
     // Scheduler snapshot
     pub scheduler: SchedulerStatusResponse,
+
+    /// Unix ms when the chain cache was last refreshed.
+    pub cache_updated_at_ms: u64,
 }
 
 #[derive(Serialize, Debug)]
@@ -101,6 +104,7 @@ pub struct SchedulerEventResponse {
 pub struct SchedulerStatusResponse {
     pub extractor: CycleStatus,
     pub matcher: CycleStatus,
+    pub indexer: CycleStatus,
     pub tip_block: u64,
     pub latest_event_id: u64,
     pub events: Vec<SchedulerEventResponse>,
@@ -163,28 +167,24 @@ impl GatewayService {
         pool: &DbPool,
         provider: &dyn ChainProvider,
         state: &SchedulerState,
+        cache_updated_at_ms: u64,
     ) -> Result<DashboardResponse, AppError> {
         let started = Instant::now();
         let mut conn = pool.get()?;
 
-        // Run the three independent chain scans + tip block in parallel.
-        // Each targets a different backend (CKB indexer / Fiber node / CKB RPC)
-        // so they don't contend on the same resource.
-        let (matches_result, orders_result, channels_result, tip_result) = tokio::join!(
+        let (on_chain_matches, orders, channels, tip_block) = tokio::join!(
             provider.scan_matches(),
             provider.scan_orders(),
-            provider.scan_fiber_channels(&[]),
+            provider.scan_fiber_channels(&[0u8; 32]),
             provider.get_tip_block_number(),
         );
+        let on_chain_matches = on_chain_matches.unwrap_or_default();
+        let orders = orders.unwrap_or_default();
+        let channels = channels.unwrap_or_default();
+        let tip_block = tip_block.unwrap_or(0);
+        let orders_err =
+            on_chain_matches.is_empty() && orders.is_empty() && cache_updated_at_ms == 0;
 
-        let (on_chain_matches, _) = match matches_result {
-            Ok(m) => (m, false),
-            Err(e) => {
-                warn!(error = %e, "Dashboard: scan_matches failed");
-                (vec![], true)
-            }
-        };
-        let tip_block = tip_result.unwrap_or(0);
         let live = on_chain_matches.len() as u64;
         // "exhausted" = match cells with zero capacity remaining
         let exhausted = on_chain_matches
@@ -196,21 +196,6 @@ impl GatewayService {
 
         let total_extracted = match_db::total_extracted(&mut conn)? as u64;
         let wallets = wallet_db::list_wallets(&mut conn)?;
-
-        let (orders, orders_err) = match orders_result {
-            Ok(o) => (o, false),
-            Err(e) => {
-                warn!(error = %e, "Dashboard: scan_orders failed");
-                (vec![], true)
-            }
-        };
-        let (channels, _) = match channels_result {
-            Ok(c) => (c, false),
-            Err(e) => {
-                warn!(error = %e, "Dashboard: scan_fiber_channels failed");
-                (vec![], true)
-            }
-        };
 
         debug!(
             matches = total_matches,
@@ -287,6 +272,7 @@ impl GatewayService {
 
         let s = state.extractor.clone();
         let m = state.matcher.clone();
+        let idx = state.indexer.clone();
 
         Ok(DashboardResponse {
             total_matches,
@@ -305,10 +291,12 @@ impl GatewayService {
             scheduler: SchedulerStatusResponse {
                 extractor: CycleStatus::from(&s),
                 matcher: CycleStatus::from(&m),
+                indexer: CycleStatus::from(&idx),
                 tip_block,
                 latest_event_id: state.latest_event_id(),
                 events: vec![],
             },
+            cache_updated_at_ms,
         })
     }
 
@@ -602,7 +590,8 @@ impl GatewayService {
             .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
 
         // Find or create a compatible channel (exclude already-matched channels)
-        let used_channel_outpoints = get_used_channel_outpoints(provider).await?;
+        let used_channel_outpoints =
+            get_used_channel_outpoints(provider).await?;
         let channel = match_service::ensure_channel(
             provider,
             &hex::encode(order.order_args.fiber_pubkey.to_bytes()),
@@ -670,7 +659,7 @@ impl GatewayService {
         // and the order's own block number. None depend on each other.
         let (peers_result, channels_result, order_block_result) = tokio::join!(
             provider.list_peers(),
-            provider.scan_fiber_channels(&[]),
+            provider.scan_fiber_channels(&[0u8; 32]),
             provider.get_tx_block_number(order_tx_hash),
         );
         let peers = peers_result?;
@@ -688,7 +677,8 @@ impl GatewayService {
         // Only ChannelReady counts as usable; in-progress channels are reported
         // separately as pending_channel.
         // (channels already fetched in parallel above)
-        let used_outpoints = get_used_channel_outpoints(provider).await?;
+        let used_outpoints =
+            get_used_channel_outpoints(provider).await?;
         let mut compatible = None;
         let mut pending = None;
         for ch in &channels {
@@ -771,14 +761,29 @@ impl GatewayService {
 
     /// List matches directly from on-chain data.
     /// No longer syncs to/from a database table — the chain is the source of truth.
+    ///
+    /// Scan results come from the chain cache when populated; per-row enrichment
+    /// uses local DB (extraction totals) and a single tip timestamp estimate —
+    /// no per-match chain RPC on the list path.
     pub async fn list_matches(
         pool: &DbPool,
         status: Option<&str>,
-        provider: &dyn ChainProvider,
+        chain: &CachedChainProvider,
         signer_lock_hashes: Option<&[String]>,
     ) -> Result<Vec<serde_json::Value>, AppError> {
+        let provider = chain as &dyn ChainProvider;
         let tip_block = provider.get_tip_block_number().await.unwrap_or(0);
         let on_chain = provider.scan_matches().await?;
+
+        let tip_timestamp = if tip_block > 0 {
+            provider
+                .get_block_timestamp(tip_block)
+                .await
+                .ok()
+                .filter(|&ts| ts > 0)
+        } else {
+            None
+        };
 
         let mut conn = pool.get()?;
         let mut results: Vec<serde_json::Value> = Vec::new();
@@ -812,9 +817,9 @@ impl GatewayService {
                 Self::resolve_lock_hash_to_address(&mut conn, &format!("lock_hash:{seller_lh}"))
                     .unwrap_or_else(|| format!("lock_hash:{seller_lh}"));
 
-            // Get extraction totals from statistics cache
-            let extracted_total = walk_extraction_chain(provider, m)
-                .await
+            // Extraction totals from chain cache (never walk chain on the list path)
+            let extracted_total = chain
+                .extraction_chain(&tx_hash, output_index)
                 .map(|c| c.total_extracted)
                 .unwrap_or(0);
 
@@ -841,15 +846,9 @@ impl GatewayService {
                 })
                 .unwrap_or(0.0);
 
-            // Get match creation timestamp (Unix milliseconds) from the match tx's block
-            let created_at: Option<u64> = match provider.get_tx_block_number(&tx_hash).await {
-                Ok(block_number) if block_number > 0 => provider
-                    .get_block_timestamp(block_number)
-                    .await
-                    .ok()
-                    .filter(|&ts| ts > 0),
-                _ => None,
-            };
+            // Match time from cached match_current_block + tip anchor (one RPC for whole list)
+            let created_at =
+                Self::estimate_block_timestamp(m.match_current_block, tip_block, tip_timestamp);
 
             results.push(serde_json::json!({
                 "tx_hash": tx_hash,
@@ -873,6 +872,20 @@ impl GatewayService {
         Ok(results)
     }
 
+    /// Estimate a block's Unix-ms timestamp from the tip block anchor.
+    /// CKB average block interval ≈ 12 seconds.
+    fn estimate_block_timestamp(
+        block_number: u64,
+        tip_block: u64,
+        tip_timestamp: Option<u64>,
+    ) -> Option<u64> {
+        const AVG_BLOCK_MS: u64 = 12_000;
+        tip_timestamp.map(|tip_ts| {
+            let blocks_behind = tip_block.saturating_sub(block_number);
+            tip_ts.saturating_sub(blocks_behind * AVG_BLOCK_MS)
+        })
+    }
+
     /// Try to resolve a `"lock_hash:<hex>"` placeholder to a proper CKB address
     /// by looking up the wallet with that lock_hash in the database.
     fn resolve_lock_hash_to_address(
@@ -892,11 +905,11 @@ impl GatewayService {
         pool: &DbPool,
         tx_hash: &str,
         output_index: u32,
-        provider: &dyn ChainProvider,
+        chain: &CachedChainProvider,
     ) -> Result<serde_json::Value, AppError> {
+        let provider = chain as &dyn ChainProvider;
         let mut conn = pool.get()?;
 
-        // Find the match on chain
         let on_chain = provider.scan_matches().await?;
         let m = on_chain
             .iter()
@@ -908,8 +921,8 @@ impl GatewayService {
                 AppError::NotFound(format!("Match {tx_hash}:{output_index} not found on chain"))
             })?;
 
-        let chain = walk_extraction_chain(provider, m).await.unwrap_or_default();
-        let extracted_total = chain.total_extracted;
+        let extraction = chain.get_extraction_chain(m).await;
+        let extracted_total = extraction.total_extracted;
 
         // Resolve timestamps for extraction events from on-chain block headers.
         // We use the current tip block timestamp as an anchor and compute
@@ -925,7 +938,7 @@ impl GatewayService {
         const AVG_BLOCK_MS: u64 = 12_000;
 
         let mut history: Vec<serde_json::Value> = Vec::new();
-        for (i, e) in chain.extractions.iter().enumerate() {
+        for (i, e) in extraction.extractions.iter().enumerate() {
             let timestamp = tip_timestamp.map(|tip_ts| {
                 let blocks_behind = tip_block.saturating_sub(e.block_number);
                 tip_ts.saturating_sub(blocks_behind * AVG_BLOCK_MS)
@@ -1019,10 +1032,10 @@ impl GatewayService {
         _pool: &DbPool,
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
-        // Run channels scan and matches scan in parallel — they target
-        // different backends (Fiber node vs CKB indexer) and are independent.
-        let (channels_result, matches_result) =
-            tokio::join!(provider.scan_fiber_channels(&[]), provider.scan_matches(),);
+        let (channels_result, matches_result) = tokio::join!(
+            provider.scan_fiber_channels(&[0u8; 32]),
+            provider.scan_matches(),
+        );
         let channels = channels_result?;
 
         // Scan on-chain matches — if it fails, still return channels without
@@ -1064,7 +1077,7 @@ impl GatewayService {
     pub async fn get_channels_only(
         provider: &dyn ChainProvider,
     ) -> Result<Vec<FiberChannelInfo>, AppError> {
-        let channels = provider.scan_fiber_channels(&[]).await?;
+        let channels = provider.scan_fiber_channels(&[0u8; 32]).await?;
         Ok(channels
             .into_iter()
             .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
@@ -1077,8 +1090,10 @@ impl GatewayService {
     pub async fn get_channel_matches(
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
-        let (channels_result, matches_result) =
-            tokio::join!(provider.scan_fiber_channels(&[]), provider.scan_matches(),);
+        let (channels_result, matches_result) = tokio::join!(
+            provider.scan_fiber_channels(&[0u8; 32]),
+            provider.scan_matches(),
+        );
         let channels = channels_result?;
         let matches = matches_result.unwrap_or_else(|e| {
             tracing::warn!("Failed to scan on-chain matches for channel-matches: {}", e);
@@ -1122,7 +1137,7 @@ impl GatewayService {
         provider: &dyn ChainProvider,
         channel_id: &str,
     ) -> Result<(), AppError> {
-        let channels = provider.scan_fiber_channels(&[]).await?;
+        let channels = provider.scan_fiber_channels(&[0u8; 32]).await?;
         let channel = channels
             .into_iter()
             .find(|ch| ch.channel_id == channel_id)
@@ -1221,6 +1236,7 @@ impl GatewayService {
         SchedulerStatusResponse {
             extractor: CycleStatus::from(&state.extractor),
             matcher: CycleStatus::from(&state.matcher),
+            indexer: CycleStatus::from(&state.indexer),
             tip_block: state.tip_block,
             latest_event_id: state.latest_event_id(),
             events: state

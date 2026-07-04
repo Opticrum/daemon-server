@@ -14,7 +14,8 @@ const { t } = useI18n();
 const dash = ref<DashboardResponse | null>(null);
 const loading = ref(true);
 
-onMounted(async () => {
+async function loadDashboard() {
+  loading.value = true;
   try {
     dash.value = await api.getDashboard();
   } catch (e) {
@@ -22,7 +23,9 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+}
+
+onMounted(() => loadDashboard());
 
 function findTrend(key: string) {
   return dash.value?.trends?.find((trend) => trend.key === key);

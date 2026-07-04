@@ -1,36 +1,71 @@
 <script setup lang="ts">
 import { useI18n } from '@/composables/useI18n'
+import WalletSelector from '@/components/ui/WalletSelector.vue'
+import type { SignerWalletItem } from '@/types/api'
 
 defineProps<{
+  selectedAddress: string
   password: string
+  wallets: SignerWalletItem[]
+  walletsLoading?: boolean
+  showPassword?: boolean
   error?: string
 }>()
 
 const emit = defineEmits<{
+  'update:selectedAddress': [value: string]
   'update:password': [value: string]
 }>()
 
 const { t } = useI18n()
 
-function onInput(e: Event) {
+function onAddressChange(value: string) {
+  emit('update:selectedAddress', value)
+}
+
+function onPasswordInput(e: Event) {
   emit('update:password', (e.target as HTMLInputElement).value)
 }
 </script>
 
 <template>
   <div class="automation-unlock">
-    <p class="automation-unlock__hint">
-      {{ t('settings.unlockHint') }}
-    </p>
-    <input
-      type="password"
-      class="automation-unlock__input"
-      :value="password"
-      :placeholder="t('orders.unlockPasswordPlaceholder')"
-      autocomplete="current-password"
-      autofocus
-      @input="onInput"
+    <div class="automation-unlock__section">
+      <label class="automation-unlock__label">{{ t('settings.selectSignerAddress') }}</label>
+      <WalletSelector
+        :model-value="selectedAddress"
+        :wallets="wallets"
+        :loading="walletsLoading ?? false"
+        :placeholder="t('settings.selectSignerAddress')"
+        @update:model-value="onAddressChange"
+      />
+      <p
+        v-if="!showPassword"
+        class="automation-unlock__hint"
+      >
+        {{ t('settings.selectSignerHint') }}
+      </p>
+    </div>
+
+    <div
+      v-if="showPassword"
+      class="automation-unlock__section automation-unlock__section--password"
     >
+      <label class="automation-unlock__label">{{ t('settings.unlockPasswordLabel') }}</label>
+      <p class="automation-unlock__hint">
+        {{ t('settings.unlockHint') }}
+      </p>
+      <input
+        type="password"
+        class="automation-unlock__input"
+        :value="password"
+        :placeholder="t('orders.unlockPasswordPlaceholder')"
+        autocomplete="current-password"
+        autofocus
+        @input="onPasswordInput"
+      >
+    </div>
+
     <p
       v-if="error"
       class="automation-unlock__error"
@@ -45,12 +80,30 @@ function onInput(e: Event) {
 .automation-unlock {
   display: flex;
   flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.automation-unlock__section {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-sm);
+}
+
+.automation-unlock__section--password {
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-light);
+}
+
+.automation-unlock__label {
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: center;
 }
 
 .automation-unlock__hint {
   margin: 0;
-  font-size: var(--fs-body);
+  font-size: var(--fs-small);
   color: var(--text-secondary);
   line-height: var(--lh-body);
   text-align: center;

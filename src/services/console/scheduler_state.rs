@@ -42,6 +42,8 @@ pub struct SchedulerState {
     pub extractor: CycleState,
     /// Auto-matcher state.
     pub matcher: CycleState,
+    /// Chain cache indexer state.
+    pub indexer: CycleState,
     /// Latest known CKB tip block number.
     pub tip_block: u64,
     /// Ring buffer of recent activity events.
