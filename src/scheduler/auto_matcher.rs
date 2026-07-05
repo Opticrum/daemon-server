@@ -152,7 +152,9 @@ pub async fn run_auto_match_cycle(
         let required_capacity = order.ckb_capacity + CHANNEL_CELL_OCCUPIED_RESERVE;
 
         // Fiber requires the peer to be connected before open_channel.
-        let _ = chain_provider.connect_peer(&fiber_pubkey_hex, fiber_address).await;
+        let _ = chain_provider
+            .connect_peer(&fiber_pubkey_hex, fiber_address)
+            .await;
 
         info!(
             peer = %fiber_pubkey_hex,

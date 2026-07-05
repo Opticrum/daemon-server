@@ -10,9 +10,9 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use rust_server::config::Config;
-use rust_server::services::chain_provider::ChainProvider;
 use rust_server::services::cached_chain_provider::CachedChainProvider;
 use rust_server::services::chain_cache::ChainCache;
+use rust_server::services::chain_provider::ChainProvider;
 use rust_server::services::console::scheduler_state::{SchedulerState, SharedSchedulerState};
 use rust_server::services::hd_wallet_signer::HdWalletSigner;
 use rust_server::services::transaction_assembler::TransactionAssembler;

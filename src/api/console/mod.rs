@@ -600,12 +600,9 @@ pub async fn match_readiness(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let tx_hash = path.into_inner();
-    let status = GatewayService::get_match_readiness(
-        state.chain_provider.as_ref(),
-        &state.db,
-        &tx_hash,
-    )
-    .await?;
+    let status =
+        GatewayService::get_match_readiness(state.chain_provider.as_ref(), &state.db, &tx_hash)
+            .await?;
     Ok(HttpResponse::Ok().json(status))
 }
 
@@ -615,8 +612,8 @@ pub async fn create_order_channel(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let tx_hash = path.into_inner();
-    let result = GatewayService::create_order_channel(state.chain_provider.as_ref(), &tx_hash)
-        .await?;
+    let result =
+        GatewayService::create_order_channel(state.chain_provider.as_ref(), &tx_hash).await?;
     state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok().json(result))
 }
@@ -715,11 +712,8 @@ pub async fn destroy_match(
 // ═══════════════════════════════════════════════════════
 
 pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let channels = GatewayService::get_channels_with_matches(
-        &state.db,
-        state.chain_provider.as_ref(),
-    )
-    .await?;
+    let channels =
+        GatewayService::get_channels_with_matches(&state.db, state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(channels))
 }
 
@@ -762,12 +756,7 @@ pub async fn delete_channel(
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let channel_id = path.into_inner();
-    GatewayService::delete_channel(
-        &state.db,
-        state.chain_provider.as_ref(),
-        &channel_id,
-    )
-    .await?;
+    GatewayService::delete_channel(&state.db, state.chain_provider.as_ref(), &channel_id).await?;
     state.cached_chain.spawn_cache_refresh();
     Ok(HttpResponse::Ok().json(serde_json::json!({"deleted": true})))
 }
@@ -799,7 +788,10 @@ pub async fn connect_to_peer(
     state: web::Data<AppState>,
     body: web::Json<ConnectPeerBody>,
 ) -> Result<HttpResponse, AppError> {
-    state.chain_provider.connect_peer(&body.pubkey, body.address.as_deref()).await?;
+    state
+        .chain_provider
+        .connect_peer(&body.pubkey, body.address.as_deref())
+        .await?;
     Ok(HttpResponse::Ok().json(serde_json::json!({"connected": true})))
 }
 

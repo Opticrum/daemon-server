@@ -149,12 +149,9 @@ pub async fn destroy(
     path: web::Path<MatchPath>,
 ) -> Result<HttpResponse, AppError> {
     let p = path.into_inner();
-    let tx_hash = rent_service::destroy_match(
-        state.chain_provider.as_ref(),
-        &p.tx_hash,
-        p.output_index,
-    )
-    .await?;
+    let tx_hash =
+        rent_service::destroy_match(state.chain_provider.as_ref(), &p.tx_hash, p.output_index)
+            .await?;
     state.cached_chain.spawn_cache_refresh();
 
     Ok(HttpResponse::Ok().json(serde_json::json!({

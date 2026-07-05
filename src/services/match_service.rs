@@ -114,7 +114,9 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     );
 
     // ── 2. Ensure peer is connected ────────────────────────────────────
-    let _ = provider.connect_peer(&fiber_pubkey_hex, fiber_address).await;
+    let _ = provider
+        .connect_peer(&fiber_pubkey_hex, fiber_address)
+        .await;
 
     // ── 3. Build used channel set from on-chain match scan ─────────────
     let used_channel_outpoints = get_used_channel_outpoints(provider).await?;

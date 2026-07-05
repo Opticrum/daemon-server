@@ -8,8 +8,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use crate::error::AppError;
-use crate::services::chain_provider::ChainProvider;
 use crate::services::chain_cache::SharedChainCache;
+use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::{
     push_event, record_error, record_success, set_tip_block, SharedSchedulerState,
 };
@@ -32,16 +32,13 @@ pub async fn run_indexer_cycle(
     cache.refresh(inner).await?;
 
     let status = cache.status();
-        push_event(
+    push_event(
         scheduler_state,
         "indexer",
         "info",
         format!(
             "Cache updated — {} orders, {} matches ({} extraction histories), tip {}",
-            status.order_count,
-            status.match_count,
-            status.extraction_chain_count,
-            status.tip_block
+            status.order_count, status.match_count, status.extraction_chain_count, status.tip_block
         ),
     );
 
@@ -79,21 +76,10 @@ pub fn spawn_chain_indexer(
             }
 
             let started = Instant::now();
-            match run_indexer_cycle(
-                &cache,
-                inner_provider.as_ref(),
-                Some(&scheduler_state),
-            )
-            .await
-            {
+            match run_indexer_cycle(&cache, inner_provider.as_ref(), Some(&scheduler_state)).await {
                 Ok(processed) => {
                     let elapsed = started.elapsed();
-                    record_success(
-                        &scheduler_state,
-                        |s| &mut s.indexer,
-                        elapsed,
-                        processed,
-                    );
+                    record_success(&scheduler_state, |s| &mut s.indexer, elapsed, processed);
                 }
                 Err(e) => {
                     let msg = e.to_string();

@@ -43,20 +43,41 @@ main.rs (binary entry point, wires everything)
   ├── api/          — actix-web route handlers (thin, delegate to services)
   │   ├── admin.rs, health.rs, wallet.rs, orders.rs, matches.rs
   │   ├── fiber.rs       — Fiber channel query endpoint
-  │   └── transactions.rs — external signing flow endpoints
+  │   ├── transactions.rs — external signing flow endpoints
+  │   └── console/mod.rs — ~40 web console REST endpoints
   ├── services/      — business logic, generic over ChainProvider + Signer traits
-  │   ├── chain_provider.rs  — ChainProvider trait + MockChainProvider
-  │   ├── real_chain_provider.rs — production CKB RPC implementation
-  │   ├── signer.rs          — Signer trait for pluggable transaction signing
-  │   ├── internal_signer.rs — server-stored encrypted key signing
-  │   └── external_signer.rs — unsigned tx data for JoyID/UTXOGlobal/etc.
-  ├── db/            — raw SQLite CRUD (rusqlite, r2d2 connection pool)
+  │   ├── chain/     — CKB chain interaction
+  │   │   ├── chain_provider.rs        — ChainProvider trait + MockChainProvider
+  │   │   ├── real_chain_provider.rs   — production CKB RPC implementation
+  │   │   ├── cached_chain_provider.rs — transparent read-through cache wrapper
+  │   │   └── chain_cache.rs           — in-memory snapshot store
+  │   ├── wallet/    — key management, HD derivation, signing
+  │   │   ├── wallet_service.rs  — orchestration (create HD wallet, unlock, derive)
+  │   │   ├── hd_wallet.rs       — BIP39/BIP32/BIP44 derivation
+  │   │   ├── keystore.rs        — AES-256-GCM encrypted mnemonic persistence
+  │   │   ├── wallet_session.rs  — HttpOnly cookie session management
+  │   │   ├── crypto.rs          — AES-256-GCM primitives
+  │   │   ├── address.rs         — CKB address derivation
+  │   │   ├── signer.rs          — Signer trait (pluggable signing)
+  │   │   ├── internal_signer.rs — legacy single-key signer
+  │   │   └── hd_wallet_signer.rs — in-process HD child key signer
+  │   ├── match_service.rs     — order-to-channel matching
+  │   ├── rent_service.rs      — rent extraction + match destruction
+  │   ├── transaction_assembler.rs — opticrum-calculator tx assembly pipeline
+  │   ├── runtime_config.rs    — mutable-at-runtime settings (Arc<RwLock<>>)
+  │   └── console/
+  │       ├── gateway_service.rs  — dashboard aggregation hub
+  │       └── scheduler_state.rs  — cycle history + event log
+  ├── db/            — Diesel ORM CRUD (SQLite, r2d2 connection pool)
   │   └── schema.rs  — 5 tables: wallets, tracked_orders, tracked_matches,
   │                    extraction_history, unsigned_transactions
   ├── scheduler/     — background tasks (actix-rt::spawn)
+  │   ├── chain_indexer.rs   — keeps ChainCache warm via periodic scans
   │   ├── rent_extractor.rs  — auto rent extraction loop
   │   └── auto_matcher.rs    — auto order matching loop
-  ├── config.rs      — clap derive CLI/env config (19 fields)
+  ├── fiber/         — vendored Fiber JSON-RPC client
+  │   └── rpc_client.rs
+  ├── config.rs      — clap derive CLI/env/TOML config (22 fields)
   └── error.rs       — unified AppError enum implementing actix ResponseError
 ```
 
@@ -66,9 +87,9 @@ main.rs (binary entry point, wires everything)
 
 **AppState injection**: All handlers get `web::Data<AppState>`, which holds the DB pool, `Config`, `Arc<dyn ChainProvider>`, and `Arc<dyn Signer>`. No handler constructs its own provider — everything flows from `main.rs` wiring.
 
-**ChainProvider trait** (`src/services/chain_provider.rs`): All chain interactions go through this trait. Methods: `get_tip_block_number`, `scan_orders`, `scan_matches`, `send_transaction`, `get_cell`, `scan_fiber_channels`. Two implementations: `MockChainProvider` (in-memory `Mutex`-based, for tests) and `RealChainProvider` (wraps `ckb_cinnabar::RpcClient`, delegates scanning to `opticrum_calculator::reader`). The trait is `Send + Sync` and stored as `Arc<dyn ChainProvider>` in `AppState`. Service functions use `P: ChainProvider + ?Sized` to accept both concrete types and trait objects.
+**ChainProvider trait** (`src/services/chain/chain_provider.rs`): All chain interactions go through this trait. Methods: `get_tip_block_number`, `scan_orders`, `scan_matches`, `send_transaction`, `get_cell`, `scan_fiber_channels`. Two implementations: `MockChainProvider` (in-memory `Mutex`-based, for tests) and `RealChainProvider` (wraps `ckb_cinnabar::RpcClient`, delegates scanning to `opticrum_calculator::reader`). The trait is `Send + Sync` and stored as `Arc<dyn ChainProvider>` in `AppState`. Service functions use `P: ChainProvider + ?Sized` to accept both concrete types and trait objects.
 
-**Signer trait** (`src/services/signer.rs`): Pluggable transaction signing. Two implementations:
+**Signer trait** (`src/services/wallet/signer.rs`): Pluggable transaction signing. Two implementations:
 - `InternalSigner` — decrypts a server-stored private key (AES-256-GCM) and signs with secp256k1. Required for auto-match.
 - `ExternalSigner` — produces unsigned transaction JSON for external wallets (JoyID, UTXOGlobal). Pending signatures flow through `GET/POST /api/transactions/unsigned/*` endpoints and the `unsigned_transactions` DB table.
 

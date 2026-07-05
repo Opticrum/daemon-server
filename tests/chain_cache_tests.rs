@@ -27,7 +27,10 @@ async fn cache_reads_return_populated_snapshot() {
     state.cached_chain.refresh_cache().await.unwrap();
 
     let orders = state.chain_provider.scan_orders().await.unwrap();
-    assert_eq!(orders.len(), state.chain_cache.status().order_count as usize);
+    assert_eq!(
+        orders.len(),
+        state.chain_cache.status().order_count as usize
+    );
 }
 
 #[actix_rt::test]

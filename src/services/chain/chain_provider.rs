@@ -479,10 +479,11 @@ impl ChainProvider for MockChainProvider {
         funding_amount: u64,
         address: Option<&str>,
     ) -> Result<String, AppError> {
-        self.open_channels
-            .lock()
-            .unwrap()
-            .push((peer_pubkey.to_string(), funding_amount, address.map(|a| a.to_string())));
+        self.open_channels.lock().unwrap().push((
+            peer_pubkey.to_string(),
+            funding_amount,
+            address.map(|a| a.to_string()),
+        ));
         Ok("mock_temporary_channel_id".into())
     }
 

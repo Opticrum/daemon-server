@@ -133,11 +133,7 @@ pub struct Config {
     pub chain_cache_enabled: bool,
 
     /// Chain cache refresh interval in seconds
-    #[arg(
-        long,
-        env = "OPTICRUM_CHAIN_CACHE_INTERVAL_SECS",
-        default_value = "30"
-    )]
+    #[arg(long, env = "OPTICRUM_CHAIN_CACHE_INTERVAL_SECS", default_value = "30")]
     pub chain_cache_interval_secs: u64,
 }
 

@@ -13,9 +13,9 @@ use tracing::{debug, error, warn};
 
 use crate::config::Config;
 use crate::db::DbPool;
-use crate::services::chain_provider::ChainProvider;
 use crate::services::cached_chain_provider::CachedChainProvider;
 use crate::services::chain_cache::SharedChainCache;
+use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::SharedSchedulerState;
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::transaction_assembler::TransactionAssembler;

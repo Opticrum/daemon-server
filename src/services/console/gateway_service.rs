@@ -590,8 +590,7 @@ impl GatewayService {
             .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
 
         // Find or create a compatible channel (exclude already-matched channels)
-        let used_channel_outpoints =
-            get_used_channel_outpoints(provider).await?;
+        let used_channel_outpoints = get_used_channel_outpoints(provider).await?;
         let channel = match_service::ensure_channel(
             provider,
             &hex::encode(order.order_args.fiber_pubkey.to_bytes()),
@@ -677,8 +676,7 @@ impl GatewayService {
         // Only ChannelReady counts as usable; in-progress channels are reported
         // separately as pending_channel.
         // (channels already fetched in parallel above)
-        let used_outpoints =
-            get_used_channel_outpoints(provider).await?;
+        let used_outpoints = get_used_channel_outpoints(provider).await?;
         let mut compatible = None;
         let mut pending = None;
         for ch in &channels {
@@ -746,7 +744,9 @@ impl GatewayService {
         // Connect peer first (required by Fiber). Pass fiber_address when
         // available so the Fiber node can dial the peer directly instead of
         // relying on DHT discovery.
-        let _ = provider.connect_peer(&fiber_pubkey_hex, fiber_address).await;
+        let _ = provider
+            .connect_peer(&fiber_pubkey_hex, fiber_address)
+            .await;
 
         let temp_id = provider
             .open_channel(&fiber_pubkey_hex, required_capacity, fiber_address)

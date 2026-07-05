@@ -123,7 +123,10 @@ impl ChainCache {
     }
 
     fn match_outpoint_key(m: &MatchInfo) -> MatchOutpointKey {
-        (hex::encode(m.match_outpoint.tx_hash), m.match_outpoint.index)
+        (
+            hex::encode(m.match_outpoint.tx_hash),
+            m.match_outpoint.index,
+        )
     }
 
     /// Refresh snapshot from the **inner** chain provider (never the cached wrapper).
@@ -171,8 +174,7 @@ impl ChainCache {
             }
         };
 
-        if last_error.is_some() && orders.is_empty() && matches.is_empty()
-        {
+        if last_error.is_some() && orders.is_empty() && matches.is_empty() {
             let mut snap = self.snapshot.write().unwrap();
             snap.last_error = last_error;
             return Err(AppError::Internal(
@@ -197,9 +199,7 @@ impl ChainCache {
         let mut extraction_chains = HashMap::with_capacity(matches.len());
         for m in &matches {
             let key = Self::match_outpoint_key(m);
-            let chain = walk_extraction_chain(inner, m)
-                .await
-                .unwrap_or_default();
+            let chain = walk_extraction_chain(inner, m).await.unwrap_or_default();
             extraction_chains.insert(key, chain);
         }
 
