@@ -19,6 +19,7 @@ use crate::services::transaction_assembler::TransactionAssembler;
 use crate::services::RuntimeConfig;
 
 /// Spawn all background tasks: chain indexer, rent extractor, and auto-matcher.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_schedulers(
     pool: DbPool,
     runtime_config: Arc<RwLock<RuntimeConfig>>,

@@ -102,6 +102,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
         })?;
 
     let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
+    let fiber_address = order.fiber_address.as_deref();
     let required_capacity = order.order_data.channel_capacity;
     let order_block = provider.get_tx_block_number(order_tx_hash).await?;
     info!(
@@ -113,7 +114,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
     );
 
     // ── 2. Ensure peer is connected ────────────────────────────────────
-    let _ = provider.connect_peer(&fiber_pubkey_hex).await;
+    let _ = provider.connect_peer(&fiber_pubkey_hex, fiber_address).await;
 
     // ── 3. Build used channel set from on-chain match scan ─────────────
     let used_channel_outpoints = get_used_channel_outpoints(provider).await?;
@@ -143,7 +144,7 @@ pub async fn match_order<P: ChainProvider + ?Sized>(
             "Match: opening new channel"
         );
         let _temp_id = provider
-            .open_channel(&fiber_pubkey_hex, funding_amount)
+            .open_channel(&fiber_pubkey_hex, funding_amount, fiber_address)
             .await?;
 
         // ── 6. Poll until channel has an outpoint ──────────────────────

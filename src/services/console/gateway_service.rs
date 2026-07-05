@@ -722,6 +722,7 @@ impl GatewayService {
                 "capacity": ch.capacity,
             })),
             "fiber_pubkey": fiber_pubkey_hex,
+            "fiber_address": order.fiber_address,
             "required_capacity": required_capacity,
         }))
     }
@@ -738,14 +739,17 @@ impl GatewayService {
             .ok_or_else(|| AppError::BadRequest("Order not found on chain".into()))?;
 
         let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
+        let fiber_address = order.fiber_address.as_deref();
         let required_capacity =
             order.order_data.channel_capacity + match_service::CHANNEL_CELL_OCCUPIED_RESERVE;
 
-        // Connect peer first (required by Fiber)
-        let _ = provider.connect_peer(&fiber_pubkey_hex).await;
+        // Connect peer first (required by Fiber). Pass fiber_address when
+        // available so the Fiber node can dial the peer directly instead of
+        // relying on DHT discovery.
+        let _ = provider.connect_peer(&fiber_pubkey_hex, fiber_address).await;
 
         let temp_id = provider
-            .open_channel(&fiber_pubkey_hex, required_capacity)
+            .open_channel(&fiber_pubkey_hex, required_capacity, fiber_address)
             .await?;
 
         Ok(serde_json::json!({
@@ -1065,6 +1069,7 @@ impl GatewayService {
                     channel: ch,
                     match_info,
                     match_status: match_status.to_string(),
+                    fiber_address: None,
                 }
             })
             .collect())
@@ -1090,15 +1095,31 @@ impl GatewayService {
     pub async fn get_channel_matches(
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
-        let (channels_result, matches_result) = tokio::join!(
+        let (channels_result, matches_result, orders_result) = tokio::join!(
             provider.scan_fiber_channels(&[0u8; 32]),
             provider.scan_matches(),
+            provider.scan_orders(),
         );
         let channels = channels_result?;
         let matches = matches_result.unwrap_or_else(|e| {
             tracing::warn!("Failed to scan on-chain matches for channel-matches: {}", e);
             vec![]
         });
+        let orders = orders_result.unwrap_or_else(|e| {
+            tracing::warn!("Failed to scan on-chain orders for channel-matches: {}", e);
+            vec![]
+        });
+
+        // Build a pubkey → fiber_address lookup from on-chain orders
+        let addr_by_pubkey: HashMap<String, Option<String>> = orders
+            .iter()
+            .map(|o| {
+                (
+                    hex::encode(o.order_args.fiber_pubkey.as_ref()),
+                    o.fiber_address.clone(),
+                )
+            })
+            .collect();
 
         Ok(channels
             .into_iter()
@@ -1110,10 +1131,14 @@ impl GatewayService {
                 } else {
                     "not_found"
                 };
+                let fiber_address = addr_by_pubkey
+                    .get(&ch.counterparty_fiber_key)
+                    .and_then(|a| a.clone());
                 ChannelWithMatch {
                     channel: ch,
                     match_info,
                     match_status: match_status.to_string(),
+                    fiber_address,
                 }
             })
             .collect())

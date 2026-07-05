@@ -126,8 +126,11 @@ export function useApi() {
     // ── Peer Connection ──
     checkPeerConnection: (pubkey: string): Promise<PeerConnectionStatus> =>
       request(`/console/peers/check/${encodeURIComponent(pubkey)}`),
-    connectToPeer: (pubkey: string): Promise<{ connected: boolean }> =>
-      request('/console/peers/connect', { method: 'POST', body: JSON.stringify({ pubkey }) }),
+    connectToPeer: (pubkey: string, address?: string): Promise<{ connected: boolean }> =>
+      request('/console/peers/connect', {
+        method: 'POST',
+        body: JSON.stringify({ pubkey, ...(address ? { address } : {}) }),
+      }),
 
     // ── Fiber Node Info ──
     getFiberNodeInfo: (): Promise<FiberNodeInfoResponse> =>

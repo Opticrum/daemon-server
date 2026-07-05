@@ -150,12 +150,13 @@ impl ChainProvider for CachedChainProvider {
         &self,
         peer_pubkey: &str,
         funding_amount: u64,
+        address: Option<&str>,
     ) -> Result<String, AppError> {
-        self.inner.open_channel(peer_pubkey, funding_amount).await
+        self.inner.open_channel(peer_pubkey, funding_amount, address).await
     }
 
-    async fn connect_peer(&self, peer_pubkey: &str) -> Result<(), AppError> {
-        self.inner.connect_peer(peer_pubkey).await
+    async fn connect_peer(&self, peer_pubkey: &str, address: Option<&str>) -> Result<(), AppError> {
+        self.inner.connect_peer(peer_pubkey, address).await
     }
 
     async fn list_peers(&self) -> Result<Vec<PeerInfo>, AppError> {

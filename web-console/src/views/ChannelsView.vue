@@ -7,6 +7,7 @@ import { truncateAddress, formatCKB, formatChannelAge } from "@/utils/format";
 import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
 import StatusTag from "@/components/ui/StatusTag.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
+import FiberAddressCell from "@/components/ui/FiberAddressCell.vue";
 import MatchDetailPanel, {
   type DetailSection,
 } from "@/components/ui/MatchDetailPanel.vue";
@@ -112,6 +113,12 @@ const columns = computed<ColumnDef[]>(() => [
     key: "counterparty_fiber_key",
     label: t("channels.counterpartyFiberKey"),
     align: "center",
+  },
+  {
+    key: "fiber_address",
+    label: t("channels.fiberAddress"),
+    align: "center",
+    width: "100px",
   },
   {
     key: "capacity",
@@ -431,6 +438,12 @@ function showMatchDetail(channel: ChannelWithMatch) {
           @click="copyToClipboard(String(value))"
         >{{ truncateAddress(String(value), 12, 10) }}</code>
       </template>
+      <template #cell-fiber_address="{ value }">
+        <FiberAddressCell
+          :address="value ? String(value) : undefined"
+          @copy="copyToClipboard"
+        />
+      </template>
       <template #cell-capacity="{ value }">
         {{ formatCKB(Number(value)) }}
       </template>
@@ -491,6 +504,15 @@ function showMatchDetail(channel: ChannelWithMatch) {
 .page-channels {
   max-width: 1200px;
   margin: 0 auto;
+}
+.page-channels :deep(.table-wrapper) {
+  overflow: visible !important;
+}
+.page-channels :deep(.data-table td) {
+  overflow: visible !important;
+}
+.page-channels :deep(.data-table tbody tr) {
+  overflow: visible !important;
 }
 /* Node Info Card */
 .node-info-card {
@@ -796,5 +818,4 @@ function showMatchDetail(channel: ChannelWithMatch) {
 .copyable:hover {
   color: var(--primary-500);
 }
-
 </style>

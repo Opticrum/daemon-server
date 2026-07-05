@@ -148,10 +148,11 @@ pub async fn run_auto_match_cycle(
         // Open a fresh channel for this order (contract requires channel
         // created AFTER the order).
         let fiber_pubkey_hex = hex::encode(order.order_args.fiber_pubkey.to_bytes());
+        let fiber_address = order.fiber_address.as_deref();
         let required_capacity = order.ckb_capacity + CHANNEL_CELL_OCCUPIED_RESERVE;
 
         // Fiber requires the peer to be connected before open_channel.
-        let _ = chain_provider.connect_peer(&fiber_pubkey_hex).await;
+        let _ = chain_provider.connect_peer(&fiber_pubkey_hex, fiber_address).await;
 
         info!(
             peer = %fiber_pubkey_hex,
@@ -169,7 +170,7 @@ pub async fn run_auto_match_cycle(
             ),
         );
         if let Err(e) = chain_provider
-            .open_channel(&fiber_pubkey_hex, required_capacity)
+            .open_channel(&fiber_pubkey_hex, required_capacity, fiber_address)
             .await
         {
             tracing::warn!(

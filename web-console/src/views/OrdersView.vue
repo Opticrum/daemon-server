@@ -13,6 +13,7 @@ import StatusTag from "@/components/ui/StatusTag.vue";
 import MatchOrderForm from "@/components/ui/MatchOrderForm.vue";
 import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
+import FiberAddressCell from "@/components/ui/FiberAddressCell.vue";
 import type {
   OrderScanItem,
   MatchOrderRequest,
@@ -54,7 +55,13 @@ const columns = computed<ColumnDef[]>(() => [
     key: "fiber_pubkey",
     label: t("orders.buyerFiberPubkey"),
     align: "center",
-    width: "130px",
+    width: "135px",
+  },
+  {
+    key: "fiber_address",
+    label: t("orders.fiberAddress"),
+    align: "center",
+    width: "105px",
   },
   {
     key: "channel_capacity",
@@ -67,19 +74,19 @@ const columns = computed<ColumnDef[]>(() => [
     key: "annualized_yield",
     label: t("common.annualizedYield"),
     align: "center",
-    width: "65px",
+    width: "60px",
   },
   {
     key: "match_status",
     label: t("orders.matchStatus"),
     align: "center",
-    width: "145px",
+    width: "125px",
   },
   {
     key: "actions",
     label: t("common.actions"),
     align: "center",
-    width: "95px",
+    width: "90px",
   },
 ]);
 
@@ -148,19 +155,62 @@ function isChannelBeingCreated(txHash: string): boolean {
   return !!readiness[txHash]?.pending_channel;
 }
 
-async function connectPeerForOrder(txHash: string, pubkey: string) {
-  const ok = await modal.confirm(
-    t("orders.confirmConnectPeer", { pubkey: truncateAddress(pubkey, 12, 8) }),
-    { title: t("orders.peerConnect"), confirmText: t("orders.peerConnect") },
-  );
-  if (!ok) return;
-  try {
-    await api.connectToPeer(pubkey);
-    toast.success(t("orders.peerConnectSuccess"));
-    startPolling(txHash);
-  } catch (e: any) {
-    toast.error(e.message || t("orders.peerConnectFailed"));
-  }
+async function connectPeerForOrder(
+  txHash: string,
+  pubkey: string,
+  address?: string,
+) {
+  modal.show({
+    title: t("orders.peerConnect"),
+    content: {
+      setup() {
+        return () =>
+          h("div", { class: "connect-peer-confirm" }, [
+            h("div", { class: "connect-peer-field" }, [
+              h("div", { class: "connect-peer-label" }, t("orders.buyerFiberPubkey")),
+              h("code", { class: "connect-peer-value font-mono" }, pubkey),
+            ]),
+            h("div", { class: "connect-peer-field" }, [
+              h("div", { class: "connect-peer-label" }, t("orders.fiberAddress")),
+              address
+                ? h("code", { class: "connect-peer-value font-mono" }, address)
+                : h("span", { class: "connect-peer-missing" }, t("orders.noFiberAddress")),
+            ]),
+            !address
+              ? h("p", { class: "connect-peer-hint" }, t("orders.connectPeerNoAddrHint"))
+              : null,
+          ]);
+      },
+    },
+    confirmText: t("orders.peerConnect"),
+    cancelText: t("common.cancel"),
+    onConfirm: async () => {
+      // Try pubkey-only first
+      try {
+        await api.connectToPeer(pubkey);
+        toast.success(t("orders.peerConnectSuccess"));
+        startPolling(txHash);
+        return;
+      } catch {
+        // Fall back to address if available
+      }
+
+      if (address) {
+        try {
+          await api.connectToPeer(pubkey, address);
+          toast.success(t("orders.peerConnectSuccess"));
+          startPolling(txHash);
+          return;
+        } catch (e: any) {
+          toast.error(e.message || t("orders.peerConnectFailed"));
+          return;
+        }
+      }
+
+      toast.error(t("orders.peerConnectFailed"));
+    },
+    onCancel: () => modal.hide(),
+  });
 }
 
 async function createChannelForOrder(txHash: string) {
@@ -169,8 +219,14 @@ async function createChannelForOrder(txHash: string) {
     ? `${(r.required_capacity / 100_000_000).toFixed(0)} CKB`
     : "—";
   const ok = await modal.confirm(
-    t("orders.confirmCreateChannel", { peer: truncateAddress(r?.fiber_pubkey || "", 12, 8), capacity: cap }),
-    { title: t("orders.createChannel"), confirmText: t("orders.createChannel") },
+    t("orders.confirmCreateChannel", {
+      peer: truncateAddress(r?.fiber_pubkey || "", 12, 8),
+      capacity: cap,
+    }),
+    {
+      title: t("orders.createChannel"),
+      confirmText: t("orders.createChannel"),
+    },
   );
   if (!ok) return;
   try {
@@ -217,7 +273,7 @@ async function showMatchModal(order: OrderScanItem) {
     walletsLoading: true,
     needsUnlock: false,
     unlocking: false,
-    unlockError: '',
+    unlockError: "",
   });
 
   matchForm.value = {
@@ -229,7 +285,7 @@ async function showMatchModal(order: OrderScanItem) {
 
   async function handleUnlock(password: string) {
     modalData.unlocking = true;
-    modalData.unlockError = '';
+    modalData.unlockError = "";
     try {
       await api.unlockWallet({ password });
       modalData.needsUnlock = false;
@@ -292,15 +348,25 @@ async function showMatchModal(order: OrderScanItem) {
     content: MatchOrderForm,
     contentProps: {
       modelValue: matchForm.value,
-      get wallets() { return modalData.wallets },
-      get walletsLoading() { return modalData.walletsLoading },
-      get needsUnlock() { return modalData.needsUnlock },
-      get unlocking() { return modalData.unlocking },
-      get unlockError() { return modalData.unlockError },
+      get wallets() {
+        return modalData.wallets;
+      },
+      get walletsLoading() {
+        return modalData.walletsLoading;
+      },
+      get needsUnlock() {
+        return modalData.needsUnlock;
+      },
+      get unlocking() {
+        return modalData.unlocking;
+      },
+      get unlockError() {
+        return modalData.unlockError;
+      },
       "onUpdate:modelValue": (v: typeof matchForm.value) => {
         matchForm.value = v;
       },
-      "onUnlock": handleUnlock,
+      onUnlock: handleUnlock,
     },
     confirmText: t("orders.matchConfirm"),
     onConfirm: async () => {
@@ -330,7 +396,8 @@ async function showMatchModal(order: OrderScanItem) {
   });
 
   // Load wallets in the background — always show addresses regardless of lock state.
-  api.getSignerWallets()
+  api
+    .getSignerWallets()
     .then((wallets) => {
       modalData.wallets.splice(0, modalData.wallets.length, ...wallets);
       if (!matchForm.value.seller_address && wallets.length > 0) {
@@ -413,6 +480,12 @@ onMounted(async () => {
           @click="copyToClipboard(String(value))"
         >{{ truncateAddress(String(value), 12, 8) }}</code>
       </template>
+      <template #cell-fiber_address="{ value }">
+        <FiberAddressCell
+          :address="value ? String(value) : undefined"
+          @copy="copyToClipboard"
+        />
+      </template>
       <template #cell-channel_capacity="{ value }">
         {{ formatCKB(Number(value)) }}
       </template>
@@ -432,16 +505,12 @@ onMounted(async () => {
             :label="t('orders.peerConnected')"
           />
           <StatusTag
-            v-else-if="readiness[row.tx_hash] && !readiness[row.tx_hash]!.peer_connected"
+            v-else-if="
+              readiness[row.tx_hash] && !readiness[row.tx_hash]!.peer_connected
+            "
             status="destroyed"
             :label="t('orders.peerNotConnected')"
           />
-          <span
-            v-else
-            class="inline-skeleton"
-          >
-            <span class="inline-skeleton-bar" />
-          </span>
           <span class="status-sep">/</span>
           <StatusTag
             v-if="readiness[row.tx_hash]?.compatible_channel"
@@ -455,9 +524,9 @@ onMounted(async () => {
           />
           <StatusTag
             v-else-if="
-              readiness[row.tx_hash]
-                && !readiness[row.tx_hash]!.compatible_channel
-                && !readiness[row.tx_hash]!.pending_channel
+              readiness[row.tx_hash] &&
+                !readiness[row.tx_hash]!.compatible_channel &&
+                !readiness[row.tx_hash]!.pending_channel
             "
             status="pending"
             :label="t('orders.channelNone')"
@@ -478,6 +547,7 @@ onMounted(async () => {
             connectPeerForOrder(
               row.tx_hash,
               readiness[row.tx_hash]?.fiber_pubkey || row.fiber_pubkey,
+              readiness[row.tx_hash]?.fiber_address || row.fiber_address,
             )
           "
         >
@@ -528,23 +598,45 @@ onMounted(async () => {
   table-layout: fixed;
   width: 100%;
 }
+.page-orders :deep(.table-wrapper) {
+  overflow: visible !important;
+}
+.page-orders :deep(.data-table td) {
+  overflow: visible !important;
+}
+.page-orders :deep(.data-table tbody tr) {
+  overflow: visible !important;
+}
 .page-orders :deep(.data-table th:nth-child(1)),
 .page-orders :deep(.data-table td:nth-child(1)) {
-  width: 20%;
+  width: 17%;
   overflow: hidden;
 }
 .page-orders :deep(.data-table th:nth-child(2)),
 .page-orders :deep(.data-table td:nth-child(2)) {
-  width: 32%;
+  width: 15%;
   overflow: hidden;
 }
 .page-orders :deep(.data-table th:nth-child(3)),
-.page-orders :deep(.data-table td:nth-child(3)),
+.page-orders :deep(.data-table td:nth-child(3)) {
+  width: 6%;
+}
 .page-orders :deep(.data-table th:nth-child(4)),
-.page-orders :deep(.data-table td:nth-child(4)),
+.page-orders :deep(.data-table td:nth-child(4)) {
+  width: 12%;
+  overflow: hidden;
+}
 .page-orders :deep(.data-table th:nth-child(5)),
 .page-orders :deep(.data-table td:nth-child(5)) {
-  width: 14%;
+  width: 9%;
+}
+.page-orders :deep(.data-table th:nth-child(6)),
+.page-orders :deep(.data-table td:nth-child(6)) {
+  width: 29%;
+}
+.page-orders :deep(.data-table th:nth-child(7)),
+.page-orders :deep(.data-table td:nth-child(7)) {
+  width: 12%;
 }
 .page-orders :deep(.data-table th),
 .page-orders :deep(.data-table td) {
@@ -742,5 +834,55 @@ onMounted(async () => {
 .peer-actions .btn-sm {
   height: 28px;
   font-size: var(--fs-small);
+}
+</style>
+
+<!-- Global styles for connect-peer modal (teleported to body) -->
+<style>
+.connect-peer-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.connect-peer-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.connect-peer-label {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.connect-peer-value {
+  display: block;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--gray-50, #fafafa);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-caption);
+  color: var(--text-primary);
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+.connect-peer-missing {
+  font-size: var(--fs-body);
+  color: var(--text-disabled);
+  font-style: italic;
+}
+
+.connect-peer-hint {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(250, 173, 20, 0.1);
+  border: 1px solid rgba(250, 173, 20, 0.35);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-caption);
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 </style>

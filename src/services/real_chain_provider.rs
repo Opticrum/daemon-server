@@ -405,16 +405,21 @@ impl ChainProvider for RealChainProvider {
         &self,
         peer_pubkey: &str,
         funding_amount: u64,
+        address: Option<&str>,
     ) -> Result<String, AppError> {
         tracing::info!(
             peer = %peer_pubkey,
             amount = funding_amount,
+            address = ?address,
             "Calling Fiber open_channel"
         );
-        let params = serde_json::json!({
+        let mut params = serde_json::json!({
             "pubkey": peer_pubkey,
             "funding_amount": format!("0x{:x}", funding_amount),
         });
+        if let Some(addr) = address {
+            params["address"] = serde_json::json!(addr);
+        }
         let value = self
             .fiber_rpc
             .call("open_channel", vec![params])
@@ -540,9 +545,12 @@ impl ChainProvider for RealChainProvider {
         }
     }
 
-    async fn connect_peer(&self, pubkey: &str) -> Result<(), AppError> {
-        tracing::info!(peer = %pubkey, "Calling Fiber connect_peer");
-        let params = serde_json::json!({ "pubkey": pubkey });
+    async fn connect_peer(&self, pubkey: &str, address: Option<&str>) -> Result<(), AppError> {
+        tracing::info!(peer = %pubkey, address = ?address, "Calling Fiber connect_peer");
+        let mut params = serde_json::json!({ "pubkey": pubkey });
+        if let Some(addr) = address {
+            params["address"] = serde_json::json!(addr);
+        }
         self.fiber_rpc
             .call("connect_peer", vec![params])
             .await

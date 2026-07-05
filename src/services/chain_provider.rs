@@ -68,13 +68,15 @@ pub trait ChainProvider: Send + Sync {
 
     /// Open a new Fiber channel to a peer.
     /// Returns the temporary channel ID (hex-encoded Hash256).
+    /// `address` is an optional multiaddr for direct peer dialing.
     /// Default: returns a mock ID (MockChainProvider records the call).
     async fn open_channel(
         &self,
         peer_pubkey: &str,
         funding_amount: u64,
+        address: Option<&str>,
     ) -> Result<String, AppError> {
-        let _ = (peer_pubkey, funding_amount);
+        let _ = (peer_pubkey, funding_amount, address);
         Ok("mock_temporary_channel_id".into())
     }
 
@@ -83,9 +85,12 @@ pub trait ChainProvider: Send + Sync {
         Ok(vec![])
     }
 
-    /// Connect to a Fiber peer by pubkey.
-    async fn connect_peer(&self, pubkey: &str) -> Result<(), AppError> {
-        let _ = pubkey;
+    /// Connect to a Fiber peer.
+    /// `address` is an optional multiaddr for direct peer dialing — when
+    /// provided, the Fiber node can dial the peer directly instead of
+    /// relying on DHT discovery.
+    async fn connect_peer(&self, pubkey: &str, address: Option<&str>) -> Result<(), AppError> {
+        let _ = (pubkey, address);
         Ok(())
     }
 
@@ -221,6 +226,8 @@ pub struct ChannelWithMatch {
     pub match_info: Option<ChannelMatchInfo>,
     /// "matched" or "not_found".
     pub match_status: String,
+    /// Fiber network address of the counterparty, from the on-chain order (if any).
+    pub fiber_address: Option<String>,
 }
 
 /// Lightweight connected peer info returned by `list_peers`.
@@ -328,9 +335,9 @@ pub struct MockChainProvider {
     pub channel_matches: Mutex<Vec<ChannelWithMatch>>,
     pub fiber_node_info: Mutex<Option<FiberNodeInfo>>,
     pub shutdown_channels: Mutex<Vec<(String, bool)>>,
-    pub open_channels: Mutex<Vec<(String, u64)>>,
+    pub open_channels: Mutex<Vec<(String, u64, Option<String>)>>,
     pub peer_list: Mutex<Vec<PeerInfo>>,
-    pub peer_connections: Mutex<Vec<String>>,
+    pub peer_connections: Mutex<Vec<(String, Option<String>)>>,
     pub transactions: Mutex<HashMap<String, TransactionInfo>>,
 }
 
@@ -470,11 +477,12 @@ impl ChainProvider for MockChainProvider {
         &self,
         peer_pubkey: &str,
         funding_amount: u64,
+        address: Option<&str>,
     ) -> Result<String, AppError> {
         self.open_channels
             .lock()
             .unwrap()
-            .push((peer_pubkey.to_string(), funding_amount));
+            .push((peer_pubkey.to_string(), funding_amount, address.map(|a| a.to_string())));
         Ok("mock_temporary_channel_id".into())
     }
 
@@ -482,11 +490,11 @@ impl ChainProvider for MockChainProvider {
         Ok(self.peer_list.lock().unwrap().clone())
     }
 
-    async fn connect_peer(&self, pubkey: &str) -> Result<(), AppError> {
+    async fn connect_peer(&self, pubkey: &str, address: Option<&str>) -> Result<(), AppError> {
         self.peer_connections
             .lock()
             .unwrap()
-            .push(pubkey.to_string());
+            .push((pubkey.to_string(), address.map(|a| a.to_string())));
         Ok(())
     }
 

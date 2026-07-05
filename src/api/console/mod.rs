@@ -518,6 +518,7 @@ pub struct OrderScanItem {
     tx_hash: String,
     output_index: u32,
     fiber_pubkey: String,
+    fiber_address: Option<String>,
     buyer_lock_hash: String,
     xudt_amount: u128,
     channel_capacity: u64,
@@ -540,6 +541,7 @@ pub async fn scan_orders(state: web::Data<AppState>) -> Result<HttpResponse, App
             tx_hash: hex::encode(o.order_outpoint.tx_hash),
             output_index: o.order_outpoint.index,
             fiber_pubkey: hex::encode(o.order_args.fiber_pubkey.to_bytes()),
+            fiber_address: o.fiber_address.clone(),
             buyer_lock_hash: hex::encode(o.order_args.buyer_lock_hash),
             xudt_amount: o.order_data.xudt_amount,
             channel_capacity: o.order_data.channel_capacity,
@@ -790,13 +792,14 @@ pub async fn check_peer_connection(
 #[derive(Deserialize)]
 pub struct ConnectPeerBody {
     pub pubkey: String,
+    pub address: Option<String>,
 }
 
 pub async fn connect_to_peer(
     state: web::Data<AppState>,
     body: web::Json<ConnectPeerBody>,
 ) -> Result<HttpResponse, AppError> {
-    state.chain_provider.connect_peer(&body.pubkey).await?;
+    state.chain_provider.connect_peer(&body.pubkey, body.address.as_deref()).await?;
     Ok(HttpResponse::Ok().json(serde_json::json!({"connected": true})))
 }
 

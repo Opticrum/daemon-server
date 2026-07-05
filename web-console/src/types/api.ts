@@ -201,6 +201,7 @@ export interface OrderScanItem {
   tx_hash: string
   output_index: number
   fiber_pubkey: string
+  fiber_address?: string
   buyer_lock_hash: string
   xudt_amount: number
   channel_capacity: number
@@ -223,6 +224,7 @@ export interface MatchReadiness {
     capacity: number
   } | null
   fiber_pubkey: string
+  fiber_address?: string
   required_capacity: number
 }
 
@@ -344,6 +346,7 @@ export interface ChannelMatchInfo {
 export interface ChannelWithMatch extends FiberChannelInfo {
   match_info: ChannelMatchInfo | null
   match_status: 'matched' | 'not_found'
+  fiber_address?: string
 }
 
 // ── Fiber Node Info (matches backend proxy response) ──
