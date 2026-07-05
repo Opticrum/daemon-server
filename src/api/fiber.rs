@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use crate::api::AppState;
 use crate::error::AppError;
+use crate::services::chain_provider::ANY_LOCK_HASH;
 
 /// Query parameters for scanning Fiber channels.
 #[derive(Deserialize)]
@@ -39,7 +40,7 @@ pub async fn list_channels(
         None => {
             // No filter — scan all channels. In production, this may be
             // scoped to channels relevant to managed wallets.
-            [0u8; 32]
+            ANY_LOCK_HASH
         }
     };
 

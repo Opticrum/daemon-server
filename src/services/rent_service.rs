@@ -217,13 +217,7 @@ fn resolve_seller_address(
     conn: &mut diesel::SqliteConnection,
     seller_address: &str,
 ) -> Result<String, AppError> {
-    if let Some(hex_part) = seller_address.strip_prefix("lock_hash:") {
-        let lock_hash_bytes = hex::decode(hex_part)
-            .map_err(|_| AppError::BadRequest("Invalid seller lock hash".into()))?;
-        let wallet = wallet_db::get_wallet_by_lock_hash(conn, &lock_hash_bytes)?;
-        return Ok(wallet.ckb_address);
-    }
-    Ok(seller_address.to_string())
+    wallet_db::resolve_lock_hash_to_address(conn, seller_address)
 }
 
 // ---------------------------------------------------------------------------

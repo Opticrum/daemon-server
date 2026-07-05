@@ -125,63 +125,15 @@ fn ensure_signer_from_session(
     unlock_signer(state, &password)
 }
 
-/// Mount all console routes under `/api/console`.
-pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    tracing::info!("Registering console gateway routes");
-    cfg.service(
-        web::scope("/api/console")
-            // Dashboard
-            .route("/dashboard", web::get().to(dashboard))
-            // Wallets
-            .route("/wallets", web::get().to(list_wallets))
-            .route("/wallets", web::post().to(import_wallet))
-            .route("/wallets/{id}", web::delete().to(delete_wallet))
-            // Orders
-            .route("/orders", web::get().to(scan_orders))
-            .route("/orders/{tx_hash}/match", web::post().to(match_order))
-            // Matches
-            .route("/matches", web::get().to(list_matches))
-            .route(
-                "/matches/{tx_hash}/{output_index}",
-                web::get().to(match_detail),
-            )
-            .route(
-                "/matches/{tx_hash}/{output_index}/extract",
-                web::post().to(extract_rent),
-            )
-            .route(
-                "/matches/{tx_hash}/{output_index}/destroy",
-                web::post().to(destroy_match),
-            )
-            // Channels
-            .route("/channels", web::get().to(scan_channels))
-            .route("/channels-only", web::get().to(scan_channels_only))
-            .route("/channel-matches", web::get().to(scan_channel_matches))
-            // Fiber node info
-            .route("/fiber-node-info", web::get().to(fiber_node_info))
-            // Runtime config (mutable at runtime)
-            .route("/runtime-config", web::get().to(get_runtime_config))
-            .route("/runtime-config", web::put().to(update_runtime_config))
-            .route(
-                "/runtime-config/reset",
-                web::post().to(reset_runtime_config),
-            )
-            // Scheduler
-            .route("/scheduler/status", web::get().to(scheduler_status))
-            // Chain cache
-            .route("/chain-cache/status", web::get().to(chain_cache_status))
-            .route("/chain-cache/refresh", web::post().to(chain_cache_refresh))
-            // Server info
-            .route("/server-info", web::get().to(server_info)),
-    );
-}
-
 // ═══════════════════════════════════════════════════════
 // Server info
 // ═══════════════════════════════════════════════════════
 
 pub async fn server_info(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let rc = state.runtime_config.read().unwrap();
+    let rc = state
+        .runtime_config
+        .read()
+        .map_err(|e| AppError::Internal(format!("Config lock poisoned: {}", e)))?;
     let info = GatewayService::get_server_info(&state.config, &rc, state.chain_provider.as_ref());
     Ok(HttpResponse::Ok().json(info))
 }
@@ -812,7 +764,10 @@ pub async fn fiber_node_info(state: web::Data<AppState>) -> Result<HttpResponse,
 // ═══════════════════════════════════════════════════════
 
 pub async fn get_runtime_config(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let rc = state.runtime_config.read().unwrap();
+    let rc = state
+        .runtime_config
+        .read()
+        .map_err(|e| AppError::Internal(format!("Config lock poisoned: {}", e)))?;
     let cfg = GatewayService::get_runtime_config(&rc);
     Ok(HttpResponse::Ok().json(cfg))
 }
@@ -821,12 +776,12 @@ pub async fn update_runtime_config(
     state: web::Data<AppState>,
     body: web::Json<RuntimeConfigPartial>,
 ) -> Result<HttpResponse, AppError> {
-    let cfg = GatewayService::update_runtime_config(&state.runtime_config, body.into_inner());
+    let cfg = GatewayService::update_runtime_config(&state.runtime_config, body.into_inner())?;
     Ok(HttpResponse::Ok().json(cfg))
 }
 
 pub async fn reset_runtime_config(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let cfg = GatewayService::reset_runtime_config(&state.runtime_config, &state.config);
+    let cfg = GatewayService::reset_runtime_config(&state.runtime_config, &state.config)?;
     Ok(HttpResponse::Ok().json(cfg))
 }
 

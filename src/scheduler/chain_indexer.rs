@@ -65,7 +65,16 @@ pub fn spawn_chain_indexer(
 
         loop {
             let (enabled, interval) = {
-                let rc = runtime_config.read().unwrap();
+                let rc = match runtime_config.read() {
+                    Ok(rc) => rc,
+                    Err(e) => {
+                        tracing::error!(
+                            "RuntimeConfig lock poisoned: {} — chain indexer exiting",
+                            e
+                        );
+                        break;
+                    }
+                };
                 (rc.chain_cache_enabled, rc.chain_cache_interval_secs)
             };
 

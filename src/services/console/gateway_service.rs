@@ -22,7 +22,7 @@ use crate::db::DbPool;
 use crate::error::AppError;
 use crate::services::cached_chain_provider::CachedChainProvider;
 use crate::services::chain_provider::{
-    ChainProvider, ChannelMatchInfo, ChannelWithMatch, FiberChannelInfo,
+    ChainProvider, ChannelMatchInfo, ChannelWithMatch, FiberChannelInfo, ANY_LOCK_HASH,
 };
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::match_service::{self, get_used_channel_outpoints, MatchOrderResult};
@@ -175,7 +175,7 @@ impl GatewayService {
         let (on_chain_matches, orders, channels, tip_block) = tokio::join!(
             provider.scan_matches(),
             provider.scan_orders(),
-            provider.scan_fiber_channels(&[0u8; 32]),
+            provider.scan_fiber_channels(&ANY_LOCK_HASH),
             provider.get_tip_block_number(),
         );
         let on_chain_matches = on_chain_matches.unwrap_or_default();
@@ -658,7 +658,7 @@ impl GatewayService {
         // and the order's own block number. None depend on each other.
         let (peers_result, channels_result, order_block_result) = tokio::join!(
             provider.list_peers(),
-            provider.scan_fiber_channels(&[0u8; 32]),
+            provider.scan_fiber_channels(&ANY_LOCK_HASH),
             provider.get_tx_block_number(order_tx_hash),
         );
         let peers = peers_result?;
@@ -817,9 +817,11 @@ impl GatewayService {
             }
 
             // Resolve seller address from wallet DB
-            let seller_address =
-                Self::resolve_lock_hash_to_address(&mut conn, &format!("lock_hash:{seller_lh}"))
-                    .unwrap_or_else(|| format!("lock_hash:{seller_lh}"));
+            let seller_address = wallet_db::resolve_lock_hash_to_address(
+                &mut conn,
+                &format!("lock_hash:{seller_lh}"),
+            )
+            .unwrap_or_else(|_| format!("lock_hash:{seller_lh}"));
 
             // Extraction totals from chain cache (never walk chain on the list path)
             let extracted_total = chain
@@ -890,20 +892,6 @@ impl GatewayService {
         })
     }
 
-    /// Try to resolve a `"lock_hash:<hex>"` placeholder to a proper CKB address
-    /// by looking up the wallet with that lock_hash in the database.
-    fn resolve_lock_hash_to_address(
-        conn: &mut diesel::SqliteConnection,
-        seller_address: &str,
-    ) -> Option<String> {
-        let hex_part = seller_address.strip_prefix("lock_hash:")?;
-        let lock_hash_bytes = hex::decode(hex_part).ok()?;
-        match wallet_db::get_wallet_by_lock_hash(conn, &lock_hash_bytes) {
-            Ok(wallet) => Some(wallet.ckb_address),
-            Err(_) => None,
-        }
-    }
-
     /// Get full match detail with extraction history from on-chain data.
     pub async fn get_match_detail(
         pool: &DbPool,
@@ -959,8 +947,8 @@ impl GatewayService {
 
         let seller_lh = hex::encode(m.match_args.seller_lock_hash);
         let seller_address =
-            Self::resolve_lock_hash_to_address(&mut conn, &format!("lock_hash:{seller_lh}"))
-                .unwrap_or_else(|| format!("lock_hash:{seller_lh}"));
+            wallet_db::resolve_lock_hash_to_address(&mut conn, &format!("lock_hash:{seller_lh}"))
+                .unwrap_or_else(|_| format!("lock_hash:{seller_lh}"));
 
         let is_exhausted = m.ckb_capacity == 0;
         let status = if is_exhausted { "exhausted" } else { "live" };
@@ -1037,7 +1025,7 @@ impl GatewayService {
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
         let (channels_result, matches_result) = tokio::join!(
-            provider.scan_fiber_channels(&[0u8; 32]),
+            provider.scan_fiber_channels(&ANY_LOCK_HASH),
             provider.scan_matches(),
         );
         let channels = channels_result?;
@@ -1082,7 +1070,7 @@ impl GatewayService {
     pub async fn get_channels_only(
         provider: &dyn ChainProvider,
     ) -> Result<Vec<FiberChannelInfo>, AppError> {
-        let channels = provider.scan_fiber_channels(&[0u8; 32]).await?;
+        let channels = provider.scan_fiber_channels(&ANY_LOCK_HASH).await?;
         Ok(channels
             .into_iter()
             .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
@@ -1096,7 +1084,7 @@ impl GatewayService {
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
         let (channels_result, matches_result, orders_result) = tokio::join!(
-            provider.scan_fiber_channels(&[0u8; 32]),
+            provider.scan_fiber_channels(&ANY_LOCK_HASH),
             provider.scan_matches(),
             provider.scan_orders(),
         );
@@ -1162,7 +1150,7 @@ impl GatewayService {
         provider: &dyn ChainProvider,
         channel_id: &str,
     ) -> Result<(), AppError> {
-        let channels = provider.scan_fiber_channels(&[0u8; 32]).await?;
+        let channels = provider.scan_fiber_channels(&ANY_LOCK_HASH).await?;
         let channel = channels
             .into_iter()
             .find(|ch| ch.channel_id == channel_id)
@@ -1237,20 +1225,24 @@ impl GatewayService {
     pub fn update_runtime_config(
         rc: &Arc<RwLock<RuntimeConfig>>,
         partial: RuntimeConfigPartial,
-    ) -> serde_json::Value {
-        let mut cfg = rc.write().unwrap();
+    ) -> Result<serde_json::Value, AppError> {
+        let mut cfg = rc
+            .write()
+            .map_err(|e| AppError::Internal(format!("Config lock poisoned: {}", e)))?;
         cfg.apply_partial(&partial);
-        serde_json::to_value(&*cfg).unwrap_or_default()
+        Ok(serde_json::to_value(&*cfg).unwrap_or_default())
     }
 
     /// Reset runtime config to config.toml values.
     pub fn reset_runtime_config(
         rc: &Arc<RwLock<RuntimeConfig>>,
         config: &Config,
-    ) -> serde_json::Value {
-        let mut cfg = rc.write().unwrap();
+    ) -> Result<serde_json::Value, AppError> {
+        let mut cfg = rc
+            .write()
+            .map_err(|e| AppError::Internal(format!("Config lock poisoned: {}", e)))?;
         cfg.reset_from_config(config);
-        serde_json::to_value(&*cfg).unwrap_or_default()
+        Ok(serde_json::to_value(&*cfg).unwrap_or_default())
     }
 
     // ═══════════════════════════════════════════════════════

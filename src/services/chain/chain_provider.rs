@@ -159,6 +159,10 @@ pub trait ChainProvider: Send + Sync {
 // Lightweight chain types (avoid heavy CKB type deps in trait)
 // ---------------------------------------------------------------------------
 
+/// Sentinel lock hash for `scan_fiber_channels` — requests all channels
+/// from the Fiber node without owner filtering.
+pub const ANY_LOCK_HASH: [u8; 32] = [0u8; 32];
+
 /// Lightweight cell output info returned by the chain provider.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CellOutput {

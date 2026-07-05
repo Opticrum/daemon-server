@@ -49,7 +49,16 @@ pub fn spawn_schedulers(
 
         loop {
             let (enabled, interval, min_extraction) = {
-                let rc = rc_ext.read().unwrap();
+                let rc = match rc_ext.read() {
+                    Ok(rc) => rc,
+                    Err(e) => {
+                        tracing::error!(
+                            "RuntimeConfig lock poisoned: {} — rent extractor exiting",
+                            e
+                        );
+                        break;
+                    }
+                };
                 (
                     rc.rent_extraction_enabled,
                     rc.scheduler_interval_secs,
@@ -107,7 +116,16 @@ pub fn spawn_schedulers(
 
         loop {
             let (enabled, interval) = {
-                let rc = rc_am.read().unwrap();
+                let rc = match rc_am.read() {
+                    Ok(rc) => rc,
+                    Err(e) => {
+                        tracing::error!(
+                            "RuntimeConfig lock poisoned: {} — auto-matcher exiting",
+                            e
+                        );
+                        break;
+                    }
+                };
                 (rc.auto_match_enabled, rc.auto_match_interval_secs)
             };
 

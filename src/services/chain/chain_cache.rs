@@ -73,16 +73,38 @@ impl ChainCache {
             .unwrap_or(0)
     }
 
+    /// Read the snapshot, logging and recovering on RwLock poison.
+    fn read_snap(&self) -> std::sync::RwLockReadGuard<'_, ChainCacheSnapshot> {
+        self.snapshot.read().unwrap_or_else(|e| {
+            tracing::error!(
+                "ChainCache lock poisoned on read: {} — recovering with potentially stale data",
+                e
+            );
+            e.into_inner()
+        })
+    }
+
+    /// Write the snapshot, logging and recovering on RwLock poison.
+    fn write_snap(&self) -> std::sync::RwLockWriteGuard<'_, ChainCacheSnapshot> {
+        self.snapshot.write().unwrap_or_else(|e| {
+            tracing::error!(
+                "ChainCache lock poisoned on write: {} — recovering with potentially stale data",
+                e
+            );
+            e.into_inner()
+        })
+    }
+
     pub fn is_populated(&self) -> bool {
-        self.snapshot.read().unwrap().updated_at_ms > 0
+        self.read_snap().updated_at_ms > 0
     }
 
     pub fn updated_at_ms(&self) -> u64 {
-        self.snapshot.read().unwrap().updated_at_ms
+        self.read_snap().updated_at_ms
     }
 
     pub fn status(&self) -> ChainCacheStatusResponse {
-        let snap = self.snapshot.read().unwrap();
+        let snap = self.read_snap();
         ChainCacheStatusResponse {
             updated_at_ms: snap.updated_at_ms,
             order_count: snap.orders.len() as u64,
@@ -97,15 +119,15 @@ impl ChainCache {
     }
 
     pub(crate) fn snapshot_orders(&self) -> Vec<OrderInfo> {
-        self.snapshot.read().unwrap().orders.clone()
+        self.read_snap().orders.clone()
     }
 
     pub(crate) fn snapshot_matches(&self) -> Vec<MatchInfo> {
-        self.snapshot.read().unwrap().matches.clone()
+        self.read_snap().matches.clone()
     }
 
     pub(crate) fn snapshot_tip_block(&self) -> u64 {
-        self.snapshot.read().unwrap().tip_block
+        self.read_snap().tip_block
     }
 
     pub(crate) fn snapshot_extraction_chain(
@@ -114,12 +136,7 @@ impl ChainCache {
         output_index: u32,
     ) -> Option<ExtractionChain> {
         let key = (tx_hash.to_string(), output_index);
-        self.snapshot
-            .read()
-            .unwrap()
-            .extraction_chains
-            .get(&key)
-            .cloned()
+        self.read_snap().extraction_chains.get(&key).cloned()
     }
 
     fn match_outpoint_key(m: &MatchInfo) -> MatchOutpointKey {
@@ -175,7 +192,7 @@ impl ChainCache {
         };
 
         if last_error.is_some() && orders.is_empty() && matches.is_empty() {
-            let mut snap = self.snapshot.write().unwrap();
+            let mut snap = self.write_snap();
             snap.last_error = last_error;
             return Err(AppError::Internal(
                 snap.last_error
@@ -187,7 +204,7 @@ impl ChainCache {
         // Publish scan results immediately so list/dashboard reads are fast;
         // extraction history is filled in a second pass below.
         {
-            let mut snap = self.snapshot.write().unwrap();
+            let mut snap = self.write_snap();
             snap.orders = orders.clone();
             snap.matches = matches.clone();
             snap.tip_block = tip_block;
@@ -203,7 +220,7 @@ impl ChainCache {
             extraction_chains.insert(key, chain);
         }
 
-        let mut snap = self.snapshot.write().unwrap();
+        let mut snap = self.write_snap();
         snap.extraction_chains = extraction_chains;
         Ok(())
     }

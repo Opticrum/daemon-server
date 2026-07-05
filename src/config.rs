@@ -220,114 +220,56 @@ impl Config {
     }
 
     /// Merge two configs: `file` as base, `cli` overrides non-default values.
+    ///
+    /// Each field defaults to the CLI value when it differs from the built-in
+    /// default (meaning the user explicitly set it); otherwise the file value
+    /// is used. Two fields have special semantics:
+    /// - `config_file` always comes from the CLI (the file itself can't set it).
+    /// - `hd_wallet_password` uses `Option`-or semantics (CLI wins when `Some`).
     fn merge(file: Self, cli: Self) -> Self {
+        // Pick `cli` value when it was explicitly set (differs from default),
+        // otherwise fall back to the `file` value.
+        macro_rules! merge_field {
+            ($field:ident, $defaults:ident, $cli:ident, $file:ident) => {
+                if $cli.$field != $defaults.$field {
+                    $cli.$field
+                } else {
+                    $file.$field
+                }
+            };
+        }
+
         let defaults = Self::default();
         Self {
             config_file: cli.config_file,
-            port: if cli.port != defaults.port {
-                cli.port
-            } else {
-                file.port
-            },
-            database_url: if cli.database_url != defaults.database_url {
-                cli.database_url
-            } else {
-                file.database_url
-            },
-            ckb_rpc_url: if cli.ckb_rpc_url != defaults.ckb_rpc_url {
-                cli.ckb_rpc_url
-            } else {
-                file.ckb_rpc_url
-            },
-            ckb_indexer_url: if cli.ckb_indexer_url != defaults.ckb_indexer_url {
-                cli.ckb_indexer_url
-            } else {
-                file.ckb_indexer_url
-            },
-            fiber_rpc_url: if cli.fiber_rpc_url != defaults.fiber_rpc_url {
-                cli.fiber_rpc_url
-            } else {
-                file.fiber_rpc_url
-            },
-            bind_address: if cli.bind_address != defaults.bind_address {
-                cli.bind_address
-            } else {
-                file.bind_address
-            },
-            scheduler_interval_secs: if cli.scheduler_interval_secs
-                != defaults.scheduler_interval_secs
-            {
-                cli.scheduler_interval_secs
-            } else {
-                file.scheduler_interval_secs
-            },
-            min_extraction_amount_shannons: if cli.min_extraction_amount_shannons
-                != defaults.min_extraction_amount_shannons
-            {
-                cli.min_extraction_amount_shannons
-            } else {
-                file.min_extraction_amount_shannons
-            },
-            fee_rate: if cli.fee_rate != defaults.fee_rate {
-                cli.fee_rate
-            } else {
-                file.fee_rate
-            },
-            rent_extraction_enabled: if cli.rent_extraction_enabled
-                != defaults.rent_extraction_enabled
-            {
-                cli.rent_extraction_enabled
-            } else {
-                file.rent_extraction_enabled
-            },
-            log_level: if cli.log_level != defaults.log_level {
-                cli.log_level
-            } else {
-                file.log_level
-            },
-            auto_match_enabled: if cli.auto_match_enabled != defaults.auto_match_enabled {
-                cli.auto_match_enabled
-            } else {
-                file.auto_match_enabled
-            },
-            auto_match_min_capacity: if cli.auto_match_min_capacity
-                != defaults.auto_match_min_capacity
-            {
-                cli.auto_match_min_capacity
-            } else {
-                file.auto_match_min_capacity
-            },
-            auto_match_max_escrow_blocks: if cli.auto_match_max_escrow_blocks
-                != defaults.auto_match_max_escrow_blocks
-            {
-                cli.auto_match_max_escrow_blocks
-            } else {
-                file.auto_match_max_escrow_blocks
-            },
-            auto_match_interval_secs: if cli.auto_match_interval_secs
-                != defaults.auto_match_interval_secs
-            {
-                cli.auto_match_interval_secs
-            } else {
-                file.auto_match_interval_secs
-            },
-            chain_cache_enabled: if cli.chain_cache_enabled != defaults.chain_cache_enabled {
-                cli.chain_cache_enabled
-            } else {
-                file.chain_cache_enabled
-            },
-            chain_cache_interval_secs: if cli.chain_cache_interval_secs
-                != defaults.chain_cache_interval_secs
-            {
-                cli.chain_cache_interval_secs
-            } else {
-                file.chain_cache_interval_secs
-            },
-            keystore_path: if cli.keystore_path != defaults.keystore_path {
-                cli.keystore_path
-            } else {
-                file.keystore_path
-            },
+            port: merge_field!(port, defaults, cli, file),
+            database_url: merge_field!(database_url, defaults, cli, file),
+            ckb_rpc_url: merge_field!(ckb_rpc_url, defaults, cli, file),
+            ckb_indexer_url: merge_field!(ckb_indexer_url, defaults, cli, file),
+            fiber_rpc_url: merge_field!(fiber_rpc_url, defaults, cli, file),
+            bind_address: merge_field!(bind_address, defaults, cli, file),
+            scheduler_interval_secs: merge_field!(scheduler_interval_secs, defaults, cli, file),
+            min_extraction_amount_shannons: merge_field!(
+                min_extraction_amount_shannons,
+                defaults,
+                cli,
+                file
+            ),
+            fee_rate: merge_field!(fee_rate, defaults, cli, file),
+            rent_extraction_enabled: merge_field!(rent_extraction_enabled, defaults, cli, file),
+            log_level: merge_field!(log_level, defaults, cli, file),
+            auto_match_enabled: merge_field!(auto_match_enabled, defaults, cli, file),
+            auto_match_min_capacity: merge_field!(auto_match_min_capacity, defaults, cli, file),
+            auto_match_max_escrow_blocks: merge_field!(
+                auto_match_max_escrow_blocks,
+                defaults,
+                cli,
+                file
+            ),
+            auto_match_interval_secs: merge_field!(auto_match_interval_secs, defaults, cli, file),
+            chain_cache_enabled: merge_field!(chain_cache_enabled, defaults, cli, file),
+            chain_cache_interval_secs: merge_field!(chain_cache_interval_secs, defaults, cli, file),
+            keystore_path: merge_field!(keystore_path, defaults, cli, file),
             hd_wallet_password: cli.hd_wallet_password.or(file.hd_wallet_password),
         }
     }

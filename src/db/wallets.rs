@@ -173,3 +173,21 @@ pub fn delete_wallet(conn: &mut SqliteConnection, id: i64) -> Result<bool, AppEr
     let affected = diesel::delete(wallets::table.filter(wallets::id.eq(id))).execute(conn)?;
     Ok(affected > 0)
 }
+
+/// Resolve a `"lock_hash:<hex>"` string to a CKB address from the wallet DB.
+///
+/// If the input starts with `"lock_hash:"`, the hex part is decoded and looked up
+/// in the `wallets` table. Otherwise the input is returned unchanged (pass-through
+/// for already-resolved plain addresses).
+pub fn resolve_lock_hash_to_address(
+    conn: &mut SqliteConnection,
+    address_or_lock_hash: &str,
+) -> Result<String, AppError> {
+    if let Some(hex_part) = address_or_lock_hash.strip_prefix("lock_hash:") {
+        let lock_hash_bytes = hex::decode(hex_part)
+            .map_err(|_| AppError::BadRequest("Invalid seller lock hash".into()))?;
+        let wallet = get_wallet_by_lock_hash(conn, &lock_hash_bytes)?;
+        return Ok(wallet.ckb_address);
+    }
+    Ok(address_or_lock_hash.to_string())
+}

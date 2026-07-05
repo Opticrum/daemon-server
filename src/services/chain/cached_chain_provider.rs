@@ -47,7 +47,16 @@ impl CachedChainProvider {
     }
 
     fn cache_enabled(&self) -> bool {
-        self.runtime_config.read().unwrap().chain_cache_enabled
+        self.runtime_config
+            .read()
+            .map(|rc| rc.chain_cache_enabled)
+            .unwrap_or_else(|e| {
+                tracing::error!(
+                    "RuntimeConfig lock poisoned: {} — defaulting cache to disabled",
+                    e
+                );
+                false
+            })
     }
 
     fn use_cache(&self) -> bool {
