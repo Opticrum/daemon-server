@@ -3,6 +3,7 @@
 - Long on-chain hashes and addresses in admin tables should display truncated on one line with a hover tooltip for the full value (not full inline, not multi-line wrap).
 - Background chain cache refresh must not interrupt page navigation or force-refresh the current view; pages load data on mount/revisit from the latest cache snapshot.
 - Automation Console should log all key automation operations with enough detail to follow progress without noisy or annoying message density.
+- CKB on-chain actions (match order, extract rent, destroy match) must show the global `TxConfirmOverlay` blocking modal during confirmation and refresh the relevant list on success.
 
 ## Learned Workspace Facts
 
@@ -15,5 +16,6 @@
 - System Settings includes a foldable Automation Console (`AutomationConsole.vue`) that polls `/api/console/scheduler/status` when expanded to monitor auto-match, rent-extraction, and chain-indexer cycles.
 - HD wallet CKB addresses and lock hashes must match ckb-cli/ckb-sdk (BIP32 path `m/44'/309'/0'/0/0` with normal derivation for the last two segments; CKB2021 bech32m addresses).
 - On-chain CKB balances are queried via the CKB indexer using lock args decoded from each wallet's `ckb_address`.
-- Background `chain_indexer` keeps an in-memory Opticrum chain cache (orders, matches, Fiber channels, extraction history); `CachedChainProvider` wraps `ChainProvider` and serves scan reads from cache when enabled, falling back to live RPC otherwise.
+- Background `chain_indexer` keeps an in-memory Opticrum chain cache (orders, matches, extraction history); `CachedChainProvider` wraps `ChainProvider` and serves scan reads from cache when enabled. Fiber channels are always fetched live on demand (Channels page load/refresh), not by the background indexer.
 - Chain cache age and manual refresh live in the AppHeader status bar via `useChainCache` composable and `/api/console/chain-cache/*` endpoints.
+- GitHub remote is `Opticrum/daemon-server`; pushes to `master` publish prebuilt `opticrum-daemon` to Release tag `latest` via `.github/workflows/release.yml` (bundles `config.toml` + built `static/`). CI checkouts path deps via `scripts/ci-checkout-deps.sh` (`Opticrum/ckb-contract-script` → local `opticrum/`, `ashuralyk/ckb-cinnabar`, `fiber-json-types` from `nervosnetwork/fiber`).

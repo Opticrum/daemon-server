@@ -1,0 +1,179 @@
+name: Release Binaries
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  PROJECT_DIR: deps/Freelancer/fiber/rust-server
+
+jobs:
+  test:
+    name: Test (linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ env.PROJECT_DIR }}
+
+      - name: Checkout build dependencies
+        run: bash "${{ env.PROJECT_DIR }}/scripts/ci-checkout-deps.sh" "${{ github.workspace }}/deps"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.PROJECT_DIR }}
+
+      - name: Run tests
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: cargo test --locked
+
+  prepare-frontend:
+    name: Build admin console
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ env.PROJECT_DIR }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ env.PROJECT_DIR }}/web-console/package-lock.json
+
+      - name: Build web console
+        working-directory: ${{ env.PROJECT_DIR }}/web-console
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: static-assets
+          path: ${{ env.PROJECT_DIR }}/static
+          retention-days: 1
+
+  build:
+    name: Build (${{ matrix.suffix }})
+    needs: [test, prepare-frontend]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            suffix: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-15
+            target: aarch64-apple-darwin
+            suffix: aarch64-apple-darwin
+            archive: tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            suffix: x86_64-apple-darwin
+            archive: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ env.PROJECT_DIR }}
+
+      - name: Checkout build dependencies
+        run: bash "${{ env.PROJECT_DIR }}/scripts/ci-checkout-deps.sh" "${{ github.workspace }}/deps"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: static-assets
+          path: ${{ env.PROJECT_DIR }}/static
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.PROJECT_DIR }}
+
+      - name: Build release binary
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package release archive
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
+          short_sha="${GITHUB_SHA::7}"
+          pkg_dir="dist/opticrum-daemon-${version}-${short_sha}-${{ matrix.suffix }}"
+          mkdir -p "${pkg_dir}/static"
+          cp "target/${{ matrix.target }}/release/rust-server" "${pkg_dir}/opticrum-daemon"
+          cp config.toml "${pkg_dir}/config.toml"
+          cp -R static/. "${pkg_dir}/static/"
+          mkdir -p dist
+          if [[ "${{ matrix.archive }}" == "tar.gz" ]]; then
+            tar -czf "dist/opticrum-daemon-${version}-${short_sha}-${{ matrix.suffix }}.tar.gz" -C dist "$(basename "${pkg_dir}")"
+          fi
+          rm -rf "${pkg_dir}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.suffix }}
+          path: ${{ env.PROJECT_DIR }}/dist/*
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ env.PROJECT_DIR }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          cd artifacts
+          sha256sum opticrum-daemon-*.tar.gz > SHA256SUMS.txt
+
+      - name: Publish rolling master release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build (master)
+          body: |
+            Pre-built binaries for the latest `master` commit.
+
+            | Field | Value |
+            | --- | --- |
+            | Commit | [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |
+            | Branch | `${{ github.ref_name }}` |
+            | Workflow | [`${{ github.run_id }}`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+
+            ## Install
+
+            1. Download the archive for your platform below.
+            2. Extract it and `cd` into the folder.
+            3. Edit `config.toml`, then run `./opticrum-daemon --config config.toml`.
+
+            Verify downloads with `sha256sum -c SHA256SUMS.txt`.
+          files: |
+            artifacts/*
+          draft: false
+          prerelease: false
+          make_latest: true
+          overwrite_files: true
