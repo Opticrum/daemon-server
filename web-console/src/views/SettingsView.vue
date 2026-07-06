@@ -24,6 +24,7 @@ const editingRent = ref(false);
 const editingNetwork = ref(false);
 const editForm = ref<RuntimeConfig>({
   fee_rate: 0,
+  confirm_count: 1,
   rent_extraction_enabled: true,
   scheduler_interval_secs: 0,
   min_extraction_amount_shannons: 0,
@@ -89,121 +90,123 @@ async function doSaveConfig() {
 }
 
 function promptUnlockThenSave() {
-  const selectedAddress = ref('')
-  const pw = ref('')
-  const err = ref('')
-  const showPassword = ref(false)
-  const wallets = ref<SignerWalletItem[]>([])
-  const walletsLoading = ref(true)
+  const selectedAddress = ref("");
+  const pw = ref("");
+  const err = ref("");
+  const showPassword = ref(false);
+  const wallets = ref<SignerWalletItem[]>([]);
+  const walletsLoading = ref(true);
 
-  api.getSignerWallets()
+  api
+    .getSignerWallets()
     .then((list) => {
-      wallets.value = list
-      const current = config.value?.automation_signer_address
+      wallets.value = list;
+      const current = config.value?.automation_signer_address;
       if (current && list.some((w) => w.ckb_address === current)) {
-        selectedAddress.value = current
+        selectedAddress.value = current;
       } else if (list.length > 0) {
-        selectedAddress.value = list[0].ckb_address
+        selectedAddress.value = list[0].ckb_address;
       }
     })
     .catch(() => {
-      err.value = t('settings.loadSignerWalletsFailed')
+      err.value = t("settings.loadSignerWalletsFailed");
     })
     .finally(() => {
-      walletsLoading.value = false
-    })
+      walletsLoading.value = false;
+    });
 
   modal.show({
-    title: t('settings.selectSignerToEnable'),
+    title: t("settings.selectSignerToEnable"),
     wide: true,
     content: {
       setup() {
-        return () => h(AutomationUnlockForm, {
-          selectedAddress: selectedAddress.value,
-          password: pw.value,
-          error: err.value,
-          wallets: wallets.value,
-          walletsLoading: walletsLoading.value,
-          showPassword: showPassword.value,
-          'onUpdate:selectedAddress': (value: string) => {
-            selectedAddress.value = value
-            err.value = ''
-          },
-          'onUpdate:password': (value: string) => {
-            pw.value = value
-            err.value = ''
-          },
-        })
+        return () =>
+          h(AutomationUnlockForm, {
+            selectedAddress: selectedAddress.value,
+            password: pw.value,
+            error: err.value,
+            wallets: wallets.value,
+            walletsLoading: walletsLoading.value,
+            showPassword: showPassword.value,
+            "onUpdate:selectedAddress": (value: string) => {
+              selectedAddress.value = value;
+              err.value = "";
+            },
+            "onUpdate:password": (value: string) => {
+              pw.value = value;
+              err.value = "";
+            },
+          });
       },
     },
-    confirmText: t('common.continue'),
+    confirmText: t("common.continue"),
     onConfirm: async () => {
       if (!selectedAddress.value) {
-        err.value = t('settings.selectSignerRequired')
-        return false
+        err.value = t("settings.selectSignerRequired");
+        return false;
       }
 
-      editForm.value.automation_signer_address = selectedAddress.value
+      editForm.value.automation_signer_address = selectedAddress.value;
 
       if (!showPassword.value) {
-        let sessionActive = false
+        let sessionActive = false;
         try {
-          sessionActive = (await api.getWalletSession()).active
+          sessionActive = (await api.getWalletSession()).active;
         } catch {
           // treat as locked — proceed to password step
         }
         if (!sessionActive) {
-          showPassword.value = true
-          modal.title.value = t('settings.unlockToEnable')
-          modal.confirmText.value = t('settings.unlockAndSave')
-          return false
+          showPassword.value = true;
+          modal.title.value = t("settings.unlockToEnable");
+          modal.confirmText.value = t("settings.unlockAndSave");
+          return false;
         }
 
         try {
-          await doSaveConfig()
-          toast.success(t('settings.configSaved'))
+          await doSaveConfig();
+          toast.success(t("settings.configSaved"));
         } catch (e: any) {
-          err.value = e.message || t('settings.configSaveFailed')
-          return false
+          err.value = e.message || t("settings.configSaveFailed");
+          return false;
         }
-        return
+        return;
       }
 
       if (!pw.value) {
-        err.value = t('wallets.fillRequired')
-        return false
+        err.value = t("wallets.fillRequired");
+        return false;
       }
       try {
-        await api.unlockWallet({ password: pw.value })
-        await doSaveConfig()
-        toast.success(t('settings.configSaved'))
+        await api.unlockWallet({ password: pw.value });
+        await doSaveConfig();
+        toast.success(t("settings.configSaved"));
       } catch (e: any) {
-        err.value = e.message || t('settings.configSaveFailed')
-        return false
+        err.value = e.message || t("settings.configSaveFailed");
+        return false;
       }
     },
     onCancel: () => modal.hide(),
-  })
+  });
 }
 
 async function saveConfig() {
   const enablingAutoMatch =
-    editForm.value.auto_match_enabled && !config.value?.auto_match_enabled
+    editForm.value.auto_match_enabled && !config.value?.auto_match_enabled;
   const enablingRentExtraction =
     editForm.value.rent_extraction_enabled &&
-    !config.value?.rent_extraction_enabled
+    !config.value?.rent_extraction_enabled;
 
   if (enablingAutoMatch || enablingRentExtraction) {
-    promptUnlockThenSave()
-    return
+    promptUnlockThenSave();
+    return;
   }
 
   try {
-    await doSaveConfig()
-    toast.success(t('settings.configSaved'))
+    await doSaveConfig();
+    toast.success(t("settings.configSaved"));
   } catch (e: any) {
-    console.error('Failed to save config:', e)
-    toast.error(e.message || t('settings.configSaveFailed'))
+    console.error("Failed to save config:", e);
+    toast.error(e.message || t("settings.configSaveFailed"));
   }
 }
 
@@ -549,6 +552,10 @@ onMounted(() => {
           <div class="config-row">
             <span class="config-label">{{ t("settings.feeRate") }}</span><span>{{ config.fee_rate.toLocaleString() }} shannons/KB</span>
           </div>
+          <div class="config-row">
+            <span class="config-label">{{ t("settings.confirmCount") }}</span><span>{{ config.confirm_count }}
+              {{ t("settings.confirmCountHint") }}</span>
+          </div>
         </div>
       </template>
       <!-- Edit mode -->
@@ -581,6 +588,14 @@ onMounted(() => {
           <label class="form-label">{{ t("settings.feeRate") }}</label><input
             v-model.number="editForm.fee_rate"
             type="number"
+            class="form-input"
+          >
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t("settings.confirmCount") }} ({{ t("settings.confirmCountHint") }})</label><input
+            v-model.number="editForm.confirm_count"
+            type="number"
+            min="1"
             class="form-input"
           >
         </div>

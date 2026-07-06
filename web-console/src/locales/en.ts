@@ -312,7 +312,13 @@ export default {
     loadTxFailed: 'Failed to load transaction details',
     network: 'Network',
     networkInfo: 'Network Configuration',
+    confirmCount: 'Confirm count',
+    confirmCountHint: 'blocks',
     version: 'Version',
+  },
+  txConfirm: {
+    title: 'Waiting for transaction confirmation',
+    message: 'Transaction sent, waiting for on-chain confirmation…',
   },
   common: {
     confirm: 'Confirm',

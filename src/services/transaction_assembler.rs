@@ -31,15 +31,11 @@ use opticrum_calculator::{
 };
 use secp256k1::SecretKey;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::AppError;
-
-/// Number of block confirmations to wait for before considering a
-/// transaction final. Set to 1 so the tx is committed to at least one
-/// block — without this the caller receives a tx_hash that may still
-/// be sitting in the mempool (or may never be mined).
-const CONFIRM_COUNT: u8 = 1;
 
 /// Maximum time to wait for a transaction to be committed.
 /// Prevents the server from hanging indefinitely if the CKB node
@@ -57,12 +53,20 @@ const CONFIRM_TIMEOUT_SECS: u64 = 300;
 pub struct TransactionAssembler {
     rpc: RpcClient,
     fee_rate: u64,
+    /// Number of block confirmations to wait for before considering a
+    /// transaction final. Shared atomic so the console API can update
+    /// it at runtime without a restart.
+    confirm_count: Arc<AtomicU64>,
 }
 
 impl TransactionAssembler {
     /// Create a new transaction assembler.
-    pub fn new(rpc: RpcClient, fee_rate: u64) -> Self {
-        Self { rpc, fee_rate }
+    pub fn new(rpc: RpcClient, fee_rate: u64, confirm_count: Arc<AtomicU64>) -> Self {
+        Self {
+            rpc,
+            fee_rate,
+            confirm_count,
+        }
     }
 
     /// Get a reference to the underlying RPC client.
@@ -103,7 +107,7 @@ impl TransactionAssembler {
         let tx_hash = tx
             .send_and_wait(
                 &self.rpc,
-                CONFIRM_COUNT,
+                self.confirm_count.load(Ordering::Relaxed) as u8,
                 Some(Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
             )
             .await
@@ -139,7 +143,7 @@ impl TransactionAssembler {
         let tx_hash = tx
             .send_and_wait(
                 &self.rpc,
-                CONFIRM_COUNT,
+                self.confirm_count.load(Ordering::Relaxed) as u8,
                 Some(Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
             )
             .await
@@ -179,7 +183,7 @@ impl TransactionAssembler {
         let tx_hash = skeleton
             .send_and_wait(
                 &self.rpc,
-                CONFIRM_COUNT,
+                self.confirm_count.load(Ordering::Relaxed) as u8,
                 Some(Duration::from_secs(CONFIRM_TIMEOUT_SECS)),
             )
             .await

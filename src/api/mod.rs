@@ -21,6 +21,7 @@ use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::transaction_assembler::TransactionAssembler;
 use crate::services::wallet_session::WalletSessionManager;
 use crate::services::RuntimeConfig;
+use std::sync::atomic::AtomicU64;
 use std::sync::RwLock;
 
 mod admin;
@@ -50,6 +51,9 @@ pub struct AppState {
     pub wallet_session: Arc<WalletSessionManager>,
     /// Real transaction assembler (None for MockChainProvider test mode).
     pub tx_assembler: Option<TransactionAssembler>,
+    /// Shared confirm-count atomic — updated at runtime via the console
+    /// API and read by the TransactionAssembler on every tx submission.
+    pub confirm_count: Arc<AtomicU64>,
     /// Shared scheduler state for console observability.
     pub scheduler_state: SharedSchedulerState,
     /// In-memory cache of on-chain orders, matches, and Fiber channels.

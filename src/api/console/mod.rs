@@ -777,11 +777,24 @@ pub async fn update_runtime_config(
     body: web::Json<RuntimeConfigPartial>,
 ) -> Result<HttpResponse, AppError> {
     let cfg = GatewayService::update_runtime_config(&state.runtime_config, body.into_inner())?;
+    // Sync the confirm-count atomic so the TransactionAssembler picks up
+    // the new value without a restart.
+    if let Ok(rc) = state.runtime_config.read() {
+        state
+            .confirm_count
+            .store(rc.confirm_count, std::sync::atomic::Ordering::Relaxed);
+    }
     Ok(HttpResponse::Ok().json(cfg))
 }
 
 pub async fn reset_runtime_config(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let cfg = GatewayService::reset_runtime_config(&state.runtime_config, &state.config)?;
+    // Sync the confirm-count atomic back to the startup default.
+    if let Ok(rc) = state.runtime_config.read() {
+        state
+            .confirm_count
+            .store(rc.confirm_count, std::sync::atomic::Ordering::Relaxed);
+    }
     Ok(HttpResponse::Ok().json(cfg))
 }
 

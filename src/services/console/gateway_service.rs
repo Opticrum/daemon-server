@@ -875,6 +875,8 @@ impl GatewayService {
             }));
         }
 
+        // Newest matches first (descending order).
+        results.reverse();
         Ok(results)
     }
 
@@ -944,6 +946,8 @@ impl GatewayService {
                 "timestamp": timestamp,
             }));
         }
+        // Newest extraction events first (descending order).
+        history.reverse();
 
         let seller_lh = hex::encode(m.match_args.seller_lock_hash);
         let seller_address =

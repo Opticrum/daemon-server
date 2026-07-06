@@ -24,6 +24,7 @@ fiber_rpc_url = "http://localhost:8227"
 
 # ---- Fees ----
 fee_rate = 2000                              # shannons per KB
+confirm_count = 1                            # block confirmations to wait for each tx
 
 # ---- Rent Extraction ----
 rent_extraction_enabled = false               # enable background extraction scheduler

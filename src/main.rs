@@ -20,6 +20,7 @@ use rust_server::services::wallet_session::WalletSessionManager;
 use rust_server::services::RealChainProvider;
 use rust_server::services::RuntimeConfig;
 use rust_server::{api, db, scheduler};
+use std::sync::atomic::AtomicU64;
 use std::sync::RwLock;
 
 #[actix_web::main]
@@ -70,10 +71,12 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
-    // Build transaction assembler (not logged — chain + signer cover the infra)
+    // Build transaction assembler
+    let confirm_count = Arc::new(AtomicU64::new(config.confirm_count));
     let tx_assembler = Some(TransactionAssembler::new(
         real_provider.rpc_client().clone(),
         config.fee_rate,
+        confirm_count.clone(),
     ));
 
     let inner_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
@@ -169,6 +172,7 @@ async fn main() -> std::io::Result<()> {
         signer,
         wallet_session: wallet_session.clone(),
         tx_assembler,
+        confirm_count,
         scheduler_state: scheduler_state.clone(),
         chain_cache: chain_cache.clone(),
         keystore_path,

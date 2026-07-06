@@ -8,13 +8,18 @@ export interface ApiErrorResponse {
 }
 
 export class ApiError extends Error {
+  /** The raw response body from the server, if available. */
+  public responseBody: any
+
   constructor(
     public status: number,
     public kind: string,
     message: string,
+    responseBody?: any,
   ) {
     super(message)
     this.name = 'ApiError'
+    this.responseBody = responseBody
   }
 }
 
@@ -38,6 +43,7 @@ export interface AutoMatchConfig {
 
 export interface RuntimeConfig {
   fee_rate: number
+  confirm_count: number
   rent_extraction_enabled: boolean
   scheduler_interval_secs: number
   min_extraction_amount_shannons: number

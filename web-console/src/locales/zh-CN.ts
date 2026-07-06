@@ -312,7 +312,13 @@ export default {
     loadTxFailed: '加载交易详情失败',
     network: '网络',
     networkInfo: '网络配置',
+    confirmCount: '确认数',
+    confirmCountHint: '个区块',
     version: '版本',
+  },
+  txConfirm: {
+    title: '等待交易确认',
+    message: '交易已发送，正在等待链上确认…',
   },
   common: {
     confirm: '确定',

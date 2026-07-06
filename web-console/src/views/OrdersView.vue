@@ -20,12 +20,14 @@ import type {
   SignerWalletItem,
   MatchReadiness,
 } from "@/types/api";
+import type { useTxConfirm } from "@/composables/useTxConfirm";
 
 const api = useApi();
 const { t } = useI18n();
 const router = useRouter();
 const toast = inject<any>("toast")!;
 const modal = inject<any>("modal")!;
+const txConfirm = inject<ReturnType<typeof useTxConfirm>>("txConfirm")!;
 
 const orders = ref<OrderScanItem[]>([]);
 const loading = ref(false);
@@ -33,7 +35,6 @@ const scanned = ref(false);
 const error = ref<string | null>(null);
 const network = ref("testnet");
 
-const matchPhase = ref<"select" | "opening" | "waiting">("select");
 const matchForm = ref<MatchOrderRequest & { tx_hash: string }>({
   tx_hash: "",
   order_output_index: 0,
@@ -167,17 +168,33 @@ async function connectPeerForOrder(
         return () =>
           h("div", { class: "connect-peer-confirm" }, [
             h("div", { class: "connect-peer-field" }, [
-              h("div", { class: "connect-peer-label" }, t("orders.buyerFiberPubkey")),
+              h(
+                "div",
+                { class: "connect-peer-label" },
+                t("orders.buyerFiberPubkey"),
+              ),
               h("code", { class: "connect-peer-value font-mono" }, pubkey),
             ]),
             h("div", { class: "connect-peer-field" }, [
-              h("div", { class: "connect-peer-label" }, t("orders.fiberAddress")),
+              h(
+                "div",
+                { class: "connect-peer-label" },
+                t("orders.fiberAddress"),
+              ),
               address
                 ? h("code", { class: "connect-peer-value font-mono" }, address)
-                : h("span", { class: "connect-peer-missing" }, t("orders.noFiberAddress")),
+                : h(
+                    "span",
+                    { class: "connect-peer-missing" },
+                    t("orders.noFiberAddress"),
+                  ),
             ]),
             !address
-              ? h("p", { class: "connect-peer-hint" }, t("orders.connectPeerNoAddrHint"))
+              ? h(
+                  "p",
+                  { class: "connect-peer-hint" },
+                  t("orders.connectPeerNoAddrHint"),
+                )
               : null,
           ]);
       },
@@ -242,31 +259,6 @@ async function createChannelForOrder(txHash: string) {
   }
 }
 
-function showProgressModal() {
-  modal.show({
-    title: t("orders.matchTitle"),
-    content: {
-      setup() {
-        return () =>
-          h("div", { class: "match-progress" }, [
-            h("span", { class: "spinner" }),
-            h(
-              "p",
-              { class: "progress-text" },
-              matchPhase.value === "opening"
-                ? t("orders.matchStepChannel")
-                : t("orders.matchStepWaiting"),
-            ),
-          ]);
-      },
-    },
-    confirmText: null,
-    cancelText: null,
-    onConfirm: () => {},
-    onCancel: () => {},
-  });
-}
-
 async function showMatchModal(order: OrderScanItem) {
   const modalData = reactive({
     wallets: [] as SignerWalletItem[],
@@ -281,7 +273,6 @@ async function showMatchModal(order: OrderScanItem) {
     order_output_index: order.output_index,
     seller_address: "",
   };
-  matchPhase.value = "select";
 
   async function handleUnlock(password: string) {
     modalData.unlocking = true;
@@ -317,28 +308,21 @@ async function showMatchModal(order: OrderScanItem) {
 
     modal.hide();
     await new Promise((r) => setTimeout(r, 200));
-    matchPhase.value = "opening";
-    showProgressModal();
-
-    const phaseTimer = setTimeout(() => {
-      matchPhase.value = "waiting";
-    }, 5000);
 
     try {
-      const result = await api.matchOrder(f.tx_hash, {
-        order_output_index: f.order_output_index,
-        seller_address: f.seller_address,
+      const result = await txConfirm.run({
+        action: () =>
+          api.matchOrder(f.tx_hash, {
+            order_output_index: f.order_output_index,
+            seller_address: f.seller_address,
+          }),
+        onSuccess: () => scanOrders(),
       });
-      clearTimeout(phaseTimer);
-      modal.hide();
       toast.success(
         `${t("orders.matchSuccess")}! TX: ${truncateAddress(result.tx_hash)}`,
       );
-      await scanOrders();
     } catch (e: any) {
       console.error("Failed to match order:", e);
-      clearTimeout(phaseTimer);
-      modal.hide();
       toast.error(e.message || t("orders.matchFailed"));
     }
   }
@@ -740,31 +724,8 @@ onMounted(async () => {
 }
 </style>
 
-<!-- Global styles for progress modal (teleported to body, scoped won't reach) -->
+<!-- Global styles for connect-peer modal (teleported to body) -->
 <style>
-.match-progress {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-lg);
-  padding: var(--space-xl) 0;
-}
-.match-progress .spinner {
-  display: inline-block;
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--border-light);
-  border-top-color: var(--primary-500);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-.match-progress .progress-text {
-  font-size: var(--fs-body);
-  color: var(--text-secondary);
-  text-align: center;
-  margin: 0;
-}
-
 .peer-check {
   display: flex;
   flex-direction: column;

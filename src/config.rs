@@ -97,6 +97,11 @@ pub struct Config {
     #[arg(long, env = "OPTICRUM_FEE_RATE", default_value = "1000")]
     pub fee_rate: u64,
 
+    /// Number of block confirmations to wait for before considering a
+    /// transaction final (1 = committed to at least one block).
+    #[arg(long, env = "OPTICRUM_CONFIRM_COUNT", default_value = "1")]
+    pub confirm_count: u64,
+
     /// Enable automatic rent extraction (background task)
     #[arg(long, env = "OPTICRUM_RENT_EXTRACTION_ENABLED", default_value = "true")]
     pub rent_extraction_enabled: bool,
@@ -150,6 +155,7 @@ impl Default for Config {
             scheduler_interval_secs: 60,
             min_extraction_amount_shannons: 100_000_000,
             fee_rate: 1000,
+            confirm_count: 1,
             rent_extraction_enabled: true,
             log_level: "info".into(),
             auto_match_enabled: false,
@@ -256,6 +262,7 @@ impl Config {
                 file
             ),
             fee_rate: merge_field!(fee_rate, defaults, cli, file),
+            confirm_count: merge_field!(confirm_count, defaults, cli, file),
             rent_extraction_enabled: merge_field!(rent_extraction_enabled, defaults, cli, file),
             log_level: merge_field!(log_level, defaults, cli, file),
             auto_match_enabled: merge_field!(auto_match_enabled, defaults, cli, file),

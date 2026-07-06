@@ -13,6 +13,9 @@ use crate::config::Config;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuntimeConfig {
     pub fee_rate: u64,
+    /// Number of block confirmations to wait for before considering a
+    /// transaction final.
+    pub confirm_count: u64,
     pub rent_extraction_enabled: bool,
     pub scheduler_interval_secs: u64,
     pub min_extraction_amount_shannons: u64,
@@ -37,6 +40,7 @@ impl RuntimeConfig {
     pub fn from_config(config: &Config) -> Self {
         Self {
             fee_rate: config.fee_rate,
+            confirm_count: config.confirm_count,
             rent_extraction_enabled: config.rent_extraction_enabled,
             scheduler_interval_secs: config.scheduler_interval_secs,
             min_extraction_amount_shannons: config.min_extraction_amount_shannons,
@@ -62,6 +66,9 @@ impl RuntimeConfig {
     pub fn apply_partial(&mut self, partial: &RuntimeConfigPartial) {
         if let Some(v) = partial.fee_rate {
             self.fee_rate = v;
+        }
+        if let Some(v) = partial.confirm_count {
+            self.confirm_count = v;
         }
         if let Some(v) = partial.rent_extraction_enabled {
             self.rent_extraction_enabled = v;
@@ -110,6 +117,7 @@ impl RuntimeConfig {
 #[serde(default)]
 pub struct RuntimeConfigPartial {
     pub fee_rate: Option<u64>,
+    pub confirm_count: Option<u64>,
     pub rent_extraction_enabled: Option<bool>,
     pub scheduler_interval_secs: Option<u64>,
     pub min_extraction_amount_shannons: Option<u64>,

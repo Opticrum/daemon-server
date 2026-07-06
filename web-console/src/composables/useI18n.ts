@@ -19,6 +19,11 @@ function saveLocale(locale: Locale) {
 
 export const I18N_KEY: InjectionKey<ReturnType<typeof createI18n>> = Symbol('i18n')
 
+// Module-level fallback so that provideI18n() and useI18n() work in the
+// same component. Vue's provide() only reaches descendants, so inject()
+// in the providing component itself would otherwise fail.
+let _globalI18n: ReturnType<typeof createI18n> | null = null
+
 function createI18n() {
   const locale = ref<Locale>(loadLocale())
 
@@ -54,12 +59,13 @@ function createI18n() {
 
 export function provideI18n() {
   const i18n = createI18n()
+  _globalI18n = i18n
   provide(I18N_KEY, i18n)
   return i18n
 }
 
 export function useI18n() {
-  const i18n = inject(I18N_KEY)
+  const i18n = inject(I18N_KEY) ?? _globalI18n
   if (!i18n) throw new Error('useI18n() must be used inside a component with provideI18n()')
   return i18n
 }

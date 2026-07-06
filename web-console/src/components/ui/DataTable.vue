@@ -307,6 +307,10 @@ const pageNumbers = computed(() => {
 /* Expandable rows */
 .data-table tbody tr.row-expanded td {
   border-bottom: none;
+  background: rgba(24, 144, 255, 0.06);
+}
+.data-table tbody tr.row-expanded:hover td {
+  background: rgba(24, 144, 255, 0.10);
 }
 .data-table tbody tr.expanded-row td {
   padding: 0;

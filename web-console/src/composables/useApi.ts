@@ -7,7 +7,8 @@ import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletReq
 const BASE = '/api'
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(BASE + path, {
+  const url = BASE + path
+  const res = await fetch(url, {
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
@@ -25,7 +26,25 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    throw new ApiError(res.status, data.error || 'unknown', data.message || res.statusText)
+    // Log the full failure details to the browser console:
+    // - the request that was sent (method, URL, body)
+    // - the on-chain/server response
+    const method = options.method || 'GET'
+    let requestBody: any = undefined
+    if (options.body) {
+      try {
+        requestBody = JSON.parse(options.body as string)
+      } catch {
+        requestBody = options.body
+      }
+    }
+    console.error(
+      `[API Error] ${method} ${url}`,
+      '\nRequest payload:', requestBody,
+      '\nResponse status:', res.status,
+      '\nResponse body:', data,
+    )
+    throw new ApiError(res.status, data.error || 'unknown', data.message || res.statusText, data)
   }
 
   return data as T
@@ -102,9 +121,15 @@ export function useApi() {
       return request('/console/matches' + (qs ? `?${qs}` : ''))
     },
     extractRent: (txHash: string, outputIndex: number): Promise<ExtractRentResult> =>
-      request(`/console/matches/${encodeURIComponent(txHash)}/${outputIndex}/extract`, { method: 'POST' }),
+      request(`/console/matches/${encodeURIComponent(txHash)}/${outputIndex}/extract`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(300_000),
+      }),
     destroyMatch: (txHash: string, outputIndex: number): Promise<{ tx_hash: string; status: string }> =>
-      request(`/console/matches/${encodeURIComponent(txHash)}/${outputIndex}/destroy`, { method: 'POST' }),
+      request(`/console/matches/${encodeURIComponent(txHash)}/${outputIndex}/destroy`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(300_000),
+      }),
 
     // ── Channels ──
     scanChannels: (): Promise<ChannelWithMatch[]> =>

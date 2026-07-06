@@ -9,6 +9,7 @@ use rust_server::db;
 use rust_server::services::cached_chain_provider::CachedChainProvider;
 use rust_server::services::chain_cache::ChainCache;
 use rust_server::services::chain_provider::{CellOutput, MockChainProvider};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 
 /// Create an in-memory SQLite database with all migrations applied.
@@ -73,6 +74,7 @@ pub fn test_app_state() -> rust_server::api::AppState {
         scheduler_interval_secs: 60,
         min_extraction_amount_shannons: 100_000_000,
         fee_rate: 1000,
+        confirm_count: 1,
         rent_extraction_enabled: true,
         log_level: "info".to_string(),
         auto_match_enabled: false,
@@ -110,6 +112,7 @@ pub fn test_app_state() -> rust_server::api::AppState {
             rust_server::services::wallet_session::WalletSessionManager::default(),
         ),
         tx_assembler: None,
+        confirm_count: Arc::new(AtomicU64::new(1)),
         keystore_path: "data/keystore.json".to_string(),
         scheduler_state,
         chain_cache,

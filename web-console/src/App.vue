@@ -4,8 +4,10 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import TxConfirmOverlay from '@/components/ui/TxConfirmOverlay.vue'
 import { useToast } from '@/composables/useToast'
 import { useModal } from '@/composables/useModal'
+import { useTxConfirm } from '@/composables/useTxConfirm'
 import { useChainCache } from '@/composables/useChainCache'
 import { provideI18n } from '@/composables/useI18n'
 
@@ -27,8 +29,10 @@ function toggleSidebar() {
 // Global toast & modal state
 const toast = useToast()
 const modal = useModal()
+const txConfirm = useTxConfirm()
 provide('toast', toast)
 provide('modal', modal)
+provide('txConfirm', txConfirm)
 
 onMounted(async () => {
   await loadStatus()
@@ -80,6 +84,11 @@ onMounted(async () => {
         {{ modal.message.value }}
       </p>
     </BaseModal>
+    <TxConfirmOverlay
+      :visible="txConfirm.visible.value"
+      :title="txConfirm.title.value"
+      :message="txConfirm.message.value"
+    />
   </div>
 </template>
 
