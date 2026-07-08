@@ -12,11 +12,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Opticrum (path deps to sibling project)
-opticrum-calculator = { path = "../opticrum/calculator/opticrum" }
-opticrum-protocol = { path = "../opticrum/opticrum-protocol" }
+# opticrum-calculator = { path = "../opticrum/calculator/opticrum" }
+# opticrum-protocol = { path = "../opticrum/opticrum-protocol" }
+
+opticrum-calculator = { git = "https://github.com/Opticrum/ckb-contract-script", branch = "master" }
+opticrum-protocol = { git = "https://github.com/Opticrum/ckb-contract-script", branch = "master" }
 
 # CKB chain interaction (local path — matches opticrum workspace)
-ckb-cinnabar-calculator = { path = "../../ckb-cinnabar/cinnabar/calculate" }
+# ckb-cinnabar-calculator = { path = "../../ckb-cinnabar/cinnabar/calculate" }
+
+ckb-cinnabar-calculator = { git = "https://github.com/ashuralyk/ckb-cinnabar", branch = "master" }
 
 # Database (Diesel ORM — no raw SQL)
 diesel = { version = "2", features = ["sqlite", "r2d2", "returning_clauses_for_sqlite_3_35"] }
@@ -47,8 +52,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # HTTP client (Fiber RPC proxy, also transitive via ckb-cinnabar)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
-# Fiber JSON-RPC types (from local Fiber repo — no type duplication)
-fiber-json-types = { path = "../../../Cryptape/fiber/lightning-network/fiber/crates/fiber-json-types" }
+# Fiber JSON-RPC types
+fiber-json-types = { git = "https://github.com/nervosnetwork/fiber", rev = "3c25bcf1"}
 
 # Molecule (used for parsing channel outpoint from fiber-json-types)
 molecule = "0.9"

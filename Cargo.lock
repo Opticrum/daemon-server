@@ -791,6 +791,7 @@ dependencies = [
 [[package]]
 name = "ckb-cinnabar-calculator"
 version = "0.1.0"
+source = "git+https://github.com/ashuralyk/ckb-cinnabar?branch=master#b9f6d186cf2e21388307e3183c0af5feb046ea13"
 dependencies = [
  "async-trait",
  "bech32 0.8.1",
@@ -820,6 +821,7 @@ dependencies = [
 [[package]]
 name = "ckb-cinnabar-verifier"
 version = "0.1.0"
+source = "git+https://github.com/ashuralyk/ckb-cinnabar?branch=master#b9f6d186cf2e21388307e3183c0af5feb046ea13"
 dependencies = [
  "blake2b-ref",
  "ckb-std",
@@ -1916,6 +1918,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 [[package]]
 name = "fiber-json-types"
 version = "0.9.0-rc4"
+source = "git+https://github.com/nervosnetwork/fiber?rev=3c25bcf1#3c25bcf16200e5d641dcd9b79f086f391e976172"
 dependencies = [
  "ckb-jsonrpc-types 1.1.2",
  "ckb-types 1.1.2",
@@ -3121,6 +3124,7 @@ dependencies = [
 [[package]]
 name = "opticrum-calculator"
 version = "0.1.0"
+source = "git+https://github.com/Opticrum/ckb-contract-script?branch=master#702500cbe270f6dc242b7a339e459af068ef0fda"
 dependencies = [
  "ckb-cinnabar-calculator",
  "opticrum-protocol",
@@ -3129,6 +3133,7 @@ dependencies = [
 [[package]]
 name = "opticrum-protocol"
 version = "0.1.0"
+source = "git+https://github.com/Opticrum/ckb-contract-script?branch=master#702500cbe270f6dc242b7a339e459af068ef0fda"
 dependencies = [
  "ckb-cinnabar-verifier",
 ]
