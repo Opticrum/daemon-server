@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import { watch } from 'vue'
+import { useI18n } from '@/composables/useI18n'
+import { truncateAddress } from '@/utils/format'
 
 const props = withDefaults(defineProps<{
   visible: boolean
   title?: string
   message?: string
+  txHash?: string
+  explorerUrl?: string
 }>(), {
   title: '',
   message: '',
+  txHash: '',
+  explorerUrl: '',
 })
+
+const { t } = useI18n()
 
 watch(() => props.visible, (v) => {
   document.body.style.overflow = v ? 'hidden' : ''
@@ -43,6 +51,21 @@ watch(() => props.visible, (v) => {
         >
           {{ message }}
         </p>
+        <div
+          v-if="txHash"
+          class="tx-confirm-hash"
+        >
+          <span class="tx-confirm-hash-label">{{ t('txConfirm.txHash') }}</span>
+          <a
+            class="tx-confirm-hash-link"
+            :href="explorerUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ truncateAddress(txHash, 10, 8) }}</a>
+          <p class="tx-confirm-hash-hint">
+            {{ t('txConfirm.sentHint') }}
+          </p>
+        </div>
       </div>
     </div>
   </Teleport>
@@ -99,6 +122,36 @@ watch(() => props.visible, (v) => {
   color: var(--text-secondary);
   text-align: center;
   line-height: 1.5;
+}
+.tx-confirm-hash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+.tx-confirm-hash-label {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tx-confirm-hash-link {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-body);
+  color: var(--primary-500);
+  text-decoration: none;
+  word-break: break-all;
+}
+.tx-confirm-hash-link:hover {
+  text-decoration: underline;
+}
+.tx-confirm-hash-hint {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 @keyframes txConfirmFadeIn {

@@ -13,6 +13,7 @@
 pub mod chain;
 pub mod console;
 pub mod match_service;
+pub mod pending_txs;
 pub mod rent_service;
 pub mod runtime_config;
 pub mod transaction_assembler;
@@ -46,4 +47,5 @@ pub use chain::cached_chain_provider::CachedChainProvider;
 pub use chain::chain_cache::ChainCache;
 pub use chain::chain_provider::MockChainProvider;
 pub use chain::real_chain_provider::RealChainProvider;
+pub use pending_txs::PendingTxRegistry;
 pub use runtime_config::RuntimeConfig;

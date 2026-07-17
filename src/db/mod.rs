@@ -10,6 +10,7 @@ use std::path::Path;
 
 use crate::error::AppError;
 
+pub mod destroyed_matches;
 pub mod matches;
 pub mod schema;
 pub mod unsigned_txs;

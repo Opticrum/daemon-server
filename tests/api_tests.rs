@@ -227,3 +227,47 @@ async fn wallet_not_found_returns_404() {
     // Actually delete returns Ok with false, not an error. So it'll be 200.
     assert!(resp.status().is_success() || resp.status() == 404);
 }
+
+#[actix_rt::test]
+async fn pending_transactions_empty() {
+    let state = test_app_state();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .configure(api::configure_routes),
+    )
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/api/console/transactions/pending")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert!(resp.status().is_success());
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert!(body.is_empty());
+}
+
+#[actix_rt::test]
+async fn pending_transactions_returns_registered_entry() {
+    let state = test_app_state();
+    state
+        .pending_txs
+        .register("match_order", "ord1", "deadbeef");
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .configure(api::configure_routes),
+    )
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/api/console/transactions/pending")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert!(resp.status().is_success());
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert_eq!(body.len(), 1);
+    assert_eq!(body[0]["kind"], "match_order");
+    assert_eq!(body[0]["context"], "ord1");
+    assert_eq!(body[0]["tx_hash"], "deadbeef");
+}

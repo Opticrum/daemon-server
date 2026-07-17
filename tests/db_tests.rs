@@ -7,7 +7,9 @@
 mod common;
 
 use common::test_db;
-use rust_server::db::{matches as match_db, schema, wallets as wallet_db};
+use rust_server::db::{
+    destroyed_matches as destroyed_db, matches as match_db, schema, wallets as wallet_db,
+};
 
 #[test]
 fn migration_idempotent() {
@@ -166,4 +168,91 @@ fn extracted_for_match_sums_correctly() {
 
     let sum = match_db::extracted_for_match(&mut conn, "match_xyz", 0).unwrap();
     assert_eq!(sum, 300);
+}
+
+// ── destroyed_matches tests ──
+
+#[actix_rt::test]
+async fn insert_and_list_destroyed_matches() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    destroyed_db::insert_destroyed_match(
+        &mut conn, "tx_a", 0, "order_a", 0, "lock_a", 100, 5000, 200, None, 1000, 50,
+    )
+    .unwrap();
+    destroyed_db::insert_destroyed_match(
+        &mut conn, "tx_b", 1, "order_b", 0, "lock_b", 200, 8000, 300, None, 2000, 60,
+    )
+    .unwrap();
+
+    let list = destroyed_db::list_destroyed_matches(&mut conn).unwrap();
+    assert_eq!(list.len(), 2);
+    // Both rows present (ordering is by destroyed_at — same-second inserts
+    // are non-deterministic, so we don't assert on order).
+    let has_a = list.iter().any(|r| r.tx_hash == "tx_a");
+    let has_b = list.iter().any(|r| r.tx_hash == "tx_b");
+    assert!(has_a);
+    assert!(has_b);
+    // Verify fields on one entry
+    let b = list.iter().find(|r| r.tx_hash == "tx_b").unwrap();
+    assert_eq!(b.shannons_per_block, 200);
+    assert_eq!(b.ckb_capacity, 8000);
+    assert_eq!(b.extracted_total, 2000);
+}
+
+#[actix_rt::test]
+async fn get_destroyed_match_found() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    destroyed_db::insert_destroyed_match(
+        &mut conn, "tx_find", 3, "order_f", 0, "lock_f", 100, 5000, 100, None, 1500, 80,
+    )
+    .unwrap();
+
+    let row = destroyed_db::get_destroyed_match(&mut conn, "tx_find", 3)
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.tx_hash, "tx_find");
+    assert_eq!(row.output_index, 3);
+    assert_eq!(row.seller_lock_hash, "lock_f");
+}
+
+#[actix_rt::test]
+async fn get_destroyed_match_not_found() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    let result = destroyed_db::get_destroyed_match(&mut conn, "nonexistent", 0).unwrap();
+    assert!(result.is_none());
+}
+
+#[actix_rt::test]
+async fn count_destroyed_matches() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    assert_eq!(destroyed_db::count_destroyed_matches(&mut conn).unwrap(), 0);
+    destroyed_db::insert_destroyed_match(
+        &mut conn, "tx_c", 0, "order_c", 0, "lock_c", 100, 5000, 0, None, 0, 0,
+    )
+    .unwrap();
+    assert_eq!(destroyed_db::count_destroyed_matches(&mut conn).unwrap(), 1);
+}
+
+#[actix_rt::test]
+async fn destroyed_match_unique_constraint() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    destroyed_db::insert_destroyed_match(
+        &mut conn, "tx_dup", 0, "order_d", 0, "lock_d", 100, 5000, 0, None, 0, 0,
+    )
+    .unwrap();
+
+    let result = destroyed_db::insert_destroyed_match(
+        &mut conn, "tx_dup", 0, "order_e", 0, "lock_e", 200, 6000, 0, None, 0, 0,
+    );
+    assert!(result.is_err());
 }

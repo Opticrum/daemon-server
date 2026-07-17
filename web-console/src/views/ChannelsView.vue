@@ -3,7 +3,13 @@ import { ref, onMounted, inject, computed, h } from "vue";
 import { useApi } from "@/composables/useApi";
 import { useI18n } from "@/composables/useI18n";
 import { useFiber } from "@/composables/useFiber";
-import { truncateAddress, formatCKB, formatChannelAge } from "@/utils/format";
+import {
+  truncateAddress,
+  formatCKB,
+  formatChannelAge,
+  CF_UNCOOPERATIVE_LOCAL,
+  CF_UNCOOPERATIVE_REMOTE,
+} from "@/utils/format";
 import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
 import StatusTag from "@/components/ui/StatusTag.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
@@ -141,16 +147,31 @@ function hexToNum(hex: string): number {
   return parseInt(hex, 16) || 0;
 }
 
-function channelStateVariant(name: string): string {
+// Per-session tracking: channels we initiated a force-close on.
+// Cleared on page refresh. Only ShuttingDown channels are checked.
+const forceCloseSet = ref<Set<string>>(new Set());
+
+function channelStateVariant(channel: ChannelWithMatch): string {
+  const name = channel.state_name
+  const flags = channel.close_flags
   switch (name) {
     case "ChannelReady":
-      return "live";
+      return "live"
     case "ShuttingDown":
-      return "warning";
+      if (forceCloseSet.value.has(channel.channel_id)) {
+        return "forceClosing"
+      }
+      return "closing" // was "warning" (dead key) — "closing" maps to yellow
     case "Closed":
-      return "destroyed";
+      if (
+        flags != null &&
+        (flags & (CF_UNCOOPERATIVE_LOCAL | CF_UNCOOPERATIVE_REMOTE))
+      ) {
+        return "forceClosed"
+      }
+      return "destroyed" // cooperative / abandoned — gray
     default:
-      return "pending";
+      return "pending"
   }
 }
 
@@ -175,8 +196,11 @@ async function copyToClipboard(text: string) {
 
 async function closeChannel(channel: ChannelWithMatch) {
   const channelId = channel.channel_id;
+  const shortId = truncateAddress(channelId, 8, 8);
+
+  // Step 1: cooperative close attempt
   const confirmed = await modal.confirm(
-    t("channels.closeChannelWarning", { id: truncateAddress(channelId, 8, 8) }),
+    t("channels.closeChannelWarning", { id: shortId }),
     {
       title: t("channels.closeChannelTitle"),
       confirmText: t("channels.closeChannelConfirm"),
@@ -184,13 +208,36 @@ async function closeChannel(channel: ChannelWithMatch) {
     },
   );
   if (!confirmed) return;
+
   try {
-    await api.closeChannel(channelId);
+    await api.closeChannel(channelId, false);
     toast.success(t("channels.closeSuccess"));
     await loadChannels();
+    return;
   } catch (e: any) {
-    console.error("Failed to close channel:", e);
-    toast.error(e.message || t("channels.closeFailed"));
+    console.error("Cooperative close failed:", e);
+    // Don't show error — offer force-close instead.
+  }
+
+  // Step 2: force-close fallback
+  const forceConfirmed = await modal.confirm(
+    t("channels.closeChannelForceWarning", { id: shortId }),
+    {
+      title: t("channels.closeChannelForceTitle"),
+      confirmText: t("channels.closeChannelForceConfirm"),
+      danger: true,
+    },
+  );
+  if (!forceConfirmed) return;
+
+  try {
+    await api.closeChannel(channelId, true);
+    forceCloseSet.value.add(channelId);
+    toast.success(t("channels.closeForceSuccess"));
+    await loadChannels();
+  } catch (e: any) {
+    console.error("Force close failed:", e);
+    toast.error(e.message || t("channels.closeForceFailed"));
   }
 }
 
@@ -447,9 +494,9 @@ function showMatchDetail(channel: ChannelWithMatch) {
       <template #cell-capacity="{ value }">
         {{ formatCKB(Number(value)) }}
       </template>
-      <template #cell-state_name="{ value }">
+      <template #cell-state_name="{ row, value }">
         <StatusTag
-          :status="channelStateVariant(String(value))"
+          :status="channelStateVariant(row)"
           :label="String(value)"
         />
       </template>

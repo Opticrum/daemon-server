@@ -194,6 +194,9 @@ pub struct FiberChannelInfo {
     pub remote_balance: u64,
     /// Channel state name (e.g. "ChannelReady", "ShuttingDown", "Closed").
     pub state_name: String,
+    /// Channel close flags bitmap (CloseFlags or ShuttingDownFlags).
+    /// None for non-terminal states (ChannelReady, NegotiatingFunding, etc.).
+    pub close_flags: Option<u32>,
     /// Whether the channel is public (announced to network).
     pub is_public: bool,
     /// Whether the channel is enabled for routing.

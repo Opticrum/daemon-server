@@ -93,6 +93,7 @@ pub fn test_app_state() -> rust_server::api::AppState {
     let runtime_config = Arc::new(RwLock::new(
         rust_server::services::runtime_config::RuntimeConfig::from_config(&config),
     ));
+    let pending_txs = Arc::new(rust_server::services::PendingTxRegistry::new());
     let inner = Arc::new(MockChainProvider::new());
     let chain_cache = Arc::new(ChainCache::new());
     let cached_chain = Arc::new(CachedChainProvider::new(
@@ -117,5 +118,6 @@ pub fn test_app_state() -> rust_server::api::AppState {
         scheduler_state,
         chain_cache,
         own_fiber_pubkey: None,
+        pending_txs,
     }
 }

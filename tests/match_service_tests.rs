@@ -18,6 +18,7 @@ async fn full_match_flow_reuses_existing_channel() {
         local_balance: 100_000_000_000,
         remote_balance: 100_000_000_000,
         state_name: "ChannelReady".into(),
+        close_flags: None,
         is_public: true,
         enabled: true,
         created_at: 0,

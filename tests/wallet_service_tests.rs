@@ -282,7 +282,7 @@ fn test_signer_find_key_by_address() {
         // Verify the found key produces the correct lock_arg
         let expected_lock_arg = hex::decode(
             rust_server::services::address::lock_arg_from_address(&child.ckb_address)
-                .map(|la| hex::encode(la))
+                .map(hex::encode)
                 .unwrap_or_default(),
         )
         .unwrap_or_default();

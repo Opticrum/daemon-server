@@ -70,6 +70,14 @@ export function explorerTxUrl(txHash: string, network: string): string {
   return base + prefixed
 }
 
+// fiber-json-types CloseFlags bitmask values (src: fiber-json-types channel.rs:80-85)
+export const CF_COOPERATIVE = 1 // 1 << 0
+export const CF_UNCOOPERATIVE_LOCAL = 2 // 1 << 1
+export const CF_ABANDONED = 4 // 1 << 2
+export const CF_FUNDING_ABORTED = 8 // 1 << 3
+export const CF_UNCOOPERATIVE_REMOTE = 16 // 1 << 4
+export const CF_WAITING_ONCHAIN = 32 // 1 << 5
+
 /**
  * Map status string to i18n key (for StatusTag component).
  */
@@ -77,14 +85,17 @@ export function statusLabelKey(status: string): string {
   const map: Record<string, string> = {
     live: 'status.live',
     exhausted: 'status.exhausted',
+    timeout: 'status.timeout',
     destroyed: 'status.destroyed',
+    forceClosing: 'status.forceClosing',
+    forceClosed: 'status.forceClosed',
+    closing: 'status.closing',
+    closed: 'status.closed',
     pending: 'status.pending',
     signed: 'status.signed',
     broadcast: 'status.broadcast',
     failed: 'status.failed',
     open: 'status.open',
-    closing: 'status.closing',
-    closed: 'status.closed',
   }
   return map[status] || status
 }
@@ -96,14 +107,17 @@ export function statusColor(status: string): 'green' | 'red' | 'yellow' | 'blue'
   const map: Record<string, 'green' | 'red' | 'yellow' | 'blue' | 'gray'> = {
     live: 'green',
     exhausted: 'gray',
+    timeout: 'red',
     destroyed: 'red',
+    forceClosing: 'yellow',
+    forceClosed: 'red',
+    closing: 'yellow',
+    closed: 'gray',
     pending: 'yellow',
     signed: 'blue',
     broadcast: 'blue',
     failed: 'red',
     open: 'green',
-    closing: 'yellow',
-    closed: 'gray',
   }
   return map[status] || 'gray'
 }

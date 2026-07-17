@@ -334,6 +334,8 @@ export interface FiberChannelInfo {
   local_balance: number
   remote_balance: number
   state_name: string
+  /** fiber-json-types CloseFlags / ShuttingDownFlags bitmap. null for non-terminal states. */
+  close_flags?: number | null
   is_public: boolean
   enabled: boolean
   created_at: number
@@ -400,4 +402,12 @@ export interface DistributionItem {
   label: string
   value: number
   color: string
+}
+
+/** In-flight on-chain transaction (sent, not yet confirmed). */
+export interface PendingTransactionItem {
+  kind: string
+  context: string
+  tx_hash: string
+  sent_at_ms: number
 }

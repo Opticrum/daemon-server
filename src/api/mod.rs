@@ -63,6 +63,9 @@ pub struct AppState {
     /// Own Fiber node pubkey (cached at startup) — used to filter out
     /// self-owned orders from chain scan results.
     pub own_fiber_pubkey: Option<String>,
+    /// In-memory pending tx registry — shared with `TransactionAssembler`
+    /// so the web console can poll for unconfirmed tx hashes.
+    pub pending_txs: Arc<crate::services::PendingTxRegistry>,
 }
 
 /// Mount all API routes on the given `ServiceConfig`.
@@ -203,6 +206,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/console/scheduler/status",
                 web::get().to(console::scheduler_status),
+            )
+            .route(
+                "/console/transactions/pending",
+                web::get().to(console::pending_transactions),
             )
             .route(
                 "/console/chain-cache/status",

@@ -90,11 +90,21 @@ const columns = computed<ColumnDef[]>(() => [
   { key: "actions", label: t("common.actions"), align: "center" },
 ]);
 
-const totalRent = (m: TrackedMatch) => m.ckb_capacity || 0;
+// Original total rent = remaining cell capacity + everything already extracted
+// (extraction subtracts directly from the match cell's capacity on-chain).
+const totalRent = (m: TrackedMatch) =>
+  (m.ckb_capacity || 0) + (m.extracted_total ?? 0);
 const extractedRent = (m: TrackedMatch) => m.extracted_total ?? 0;
-const extractableAmount = (m: TrackedMatch) => m.extractable_shannons ?? 0;
+// Defensive cap: the cell can never yield more than its remaining capacity.
+const extractableAmount = (m: TrackedMatch) =>
+  Math.min(m.extractable_shannons ?? 0, m.ckb_capacity ?? 0);
 const isExtractableMet = (m: TrackedMatch) =>
   extractableAmount(m) >= minExtractionShannons.value;
+// A live match whose escrow ran out — derived client-side from remaining_days.
+const isTimedOut = (m: TrackedMatch) =>
+  m.status === "live" && (m.remaining_days ?? 0) <= 0;
+const displayStatus = (m: TrackedMatch) =>
+  isTimedOut(m) ? "timeout" : m.status;
 
 async function loadSignerLockHashes() {
   try {
@@ -137,6 +147,13 @@ async function runExtractWithOverlay(match: TrackedMatch) {
     await txConfirm.run({
       action: () => api.extractRent(match.tx_hash, match.output_index),
       onSuccess: () => loadMatches(),
+      kind: "extract_rent",
+      context: `${match.tx_hash}:${match.output_index}`,
+      logInfo: {
+        match_tx_hash: match.tx_hash,
+        output_index: match.output_index,
+        extractable_shannons: match.extractable_shannons,
+      },
     });
     toast.success(t("matches.extractSuccess"), 5000);
   } catch (e: any) {
@@ -234,6 +251,12 @@ async function doDestroyMatch(match: TrackedMatch) {
     await txConfirm.run({
       action: () => api.destroyMatch(match.tx_hash, match.output_index),
       onSuccess: () => loadMatches(),
+      kind: "destroy_match",
+      context: `${match.tx_hash}:${match.output_index}`,
+      logInfo: {
+        match_tx_hash: match.tx_hash,
+        output_index: match.output_index,
+      },
     });
     toast.success(t("matches.destroySuccess"));
   } catch (e: any) {
@@ -344,8 +367,17 @@ onMounted(async () => {
           value ? new Date(Number(value)).toLocaleString() : "—"
         }}</span>
       </template>
-      <template #cell-remaining_days="{ value }">
-        <span :class="{ 'text-exhausted': Number(value) <= 0 }">
+      <template #cell-remaining_days="{ row, value }">
+        <span
+          v-if="isTimedOut(row)"
+          class="text-timeout"
+        >
+          {{ t("status.timeout") }}
+        </span>
+        <span
+          v-else
+          :class="{ 'text-exhausted': Number(value) <= 0 }"
+        >
           {{ Number(value) <= 0 ? "—" : Number(value).toFixed(1) + " d" }}
         </span>
       </template>
@@ -367,8 +399,8 @@ onMounted(async () => {
       <template #cell-rent="{ row }">
         {{ formatCKB(extractedRent(row)) }} / {{ formatCKB(totalRent(row)) }}
       </template>
-      <template #cell-status="{ value }">
-        <StatusTag :status="String(value)" />
+      <template #cell-status="{ row }">
+        <StatusTag :status="displayStatus(row)" />
       </template>
       <template #cell-actions="{ row }">
         <div class="actions-group">
@@ -395,7 +427,7 @@ onMounted(async () => {
             {{ t("matches.extract") }}
           </button>
           <button
-            v-else-if="row.status === 'exhausted'"
+            v-else-if="row.status === 'destroyed'"
             class="btn btn-sm btn-danger"
             @click.stop="doDestroyMatch(row)"
           >
@@ -417,7 +449,7 @@ onMounted(async () => {
               {{
                 formatCKB(matchDetails[matchKey(row)].extracted_total_shannons)
               }}
-              / {{ formatCKB(row.ckb_capacity) }}
+              / {{ formatCKB(totalRent(row)) }}
             </span>
           </div>
 
@@ -554,6 +586,10 @@ onMounted(async () => {
 }
 .text-exhausted {
   color: var(--text-disabled);
+}
+.text-timeout {
+  color: #ff4d4f;
+  font-weight: 600;
 }
 .text-extractable-met {
   color: #52c41a;

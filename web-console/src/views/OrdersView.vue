@@ -317,6 +317,13 @@ async function showMatchModal(order: OrderScanItem) {
             seller_address: f.seller_address,
           }),
         onSuccess: () => scanOrders(),
+        kind: "match_order",
+        context: f.tx_hash,
+        logInfo: {
+          order_tx_hash: f.tx_hash,
+          order_output_index: f.order_output_index,
+          seller_address: f.seller_address,
+        },
       });
       toast.success(
         `${t("orders.matchSuccess")}! TX: ${truncateAddress(result.tx_hash)}`,

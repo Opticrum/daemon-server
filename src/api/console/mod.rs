@@ -808,6 +808,12 @@ pub struct SchedulerStatusQuery {
     pub since: u64,
 }
 
+/// GET /api/console/transactions/pending
+/// Returns in-flight on-chain transactions that have been sent but not yet confirmed.
+pub async fn pending_transactions(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    Ok(HttpResponse::Ok().json(state.pending_txs.snapshot()))
+}
+
 pub async fn scheduler_status(
     state: web::Data<AppState>,
     query: web::Query<SchedulerStatusQuery>,

@@ -185,14 +185,21 @@ impl GatewayService {
         let orders_err =
             on_chain_matches.is_empty() && orders.is_empty() && cache_updated_at_ms == 0;
 
-        let live = on_chain_matches.len() as u64;
-        // "exhausted" = match cells with zero capacity remaining
-        let exhausted = on_chain_matches
+        let live = on_chain_matches
+            .iter()
+            .filter(|m| m.ckb_capacity > 0)
+            .count() as u64;
+        // on-chain cells with zero capacity = drained by extraction → counted as destroyed
+        let on_chain_destroyed = on_chain_matches
             .iter()
             .filter(|m| m.ckb_capacity == 0)
             .count() as u64;
-        let total_matches = on_chain_matches.len() as u64;
-        let destroyed: u64 = 0; // destroyed cells are consumed and not in scan_matches()
+        // tombstone records = cells consumed by explicit destroy tx
+        let tombstone_destroyed =
+            crate::db::destroyed_matches::count_destroyed_matches(&mut conn).unwrap_or(0) as u64;
+        let exhausted: u64 = 0; // exhausted → destroyed (kept for API compat)
+        let total_matches = live + on_chain_destroyed + tombstone_destroyed;
+        let destroyed = on_chain_destroyed + tombstone_destroyed;
 
         let total_extracted = match_db::total_extracted(&mut conn)? as u64;
         let wallets = wallet_db::list_wallets(&mut conn)?;
@@ -796,13 +803,15 @@ impl GatewayService {
             let tx_hash = hex::encode(m.match_outpoint.tx_hash);
             let output_index = m.match_outpoint.index;
 
-            // Status filter
-            let is_exhausted = m.ckb_capacity == 0;
+            // Status filter.
+            // A match with zero remaining capacity is considered destroyed
+            // (the extraction itself drained it completely).
+            let is_destroyed = m.ckb_capacity == 0;
             if let Some(s) = status {
                 match s {
-                    "live" if is_exhausted => continue,
-                    "exhausted" if !is_exhausted => continue,
-                    "destroyed" => continue, // destroyed cells aren't in scan_matches
+                    "live" if is_destroyed => continue,
+                    "exhausted" => continue, // exhausted → destroyed, filter kept for compat
+                    "destroyed" if !is_destroyed => continue,
                     _ => {}
                 }
             }
@@ -866,13 +875,82 @@ impl GatewayService {
                 "ckb_capacity": m.ckb_capacity,
                 "last_extraction_block": m.match_data.last_extraction_block,
                 "xudt_amount": m.match_data.xudt_amount,
-                "status": if is_exhausted { "exhausted" } else { "live" },
+                "status": if is_destroyed { "destroyed" } else { "live" },
                 "extracted_total": extracted_total,
                 "extractable_shannons": extractable,
                 "created_at": created_at,
                 "remaining_days": remaining_days,
                 "tip_block": tip_block,
             }));
+        }
+
+        // Collect on-chain outpoints to deduplicate against tombstone rows.
+        let on_chain_keys: std::collections::HashSet<String> = results
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}:{}",
+                    r["tx_hash"].as_str().unwrap_or(""),
+                    r["output_index"].as_u64().unwrap_or(0)
+                )
+            })
+            .collect();
+
+        // Destroyed matches from local tombstone table (no longer on chain).
+        if status.is_none() || status == Some("") || status == Some("destroyed") {
+            let destroyed_rows = crate::db::destroyed_matches::list_destroyed_matches(&mut conn)?;
+            for row in destroyed_rows {
+                // Skip if this outpoint already appears in on-chain results
+                let key = format!("{}:{}", row.tx_hash, row.output_index);
+                if on_chain_keys.contains(&key) {
+                    continue;
+                }
+                // Apply signer lock-hash filter to destroyed matches too
+                if let Some(hashes) = signer_lock_hashes {
+                    if !hashes.is_empty()
+                        && !hashes
+                            .iter()
+                            .any(|h| h.eq_ignore_ascii_case(&row.seller_lock_hash))
+                    {
+                        continue;
+                    }
+                }
+
+                let seller_address = wallet_db::resolve_lock_hash_to_address(
+                    &mut conn,
+                    &format!("lock_hash:{}", row.seller_lock_hash),
+                )
+                .unwrap_or_else(|_| format!("lock_hash:{}", row.seller_lock_hash));
+
+                let created_at = Self::estimate_block_timestamp(
+                    row.created_at_block as u64,
+                    tip_block,
+                    tip_timestamp,
+                );
+
+                // Use extraction_history for the authoritative total.
+                let extracted_total =
+                    match_db::extracted_for_match(&mut conn, &row.tx_hash, row.output_index)
+                        .unwrap_or(row.extracted_total);
+
+                results.push(serde_json::json!({
+                    "tx_hash": row.tx_hash,
+                    "output_index": row.output_index,
+                    "order_tx_hash": row.order_tx_hash,
+                    "order_output_index": row.order_output_index,
+                    "seller_address": seller_address,
+                    "shannons_per_block": row.shannons_per_block,
+                    "ckb_capacity": row.ckb_capacity,
+                    "last_extraction_block": row.last_extraction_block,
+                    "xudt_amount": row.xudt_amount,
+                    "status": "destroyed",
+                    "extracted_total": extracted_total,
+                    "extractable_shannons": 0,
+                    "created_at": created_at,
+                    "remaining_days": 0,
+                    "tip_block": tip_block,
+                }));
+            }
         }
 
         // Newest matches first (descending order).
@@ -905,15 +983,61 @@ impl GatewayService {
         let mut conn = pool.get()?;
 
         let on_chain = provider.scan_matches().await?;
-        let m = on_chain
-            .iter()
-            .find(|mi| {
-                hex::encode(mi.match_outpoint.tx_hash) == tx_hash
-                    && mi.match_outpoint.index == output_index
-            })
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Match {tx_hash}:{output_index} not found on chain"))
-            })?;
+        let maybe_match = on_chain.iter().find(|mi| {
+            hex::encode(mi.match_outpoint.tx_hash) == tx_hash
+                && mi.match_outpoint.index == output_index
+        });
+
+        // If not found on chain, try the destroyed_matches tombstone.
+        let m = if let Some(chain_match) = maybe_match {
+            chain_match
+        } else if let Some(row) = crate::db::destroyed_matches::get_destroyed_match(
+            &mut conn,
+            tx_hash,
+            output_index as i32,
+        )? {
+            // Build extraction history from extraction_history table
+            let records =
+                match_db::get_extractions_for_match(&mut conn, tx_hash, output_index as i32)?;
+            let history: Vec<serde_json::Value> = records
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "tx_hash": e.tx_hash,
+                        "block_number": e.tip_block,
+                        "tip_block": e.tip_block,
+                        "extracted_amount": e.extracted_amount,
+                        "timestamp": e.timestamp,
+                    })
+                })
+                .collect();
+
+            let seller_address = wallet_db::resolve_lock_hash_to_address(
+                &mut conn,
+                &format!("lock_hash:{}", row.seller_lock_hash),
+            )
+            .unwrap_or_else(|_| format!("lock_hash:{}", row.seller_lock_hash));
+
+            return Ok(serde_json::json!({
+                "tx_hash": tx_hash,
+                "output_index": output_index,
+                "order_tx_hash": row.order_tx_hash,
+                "order_output_index": row.order_output_index,
+                "seller_address": seller_address,
+                "shannons_per_block": row.shannons_per_block,
+                "ckb_capacity": row.ckb_capacity,
+                "last_extraction_block": row.last_extraction_block,
+                "xudt_amount": row.xudt_amount,
+                "status": "destroyed",
+                "created_at": row.destroyed_at,
+                "extracted_total_shannons": row.extracted_total,
+                "extraction_history": history,
+            }));
+        } else {
+            return Err(AppError::NotFound(format!(
+                "Match {tx_hash}:{output_index} not found on chain"
+            )));
+        };
 
         let extraction = chain.get_extraction_chain(m).await;
         let extracted_total = extraction.total_extracted;
@@ -1008,12 +1132,12 @@ impl GatewayService {
     }
 
     pub async fn destroy_match(
-        _pool: &DbPool,
+        pool: &DbPool,
         provider: &dyn ChainProvider,
         tx_hash: &str,
         output_index: u32,
     ) -> Result<String, AppError> {
-        rent_service::destroy_match(provider, tx_hash, output_index).await
+        rent_service::destroy_match(provider, pool, tx_hash, output_index).await
     }
 
     // ═══════════════════════════════════════════════════════
@@ -1049,7 +1173,6 @@ impl GatewayService {
 
         Ok(channels
             .into_iter()
-            .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
             .map(|ch| {
                 let match_info = find_match_for_channel(&ch, &matches);
                 let match_status = if match_info.is_some() {
@@ -1075,10 +1198,7 @@ impl GatewayService {
         provider: &dyn ChainProvider,
     ) -> Result<Vec<FiberChannelInfo>, AppError> {
         let channels = provider.scan_fiber_channels(&ANY_LOCK_HASH).await?;
-        Ok(channels
-            .into_iter()
-            .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
-            .collect())
+        Ok(channels.into_iter().collect())
     }
 
     /// Cross-reference all Fiber channels with their on-chain match cells.
@@ -1115,7 +1235,6 @@ impl GatewayService {
 
         Ok(channels
             .into_iter()
-            .filter(|ch| !match_service::is_channel_terminal(&ch.state_name))
             .map(|ch| {
                 let match_info = find_match_for_channel(&ch, &matches);
                 let match_status = if match_info.is_some() {

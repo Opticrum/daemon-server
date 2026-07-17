@@ -17,6 +17,7 @@ use rust_server::services::console::scheduler_state::{SchedulerState, SharedSche
 use rust_server::services::hd_wallet_signer::HdWalletSigner;
 use rust_server::services::transaction_assembler::TransactionAssembler;
 use rust_server::services::wallet_session::WalletSessionManager;
+use rust_server::services::PendingTxRegistry;
 use rust_server::services::RealChainProvider;
 use rust_server::services::RuntimeConfig;
 use rust_server::{api, db, scheduler};
@@ -73,10 +74,12 @@ async fn main() -> std::io::Result<()> {
 
     // Build transaction assembler
     let confirm_count = Arc::new(AtomicU64::new(config.confirm_count));
+    let pending_txs = Arc::new(PendingTxRegistry::new());
     let tx_assembler = Some(TransactionAssembler::new(
         real_provider.rpc_client().clone(),
         config.fee_rate,
         confirm_count.clone(),
+        pending_txs.clone(),
     ));
 
     let inner_provider: Arc<dyn ChainProvider> = Arc::new(real_provider);
@@ -177,6 +180,7 @@ async fn main() -> std::io::Result<()> {
         chain_cache: chain_cache.clone(),
         keystore_path,
         own_fiber_pubkey,
+        pending_txs: pending_txs.clone(),
     };
     let state = web::Data::new(state);
 

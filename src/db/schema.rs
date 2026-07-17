@@ -65,3 +65,21 @@ diesel::table! {
         timestamp -> Text,
     }
 }
+
+diesel::table! {
+    destroyed_matches (id) {
+        id -> BigInt,
+        tx_hash -> Text,
+        output_index -> Integer,
+        order_tx_hash -> Text,
+        order_output_index -> Integer,
+        seller_lock_hash -> Text,
+        shannons_per_block -> BigInt,
+        ckb_capacity -> BigInt,
+        last_extraction_block -> BigInt,
+        xudt_amount -> Nullable<Text>,
+        extracted_total -> BigInt,
+        created_at_block -> BigInt,
+        destroyed_at -> Text,
+    }
+}

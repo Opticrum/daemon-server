@@ -60,6 +60,11 @@ pub fn compute_extractable_shannons(
 
 /// Preview how much rent can be extracted from an on-chain match cell.
 /// Uses the authoritative `MatchInfo` data from the chain.
+///
+/// The linear accrual is capped at the cell's remaining `ckb_capacity`:
+/// extraction subtracts directly from the match cell's capacity
+/// (`CapacityAdjustment::Subtract` in the opticrum calculator), so the cell
+/// can never yield more than it currently holds.
 pub fn preview_extractable_from_chain(match_info: &MatchInfo, tip_block: u64) -> u64 {
     let rate = match_info.match_data.shannons_per_block;
     let baseline = if match_info.match_data.last_extraction_block == 0 {
@@ -67,7 +72,7 @@ pub fn preview_extractable_from_chain(match_info: &MatchInfo, tip_block: u64) ->
     } else {
         match_info.match_data.last_extraction_block
     };
-    compute_extractable_shannons(rate, baseline, tip_block)
+    compute_extractable_shannons(rate, baseline, tip_block).min(match_info.ckb_capacity)
 }
 
 async fn find_match_info_on_chain<P: ChainProvider + ?Sized>(
@@ -112,7 +117,10 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
         ));
     }
 
-    // Deny if below configured minimum — avoids dust extractions
+    // Deny if below configured minimum — avoids dust extractions.
+    // Note: `extractable` is capped at the cell's remaining capacity, so a
+    // nearly-drained match whose remainder falls below the threshold is
+    // rejected here as dust — extract it via `destroy_match` instead.
     if extractable < opts.min_extraction_shannons {
         return Err(AppError::BadRequest(format!(
             "Extractable rent ({extractable} shannons) is below the minimum threshold \
@@ -148,7 +156,8 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
     };
 
     let capacity = match_info.ckb_capacity;
-    let is_exhausted = capacity > 0 && extractable >= capacity;
+    // `extractable` is capped at `capacity`, so draining the cell lands exactly on it.
+    let is_exhausted = capacity > 0 && extractable == capacity;
 
     // Record extraction event for statistics
     let mut conn = pool.get()?;
@@ -160,6 +169,39 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
         tip_block,
         &tx_hash_str,
     )?;
+
+    // When the extraction drains all remaining capacity, the opticrum
+    // calculator routes to `destroy_match` internally — the cell is consumed
+    // and disappears from `scan_matches()`.  Write a tombstone so the console
+    // can still list it under "已销毁".
+    if is_exhausted {
+        let extracted_total =
+            match_db::extracted_for_match(&mut conn, tx_hash, output_index as i32)
+                .unwrap_or(extractable as i64);
+        let order_tx_hash = hex::encode(match_info.match_args.order_args.fiber_pubkey.to_bytes());
+        let seller_lock_hash = hex::encode(match_info.match_args.seller_lock_hash);
+        let xudt_amount_str = if match_info.match_data.xudt_amount > 0 {
+            Some(match_info.match_data.xudt_amount.to_string())
+        } else {
+            None
+        };
+        // Ignore duplicate-key errors: if a tombstone already exists (e.g.
+        // from a previous destroy or a retry), this is a no-op.
+        let _ = crate::db::destroyed_matches::insert_destroyed_match(
+            &mut conn,
+            tx_hash,
+            output_index as i32,
+            &order_tx_hash,
+            0, // order_output_index
+            &seller_lock_hash,
+            match_info.match_data.shannons_per_block as i64,
+            match_info.ckb_capacity as i64,
+            match_info.match_data.last_extraction_block as i64,
+            xudt_amount_str.as_deref(),
+            extracted_total,
+            match_info.match_current_block as i64,
+        );
+    }
 
     info!(
         tx_hash = %tx_hash_str,
@@ -180,6 +222,7 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
 /// Destroy an exhausted match, sweeping remaining funds.
 pub async fn destroy_match<P: ChainProvider + ?Sized>(
     provider: &P,
+    pool: &DbPool,
     tx_hash: &str,
     output_index: u32,
 ) -> Result<String, AppError> {
@@ -202,6 +245,34 @@ pub async fn destroy_match<P: ChainProvider + ?Sized>(
 
     let tx_hex_str = format!("destroy_match:{}:{}:{}", tx_hash, output_index, tip_block);
     let tx_hash_result = provider.send_transaction(&tx_hex_str).await?;
+
+    // Persist tombstone record so the console can still list/show this match
+    // after it has been consumed on-chain.
+    let mut conn = pool.get()?;
+    let extracted_total =
+        crate::db::matches::extracted_for_match(&mut conn, tx_hash, output_index as i32)
+            .unwrap_or(0);
+    let order_tx_hash = hex::encode(match_info.match_args.order_args.fiber_pubkey.to_bytes());
+    let seller_lock_hash = hex::encode(match_info.match_args.seller_lock_hash);
+    let xudt_amount_str = if match_info.match_data.xudt_amount > 0 {
+        Some(match_info.match_data.xudt_amount.to_string())
+    } else {
+        None
+    };
+    crate::db::destroyed_matches::insert_destroyed_match(
+        &mut conn,
+        tx_hash,
+        output_index as i32,
+        &order_tx_hash,
+        0, // order_output_index
+        &seller_lock_hash,
+        match_info.match_data.shannons_per_block as i64,
+        match_info.ckb_capacity as i64,
+        match_info.match_data.last_extraction_block as i64,
+        xudt_amount_str.as_deref(),
+        extracted_total,
+        match_info.match_current_block as i64,
+    )?;
 
     info!(
         tx_hash = %tx_hash_result,
@@ -354,6 +425,27 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::services::MockChainProvider;
+    use opticrum_protocol::{CompressedPubkey, MatchArgs, MatchData, OrderArgs, OutPoint};
+
+    /// Build a minimal MatchInfo for preview tests.
+    fn test_match_info(rate: u64, last_extraction_block: u64, ckb_capacity: u64) -> MatchInfo {
+        MatchInfo {
+            match_args: MatchArgs::new(
+                OrderArgs::new(CompressedPubkey::new([0u8; 33]), [0xabu8; 32]),
+                OutPoint::new([0u8; 32], 0),
+                [0xcdu8; 32],
+            ),
+            match_data: {
+                let mut md = MatchData::new(0, rate);
+                md.last_extraction_block = last_extraction_block;
+                md
+            },
+            xudt: None,
+            ckb_capacity,
+            match_outpoint: OutPoint::new([1u8; 32], 0),
+            match_current_block: 0,
+        }
+    }
 
     #[test]
     fn compute_extractable_saturates_on_overflow() {
@@ -376,6 +468,26 @@ mod tests {
         assert_eq!(value, 1000); // 10 * (200 - 100) = 1000
     }
 
+    #[test]
+    fn preview_caps_at_remaining_capacity() {
+        // rate=100, elapsed=1000 → raw 100_000 exceeds capacity 60_000 → capped
+        let m = test_match_info(100, 1000, 60_000);
+        assert_eq!(preview_extractable_from_chain(&m, 2000), 60_000);
+    }
+
+    #[test]
+    fn preview_below_capacity_unchanged() {
+        // rate=100, elapsed=1000 → raw 100_000 below capacity → raw value
+        let m = test_match_info(100, 1000, 50_000_000_000);
+        assert_eq!(preview_extractable_from_chain(&m, 2000), 100_000);
+    }
+
+    #[test]
+    fn preview_zero_capacity_returns_zero() {
+        let m = test_match_info(100, 1000, 0);
+        assert_eq!(preview_extractable_from_chain(&m, 2000), 0);
+    }
+
     #[actix_rt::test]
     async fn extract_rent_mock_path() {
         let pool = db::init_test_db();
@@ -393,11 +505,11 @@ mod tests {
 
     #[actix_rt::test]
     async fn destroy_match_mock_path() {
-        let _pool = db::init_test_db();
+        let pool = db::init_test_db();
         let provider = MockChainProvider::new();
         provider.set_tip_block(2000);
 
-        let result = destroy_match(&provider, "nonexistent", 0).await;
+        let result = destroy_match(&provider, &pool, "nonexistent", 0).await;
         assert!(result.is_err());
     }
 }

@@ -1,4 +1,5 @@
 import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberChannelInfo, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus, type SchedulerStatusResponse, type ChainCacheStatusResponse } from '@/types/api'
+import type { PendingTransactionItem } from '@/types/api'
 
 // ═══════════════════════════════════════════
 // Fetch wrapper
@@ -168,6 +169,10 @@ export function useApi() {
       request('/console/runtime-config', { method: 'PUT', body: JSON.stringify(body) }),
     resetRuntimeConfig: (): Promise<RuntimeConfig> =>
       request('/console/runtime-config/reset', { method: 'POST' }),
+
+    // ── Pending transactions ──
+    getPendingTransactions: (): Promise<PendingTransactionItem[]> =>
+      request('/console/transactions/pending'),
 
     // ── Scheduler ──
     getSchedulerStatus: (since = 0): Promise<SchedulerStatusResponse> =>

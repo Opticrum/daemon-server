@@ -88,6 +88,8 @@ onMounted(async () => {
       :visible="txConfirm.visible.value"
       :title="txConfirm.title.value"
       :message="txConfirm.message.value"
+      :tx-hash="txConfirm.txHash.value"
+      :explorer-url="txConfirm.explorerUrl.value"
     />
   </div>
 </template>

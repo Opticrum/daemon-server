@@ -147,6 +147,17 @@ impl RealChainProvider {
         }
         .to_string()
     }
+
+    /// Extract close flags bitmap from `ShuttingDown` or `Closed` states.
+    /// Returns `None` for states that don't carry close flags.
+    fn channel_close_flags(state: &fiber_json_types::channel::ChannelState) -> Option<u32> {
+        use fiber_json_types::channel::ChannelState;
+        match state {
+            ChannelState::ShuttingDown(flags) => Some(flags.0),
+            ChannelState::Closed(flags) => Some(flags.0),
+            _ => None,
+        }
+    }
 }
 
 #[async_trait]
@@ -372,6 +383,7 @@ impl ChainProvider for RealChainProvider {
                     local_balance: ch.local_balance as u64,
                     remote_balance: ch.remote_balance as u64,
                     state_name: Self::channel_state_name(&ch.state),
+                    close_flags: Self::channel_close_flags(&ch.state),
                     is_public: ch.is_public,
                     enabled: ch.enabled,
                     created_at: ch.created_at,
