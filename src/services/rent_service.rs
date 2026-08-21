@@ -15,6 +15,7 @@ use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::hd_wallet_signer::HdWalletSigner;
 use crate::services::transaction_assembler::TransactionAssembler;
+use opticrum_calculator::config::HESITATION_BLOCKS;
 use opticrum_calculator::types::MatchInfo;
 
 /// Result of extracting rent.
@@ -56,6 +57,40 @@ pub fn compute_extractable_shannons(
     }
     let elapsed = tip_block.saturating_sub(last_extraction_block);
     shannons_per_block.saturating_mul(elapsed)
+}
+
+/// Whether a match is inside its buyer-hesitation / seller-pre-extraction window.
+///
+/// While the seller has never extracted (`last_extraction_block == 0`), the match
+/// cell's producing block (`match_current_block`) anchors a `HESITATION_BLOCKS`
+/// window during which the seller cannot extract rent and the buyer may only dump
+/// all rent (on-chain `match_update` verifier rejects seller extraction with
+/// `HesitationNotElapsed` until `tip − cell_block > HESITATION_BLOCKS`).
+///
+/// `remaining_blocks` counts how many blocks are left until the seller may first
+/// extract (0 = window elapsed). Using `HESITATION_BLOCKS + 1` keeps the boundary
+/// consistent with the on-chain strict `>` check: at exactly `HESITATION_BLOCKS`
+/// elapsed the seller is still locked (1 block remaining), and unlocks at
+/// `HESITATION_BLOCKS + 1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HesitationStatus {
+    pub in_hesitation: bool,
+    pub remaining_blocks: u64,
+}
+
+pub fn hesitation_status(match_info: &MatchInfo, tip_block: u64) -> HesitationStatus {
+    if match_info.match_data.last_extraction_block != 0 {
+        return HesitationStatus {
+            in_hesitation: false,
+            remaining_blocks: 0,
+        };
+    }
+    let elapsed = tip_block.saturating_sub(match_info.match_current_block);
+    let remaining_blocks = HESITATION_BLOCKS.saturating_add(1).saturating_sub(elapsed);
+    HesitationStatus {
+        in_hesitation: remaining_blocks > 0,
+        remaining_blocks,
+    }
 }
 
 /// Preview how much rent can be extracted from an on-chain match cell.
@@ -107,6 +142,20 @@ pub async fn extract_rent<P: ChainProvider + ?Sized>(
 
     // Find match on chain (authoritative source)
     let match_info = find_match_info_on_chain(provider, tx_hash, output_index).await?;
+
+    // Hesitation gate: on the FIRST extraction the seller must wait the 12h
+    // window since match creation (on-chain `HesitationNotElapsed`). Guard here
+    // so the console and scheduler surface a friendly error instead of a failed
+    // broadcast. Placed before the extractable checks — the window is a hard
+    // protocol lock and takes priority over amount-based guards.
+    let hesitation = hesitation_status(&match_info, tip_block);
+    if hesitation.in_hesitation {
+        return Err(AppError::BadRequest(format!(
+            "Cannot extract rent yet — seller hesitation window active ({} blocks remaining). \
+             Wait for the window to elapse.",
+            hesitation.remaining_blocks
+        )));
+    }
 
     // Compute extractable amount from on-chain data
     let extractable = preview_extractable_from_chain(&match_info, tip_block);
@@ -445,6 +494,80 @@ mod tests {
             match_outpoint: OutPoint::new([1u8; 32], 0),
             match_current_block: 0,
         }
+    }
+
+    /// MatchInfo with controllable `match_current_block` / `last_extraction_block`
+    /// for hesitation-window tests.
+    fn hesitation_match_info(match_current_block: u64, last_extraction_block: u64) -> MatchInfo {
+        let mut m = test_match_info(100, last_extraction_block, 50_000_000_000);
+        m.match_current_block = match_current_block;
+        m
+    }
+
+    #[test]
+    fn hesitation_status_never_extracted_in_window() {
+        // elapsed = 0 → 3601 blocks remaining, still locked.
+        let s = hesitation_status(&hesitation_match_info(100, 0), 100);
+        assert_eq!(
+            s,
+            HesitationStatus {
+                in_hesitation: true,
+                remaining_blocks: HESITATION_BLOCKS + 1,
+            }
+        );
+    }
+
+    #[test]
+    fn hesitation_status_boundary_3600_still_locked() {
+        // elapsed = 3600 (exactly HESITATION_BLOCKS) → seller still locked
+        // (contract requires `>`), 1 block remaining.
+        let s = hesitation_status(&hesitation_match_info(100, 0), 100 + HESITATION_BLOCKS);
+        assert_eq!(
+            s,
+            HesitationStatus {
+                in_hesitation: true,
+                remaining_blocks: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn hesitation_status_3601_elapsed_unlocked() {
+        // elapsed = 3601 → window passed, seller may extract.
+        let s = hesitation_status(&hesitation_match_info(100, 0), 100 + HESITATION_BLOCKS + 1);
+        assert_eq!(
+            s,
+            HesitationStatus {
+                in_hesitation: false,
+                remaining_blocks: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn hesitation_status_after_first_extraction_always_zero() {
+        // Once the seller has extracted (leb != 0), no window applies.
+        let s = hesitation_status(&hesitation_match_info(100, 500), 100);
+        assert_eq!(
+            s,
+            HesitationStatus {
+                in_hesitation: false,
+                remaining_blocks: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn hesitation_status_never_extracted_long_after() {
+        // Long past the window → not in hesitation.
+        let s = hesitation_status(&hesitation_match_info(100, 0), 100_000);
+        assert_eq!(
+            s,
+            HesitationStatus {
+                in_hesitation: false,
+                remaining_blocks: 0,
+            }
+        );
     }
 
     #[test]

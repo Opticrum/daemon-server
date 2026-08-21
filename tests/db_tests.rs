@@ -1,14 +1,17 @@
-//! Database layer tests — wallets and extraction_history (statistics cache).
+//! Database layer tests — wallets, extraction_history (statistics cache),
+//! and dismissed_fiber_channels (console channel tombstone).
 //!
-//! After the chain-first refactor, tracked_matches and dismissed_fiber_channels
-//! have been removed. This file tests wallets (local key store) and
-//! extraction_history (statistics cache).
+//! After the chain-first refactor, `tracked_matches` was removed; matches are
+//! derived from on-chain data. `dismissed_fiber_channels` was later restored
+//! because dismissing a closed channel is a console display preference that
+//! is not chain-reconstructable.
 
 mod common;
 
 use common::test_db;
 use rust_server::db::{
-    destroyed_matches as destroyed_db, matches as match_db, schema, wallets as wallet_db,
+    destroyed_matches as destroyed_db, dismissed_channels as dismissed_db, matches as match_db,
+    schema, wallet_txs as wallet_txs_db, wallets as wallet_db,
 };
 
 #[test]
@@ -255,4 +258,108 @@ async fn destroyed_match_unique_constraint() {
         &mut conn, "tx_dup", 0, "order_e", 0, "lock_e", 200, 6000, 0, None, 0, 0,
     );
     assert!(result.is_err());
+}
+
+// ── Dismissed fiber channels (console tombstone) ──────────────────────────
+
+#[test]
+fn dismissed_channel_roundtrip() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    assert!(!dismissed_db::is_dismissed(&mut conn, "ch_a").unwrap());
+    assert!(dismissed_db::list_dismissed_ids(&mut conn)
+        .unwrap()
+        .is_empty());
+
+    dismissed_db::dismiss_channel(&mut conn, "ch_a").unwrap();
+    assert!(dismissed_db::is_dismissed(&mut conn, "ch_a").unwrap());
+    assert_eq!(
+        dismissed_db::list_dismissed_ids(&mut conn).unwrap(),
+        vec!["ch_a"]
+    );
+
+    // Re-dismissing is idempotent (single row, no error).
+    dismissed_db::dismiss_channel(&mut conn, "ch_a").unwrap();
+    assert_eq!(
+        dismissed_db::list_dismissed_ids(&mut conn).unwrap().len(),
+        1
+    );
+
+    dismissed_db::dismiss_channel(&mut conn, "ch_b").unwrap();
+    let ids = dismissed_db::list_dismissed_ids(&mut conn).unwrap();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"ch_a".to_string()));
+    assert!(ids.contains(&"ch_b".to_string()));
+}
+
+#[test]
+fn wallet_tx_upsert_batch_idempotent() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    let row = || wallet_txs_db::NewWalletTx {
+        tx_hash: "aabb",
+        wallet_id: 1,
+        block_number: 100,
+        timestamp_ms: Some(1_700_000_000_000),
+        received_shannons: 5_000_000_000,
+        sent_shannons: 0,
+    };
+
+    wallet_txs_db::upsert_batch(&mut conn, &[row()]).unwrap();
+    wallet_txs_db::upsert_batch(&mut conn, &[row()]).unwrap();
+    assert_eq!(wallet_txs_db::list_all(&mut conn).unwrap().len(), 1);
+
+    // Update the existing row (same key).
+    let updated = wallet_txs_db::NewWalletTx {
+        received_shannons: 7_000_000_000,
+        block_number: 101,
+        ..row()
+    };
+    wallet_txs_db::upsert_batch(&mut conn, &[updated]).unwrap();
+    let rows = wallet_txs_db::list_all(&mut conn).unwrap();
+    assert_eq!(rows.len(), 1, "upsert updates, not duplicates");
+    assert_eq!(rows[0].received_shannons, 7_000_000_000);
+    assert_eq!(rows[0].block_number, 101);
+}
+
+#[test]
+fn wallet_tx_prune_other_wallets() {
+    let pool = test_db();
+    let mut conn = pool.get().unwrap();
+
+    wallet_txs_db::upsert_batch(
+        &mut conn,
+        &[
+            wallet_txs_db::NewWalletTx {
+                tx_hash: "t1",
+                wallet_id: 1,
+                block_number: 10,
+                timestamp_ms: None,
+                received_shannons: 1,
+                sent_shannons: 0,
+            },
+            wallet_txs_db::NewWalletTx {
+                tx_hash: "t2",
+                wallet_id: 2,
+                block_number: 20,
+                timestamp_ms: None,
+                received_shannons: 1,
+                sent_shannons: 0,
+            },
+        ],
+    )
+    .unwrap();
+
+    let pruned = wallet_txs_db::prune_other_wallets(&mut conn, &[1]).unwrap();
+    assert_eq!(pruned, 1, "wallet 2 rows pruned");
+    let rows = wallet_txs_db::list_all(&mut conn).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].wallet_id, 1);
+
+    // Empty keep set → wipe everything.
+    let pruned = wallet_txs_db::prune_other_wallets(&mut conn, &[]).unwrap();
+    assert_eq!(pruned, 1);
+    assert!(wallet_txs_db::list_all(&mut conn).unwrap().is_empty());
 }

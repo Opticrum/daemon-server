@@ -140,6 +140,18 @@ pub struct Config {
     /// Chain cache refresh interval in seconds
     #[arg(long, env = "OPTICRUM_CHAIN_CACHE_INTERVAL_SECS", default_value = "30")]
     pub chain_cache_interval_secs: u64,
+
+    /// Enable background sync of wallet transaction history to the DB (fast reads)
+    #[arg(long, env = "OPTICRUM_WALLET_TX_SYNC_ENABLED", default_value = "true")]
+    pub wallet_tx_sync_enabled: bool,
+
+    /// Wallet transaction sync interval in seconds
+    #[arg(
+        long,
+        env = "OPTICRUM_WALLET_TX_SYNC_INTERVAL_SECS",
+        default_value = "60"
+    )]
+    pub wallet_tx_sync_interval_secs: u64,
 }
 
 impl Default for Config {
@@ -164,6 +176,8 @@ impl Default for Config {
             auto_match_interval_secs: 120,
             chain_cache_enabled: true,
             chain_cache_interval_secs: 30,
+            wallet_tx_sync_enabled: true,
+            wallet_tx_sync_interval_secs: 60,
             keystore_path: "data/keystore.json".into(),
             hd_wallet_password: None,
         }
@@ -276,6 +290,13 @@ impl Config {
             auto_match_interval_secs: merge_field!(auto_match_interval_secs, defaults, cli, file),
             chain_cache_enabled: merge_field!(chain_cache_enabled, defaults, cli, file),
             chain_cache_interval_secs: merge_field!(chain_cache_interval_secs, defaults, cli, file),
+            wallet_tx_sync_enabled: merge_field!(wallet_tx_sync_enabled, defaults, cli, file),
+            wallet_tx_sync_interval_secs: merge_field!(
+                wallet_tx_sync_interval_secs,
+                defaults,
+                cli,
+                file
+            ),
             keystore_path: merge_field!(keystore_path, defaults, cli, file),
             hd_wallet_password: cli.hd_wallet_password.or(file.hd_wallet_password),
         }

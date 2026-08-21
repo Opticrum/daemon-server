@@ -17,7 +17,8 @@ use sha2::{Digest, Sha256};
 use crate::error::AppError;
 use crate::fiber::rpc_client::FiberRpcExt;
 use crate::services::chain_provider::{
-    CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo, PeerInfo, TransactionInfo,
+    CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo, IndexerTxRef, PeerInfo,
+    TransactionInfo,
 };
 use fiber_json_types::channel::{ListChannelsResult, OpenChannelResult};
 use opticrum_protocol::OutPoint as ProtocolOutPoint;
@@ -27,6 +28,7 @@ pub struct RealChainProvider {
     rpc: RpcClient,
     fiber_rpc: crate::fiber::rpc_client::RpcClient,
     network: String,
+    reqwest_client: reqwest::Client,
 }
 
 impl RealChainProvider {
@@ -66,6 +68,7 @@ impl RealChainProvider {
             rpc,
             fiber_rpc,
             network,
+            reqwest_client: reqwest::Client::new(),
         }
     }
 
@@ -279,6 +282,117 @@ impl ChainProvider for RealChainProvider {
         );
 
         Ok(cells)
+    }
+
+    async fn get_transactions_by_lock_arg(
+        &self,
+        lock_arg: &[u8; 20],
+    ) -> Result<Vec<IndexerTxRef>, AppError> {
+        use crate::services::address::secp256k1_blake160_lock_script;
+        use ckb_cinnabar_calculator::indexer::{
+            CellType, Order, Pagination, ScriptType, SearchKey, Tx,
+        };
+        use ckb_cinnabar_calculator::re_exports::ckb_jsonrpc_types::{JsonBytes, Uint32};
+        use ckb_cinnabar_calculator::rpc::RPC;
+
+        let (_ckb_uri, indexer_uri) = self.rpc.url();
+
+        let script: ckb_cinnabar_calculator::re_exports::ckb_jsonrpc_types::Script =
+            serde_json::from_value(secp256k1_blake160_lock_script(lock_arg))
+                .map_err(|e| AppError::ChainError(format!("Build lock script for indexer: {e}")))?;
+
+        let search_key = SearchKey {
+            script,
+            script_type: ScriptType::Lock,
+            script_search_mode: None,
+            filter: None,
+            with_data: None,
+            // Group by transaction so each result carries every io index for the
+            // lock — amounts are computed later from the full transaction.
+            group_by_transaction: Some(true),
+        };
+
+        const PAGE_SIZE: u32 = 100;
+        const MAX_PAGES: u32 = 3;
+
+        let mut out: Vec<IndexerTxRef> = Vec::new();
+        let mut cursor: Option<JsonBytes> = None;
+
+        for _ in 0..MAX_PAGES {
+            // The wrapped RpcClient hardcodes `Order::Asc`, so call the indexer
+            // directly to request `desc` (newest first).
+            let params = serde_json::to_value((
+                &search_key,
+                Order::Desc,
+                Uint32::from(PAGE_SIZE),
+                cursor.clone(),
+            ))
+            .map_err(|e| AppError::ChainError(format!("indexer params: {e}")))?;
+            let body = serde_json::json!({
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "get_transactions",
+                "params": params,
+            });
+
+            let resp = self
+                .reqwest_client
+                .post(&indexer_uri)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| AppError::ChainError(format!("indexer get_transactions: {e}")))?;
+            let output: IndexerOutput<Pagination<Tx>> = resp
+                .json()
+                .await
+                .map_err(|e| AppError::ChainError(format!("indexer response parse: {e}")))?;
+            let page = output.into_result()?;
+
+            if page.objects.is_empty() {
+                break;
+            }
+
+            for tx in page.objects {
+                match tx {
+                    Tx::Grouped(g) => {
+                        let tx_hash = hex::encode(g.tx_hash.as_bytes());
+                        let block_number = g.block_number.value();
+                        for (io_type, io_index) in g.cells {
+                            out.push(IndexerTxRef {
+                                tx_hash: tx_hash.clone(),
+                                block_number,
+                                io_index: io_index.value(),
+                                io_type: match io_type {
+                                    CellType::Input => "input".into(),
+                                    CellType::Output => "output".into(),
+                                },
+                            });
+                        }
+                    }
+                    // Defensive — group_by_transaction=true should always yield
+                    // `Tx::Grouped`, but handle the ungrouped shape anyway.
+                    Tx::Ungrouped(u) => {
+                        out.push(IndexerTxRef {
+                            tx_hash: hex::encode(u.tx_hash.as_bytes()),
+                            block_number: u.block_number.value(),
+                            io_index: u.io_index.value(),
+                            io_type: match u.io_type {
+                                CellType::Input => "input".into(),
+                                CellType::Output => "output".into(),
+                            },
+                        });
+                    }
+                }
+            }
+
+            let next = page.last_cursor;
+            if next.as_bytes().is_empty() || Some(next.clone()) == cursor {
+                break;
+            }
+            cursor = Some(next);
+        }
+
+        Ok(out)
     }
 
     async fn get_cells_by_lock(&self, lock_hash: &[u8; 32]) -> Result<Vec<CellOutput>, AppError> {
@@ -568,5 +682,26 @@ impl ChainProvider for RealChainProvider {
             .await
             .map_err(|e| AppError::ChainError(format!("Fiber RPC connect_peer: {}", e)))?;
         Ok(())
+    }
+}
+
+/// Indexer JSON-RPC output — either a `result` or an error payload. Reused to
+/// call `get_transactions` directly with `order: "desc"` (the wrapped
+/// `RpcClient` is hardcoded to ascending).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum IndexerOutput<T> {
+    Success { result: T },
+    Failure { error: serde_json::Value },
+}
+
+impl<T> IndexerOutput<T> {
+    fn into_result(self) -> Result<T, AppError> {
+        match self {
+            IndexerOutput::Success { result } => Ok(result),
+            IndexerOutput::Failure { error } => Err(AppError::ChainError(format!(
+                "indexer get_transactions error: {error}"
+            ))),
+        }
     }
 }

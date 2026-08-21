@@ -3,6 +3,7 @@
 pub mod auto_matcher;
 pub mod chain_indexer;
 pub mod rent_extractor;
+pub mod wallet_tx_sync;
 
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -34,6 +35,13 @@ pub fn spawn_schedulers(
         chain_cache,
         runtime_config.clone(),
         inner_provider,
+        scheduler_state.clone(),
+    );
+
+    wallet_tx_sync::spawn_wallet_tx_sync(
+        pool.clone(),
+        runtime_config.clone(),
+        chain_provider.clone(),
         scheduler_state.clone(),
     );
 

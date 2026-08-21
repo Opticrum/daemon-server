@@ -9,6 +9,8 @@ export interface ModalOptions {
   cancelText?: string | null
   danger?: boolean
   wide?: boolean
+  /** Wider than `wide` — for content with many columns (e.g. transaction tables). */
+  extraWide?: boolean
   extra?: Component
   onConfirm?: () => void | boolean | Promise<void | boolean>
   onCancel?: () => void
@@ -24,6 +26,7 @@ export function useModal() {
   const cancelText = ref<string | null>('取消')
   const danger = ref(false)
   const wide = ref(false)
+  const extraWide = ref(false)
   const extra: Ref<Component | undefined> = ref(undefined)
   const loading = ref(false)
 
@@ -38,6 +41,7 @@ export function useModal() {
     cancelText.value = opts.cancelText !== undefined ? opts.cancelText : '取消'
     danger.value = opts.danger || false
     wide.value = opts.wide || false
+    extraWide.value = opts.extraWide || false
     extra.value = opts.extra
     loading.value = false
     pendingConfirm = opts.onConfirm
@@ -93,5 +97,5 @@ export function useModal() {
     })
   }
 
-  return { visible, title, message, content, contentProps, confirmText, cancelText, danger, wide, extra, loading, show, hide, onConfirm, onCancel, confirm }
+  return { visible, title, message, content, contentProps, confirmText, cancelText, danger, wide, extraWide, extra, loading, show, hide, onConfirm, onCancel, confirm }
 }

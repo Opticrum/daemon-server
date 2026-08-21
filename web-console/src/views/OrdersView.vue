@@ -290,8 +290,12 @@ async function showMatchModal(order: OrderScanItem) {
           seller_address: wallets[0].ckb_address,
         };
       }
-      // Auto-proceed with the match now that the wallet is unlocked.
-      triggerMatch();
+      // Do NOT auto-send here: unlock switches back to the wallet selector so
+      // the user explicitly confirms the seller address before matching. An
+      // automatic send here previously led to a second, identical match
+      // submission when the user re-selected an address — rejected by the
+      // chain as a duplicate transaction. The confirm button is re-enabled by
+      // `modal.confirmText` above and drives `triggerMatch` via `onConfirm`.
     } catch (e: any) {
       modalData.unlockError = e.message || t("orders.matchFailed");
     } finally {

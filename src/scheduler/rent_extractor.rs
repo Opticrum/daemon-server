@@ -14,7 +14,9 @@ use crate::error::AppError;
 use crate::services::chain_provider::ChainProvider;
 use crate::services::console::scheduler_state::{push_event, trunc_hex, SharedSchedulerState};
 use crate::services::hd_wallet_signer::HdWalletSigner;
-use crate::services::rent_service::{self, preview_extractable_from_chain, ExtractRentOptions};
+use crate::services::rent_service::{
+    self, hesitation_status, preview_extractable_from_chain, ExtractRentOptions,
+};
 use crate::services::transaction_assembler::TransactionAssembler;
 
 /// Run one extraction cycle.
@@ -109,19 +111,28 @@ pub async fn run_extraction_cycle(
     let mut total_extracted = 0u64;
     let mut extractions = 0u32;
     let mut below_threshold = 0u32;
+    let mut in_hesitation = 0u32;
     let mut failed = 0u32;
 
     for m in &managed_matches {
+        let tx_hash_hex = hex::encode(m.match_outpoint.tx_hash);
+        let outpoint_index = m.match_outpoint.index;
+        let cell_label = format!("{}:{}", trunc_hex(&tx_hash_hex, 8, 6), outpoint_index);
+
+        // Skip matches still inside the buyer hesitation window — the seller
+        // cannot extract rent until it elapses (on-chain `HesitationNotElapsed`).
+        if hesitation_status(m, tip_block).in_hesitation {
+            in_hesitation += 1;
+            debug!(match_cell = %cell_label, tip_block, "Match in buyer hesitation window — extraction skipped");
+            continue;
+        }
+
         let extractable = preview_extractable_from_chain(m, tip_block);
 
         if extractable < min_extraction_amount_shannons || extractable == 0 {
             below_threshold += 1;
             continue;
         }
-
-        let tx_hash_hex = hex::encode(m.match_outpoint.tx_hash);
-        let outpoint_index = m.match_outpoint.index;
-        let cell_label = format!("{}:{}", trunc_hex(&tx_hash_hex, 8, 6), outpoint_index);
 
         match rent_service::extract_rent(provider, pool, &tx_hash_hex, outpoint_index, &opts).await
         {
@@ -169,8 +180,8 @@ pub async fn run_extraction_cycle(
             "extractor",
             "info",
             format!(
-                "Cycle finished — nothing extracted ({} cells below threshold, {} failed)",
-                below_threshold, failed
+                "Cycle finished — nothing extracted ({} cells below threshold, {} in hesitation, {} failed)",
+                below_threshold, in_hesitation, failed
             ),
         );
     } else {
@@ -179,8 +190,8 @@ pub async fn run_extraction_cycle(
             "extractor",
             "info",
             format!(
-                "Cycle finished — {} extraction(s), {} shannons total ({} below threshold, {} failed)",
-                extractions, total_extracted, below_threshold, failed
+                "Cycle finished — {} extraction(s), {} shannons total ({} below threshold, {} in hesitation, {} failed)",
+                extractions, total_extracted, below_threshold, in_hesitation, failed
             ),
         );
     }

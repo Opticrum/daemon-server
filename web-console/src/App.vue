@@ -70,6 +70,7 @@ onMounted(async () => {
       :cancel-text="modal.cancelText.value"
       :danger="modal.danger.value"
       :wide="modal.wide.value"
+      :extra-wide="modal.extraWide.value"
       :loading="modal.loading.value"
       :extra="modal.extra.value"
       @confirm="modal.onConfirm"

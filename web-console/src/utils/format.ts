@@ -84,6 +84,7 @@ export const CF_WAITING_ONCHAIN = 32 // 1 << 5
 export function statusLabelKey(status: string): string {
   const map: Record<string, string> = {
     live: 'status.live',
+    hesitation: 'status.hesitation',
     exhausted: 'status.exhausted',
     timeout: 'status.timeout',
     destroyed: 'status.destroyed',
@@ -106,6 +107,7 @@ export function statusLabelKey(status: string): string {
 export function statusColor(status: string): 'green' | 'red' | 'yellow' | 'blue' | 'gray' {
   const map: Record<string, 'green' | 'red' | 'yellow' | 'blue' | 'gray'> = {
     live: 'green',
+    hesitation: 'yellow',
     exhausted: 'gray',
     timeout: 'red',
     destroyed: 'red',
@@ -120,4 +122,20 @@ export function statusColor(status: string): 'green' | 'red' | 'yellow' | 'blue'
     open: 'green',
   }
   return map[status] || 'gray'
+}
+
+/**
+ * Approximate a block count to a human duration (CKB ~12s/block).
+ * Returns "—" for 0/undefined. e.g. 3601 → "~12h 1m".
+ */
+export function formatBlockDuration(
+  blocks: number | null | undefined,
+): string {
+  if (!blocks || blocks <= 0) return '—'
+  const secs = blocks * 12
+  if (secs < 3600) return `~${Math.max(1, Math.ceil(secs / 60))}m`
+  if (secs < 86400) {
+    return `~${Math.floor(secs / 3600)}h ${Math.ceil((secs % 3600) / 60)}m`
+  }
+  return `~${(secs / 86400).toFixed(1)}d`
 }

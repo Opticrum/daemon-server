@@ -13,7 +13,8 @@ use tracing::warn;
 use crate::error::AppError;
 use crate::services::chain_cache::SharedChainCache;
 use crate::services::chain_provider::{
-    CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo, PeerInfo, TransactionInfo,
+    CellOutput, ChainProvider, FiberChannelInfo, FiberNodeInfo, IndexerTxRef, PeerInfo,
+    TransactionInfo,
 };
 use crate::services::rent_service::{walk_extraction_chain, ExtractionChain};
 use crate::services::RuntimeConfig;
@@ -195,5 +196,14 @@ impl ChainProvider for CachedChainProvider {
         lock_arg: &[u8; 20],
     ) -> Result<Vec<CellOutput>, AppError> {
         self.inner.get_cells_by_lock_arg(lock_arg).await
+    }
+
+    async fn get_transactions_by_lock_arg(
+        &self,
+        lock_arg: &[u8; 20],
+    ) -> Result<Vec<IndexerTxRef>, AppError> {
+        // Wallet transaction history is always fetched live (not part of the
+        // background chain cache snapshot).
+        self.inner.get_transactions_by_lock_arg(lock_arg).await
     }
 }

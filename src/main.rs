@@ -181,6 +181,7 @@ async fn main() -> std::io::Result<()> {
         keystore_path,
         own_fiber_pubkey,
         pending_txs: pending_txs.clone(),
+        match_inflight: Arc::new(rust_server::services::MatchInflight::new()),
     };
     let state = web::Data::new(state);
 

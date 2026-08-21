@@ -51,6 +51,34 @@ pub fn mock_with_match() -> MockChainProvider {
     }])
 }
 
+/// Create a mock chain provider with a single match whose creation block /
+/// last-extraction / tip are controllable, for hesitation-window scenarios.
+/// The seller lock hash is `[0xcdu8; 32]` (matches `mock_with_match`).
+pub fn mock_with_hesitation_match(
+    match_current_block: u64,
+    last_extraction_block: u64,
+    tip_block: u64,
+) -> MockChainProvider {
+    let provider = MockChainProvider::with_matches(vec![MatchInfo {
+        match_args: MatchArgs::new(
+            OrderArgs::new(CompressedPubkey::new([0u8; 33]), [0xabu8; 32]),
+            mock_outpoint(b"channel_001______________________", 0),
+            [0xcdu8; 32],
+        ),
+        match_data: {
+            let mut md = MatchData::new(0, 100);
+            md.last_extraction_block = last_extraction_block;
+            md
+        },
+        xudt: None,
+        ckb_capacity: 50_000_000_000,
+        match_outpoint: mock_outpoint(b"match_tx_001_____________________", 0),
+        match_current_block,
+    }]);
+    provider.set_tip_block(tip_block);
+    provider
+}
+
 /// Create a test cell output (fake channel cell).
 pub fn test_cell(capacity: u64) -> CellOutput {
     CellOutput {
@@ -63,6 +91,12 @@ pub fn test_cell(capacity: u64) -> CellOutput {
 
 /// Helper to create an AppState for API tests (with in-memory DB + Config).
 pub fn test_app_state() -> rust_server::api::AppState {
+    test_app_state_with_provider(MockChainProvider::new())
+}
+
+/// Like `test_app_state` but with a pre-loaded mock chain provider (e.g. one
+/// seeded with on-chain matches for hesitation/rent scenarios).
+pub fn test_app_state_with_provider(inner: MockChainProvider) -> rust_server::api::AppState {
     let config = rust_server::config::Config {
         config_file: None,
         port: 8080,
@@ -83,6 +117,8 @@ pub fn test_app_state() -> rust_server::api::AppState {
         auto_match_interval_secs: 120,
         chain_cache_enabled: true,
         chain_cache_interval_secs: 30,
+        wallet_tx_sync_enabled: true,
+        wallet_tx_sync_interval_secs: 60,
         keystore_path: "data/keystore.json".to_string(),
         hd_wallet_password: None,
     };
@@ -94,7 +130,7 @@ pub fn test_app_state() -> rust_server::api::AppState {
         rust_server::services::runtime_config::RuntimeConfig::from_config(&config),
     ));
     let pending_txs = Arc::new(rust_server::services::PendingTxRegistry::new());
-    let inner = Arc::new(MockChainProvider::new());
+    let inner = Arc::new(inner);
     let chain_cache = Arc::new(ChainCache::new());
     let cached_chain = Arc::new(CachedChainProvider::new(
         inner,
@@ -119,5 +155,6 @@ pub fn test_app_state() -> rust_server::api::AppState {
         chain_cache,
         own_fiber_pubkey: None,
         pending_txs,
+        match_inflight: Arc::new(rust_server::services::MatchInflight::new()),
     }
 }

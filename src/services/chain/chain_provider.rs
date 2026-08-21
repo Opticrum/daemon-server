@@ -133,6 +133,17 @@ pub trait ChainProvider: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Query the indexer for transaction history of a lock arg — every matching
+    /// cell (inputs AND outputs, including spent cells), newest-first.
+    /// Default: no-op. `RealChainProvider` queries the indexer directly with
+    /// `order: "desc"` (the wrapped `RpcClient` is hardcoded to ascending).
+    async fn get_transactions_by_lock_arg(
+        &self,
+        _lock_arg: &[u8; 20],
+    ) -> Result<Vec<IndexerTxRef>, AppError> {
+        Ok(Vec::new())
+    }
+
     /// Get total CKB balance for a lock hash (sum of live cell capacities).
     async fn get_balance(&self, lock_hash: &[u8; 32]) -> Result<u64, AppError> {
         let cells = self.get_cells_by_lock(lock_hash).await?;
@@ -170,6 +181,17 @@ pub struct CellOutput {
     pub lock_hash: [u8; 32],
     pub type_hash: Option<[u8; 32]>,
     pub data: Vec<u8>,
+}
+
+/// Indexer transaction reference — one matching cell of a transaction for a lock
+/// script. `tx_hash` is bare hex (64 chars, no `0x` prefix). `io_type` is
+/// `"input"` or `"output"`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndexerTxRef {
+    pub tx_hash: String,
+    pub block_number: u64,
+    pub io_index: u32,
+    pub io_type: String,
 }
 
 /// Lightweight Fiber channel info returned by `scan_fiber_channels`.
@@ -346,6 +368,8 @@ pub struct MockChainProvider {
     pub peer_list: Mutex<Vec<PeerInfo>>,
     pub peer_connections: Mutex<Vec<(String, Option<String>)>>,
     pub transactions: Mutex<HashMap<String, TransactionInfo>>,
+    pub wallet_txs: Mutex<HashMap<[u8; 20], Vec<IndexerTxRef>>>,
+    pub block_timestamps: Mutex<HashMap<u64, u64>>,
 }
 
 impl Default for MockChainProvider {
@@ -370,6 +394,8 @@ impl MockChainProvider {
             peer_list: Mutex::new(Vec::new()),
             peer_connections: Mutex::new(Vec::new()),
             transactions: Mutex::new(HashMap::new()),
+            wallet_txs: Mutex::new(HashMap::new()),
+            block_timestamps: Mutex::new(HashMap::new()),
         }
     }
 
@@ -420,6 +446,21 @@ impl MockChainProvider {
             .insert(tx_hash.to_string(), info);
     }
 
+    /// Inject an indexer transaction reference for a lock arg (wallet history).
+    pub fn add_wallet_tx(&self, lock_arg: &[u8; 20], tx: IndexerTxRef) {
+        self.wallet_txs
+            .lock()
+            .unwrap()
+            .entry(*lock_arg)
+            .or_default()
+            .push(tx);
+    }
+
+    /// Inject a block → Unix-ms timestamp mapping (for wallet tx sync tests).
+    pub fn set_block_timestamp(&self, block: u64, ts_ms: u64) {
+        self.block_timestamps.lock().unwrap().insert(block, ts_ms);
+    }
+
     pub fn with_channel_matches(cwms: Vec<ChannelWithMatch>) -> Self {
         Self {
             channel_matches: Mutex::new(cwms),
@@ -432,6 +473,16 @@ impl MockChainProvider {
 impl ChainProvider for MockChainProvider {
     async fn get_tip_block_number(&self) -> Result<u64, AppError> {
         Ok(*self.tip_block.lock().unwrap())
+    }
+
+    async fn get_block_timestamp(&self, block_number: u64) -> Result<u64, AppError> {
+        Ok(self
+            .block_timestamps
+            .lock()
+            .unwrap()
+            .get(&block_number)
+            .copied()
+            .unwrap_or(0))
     }
 
     async fn scan_orders(&self) -> Result<Vec<OrderInfo>, AppError> {
@@ -524,6 +575,19 @@ impl ChainProvider for MockChainProvider {
         use crate::services::address::script_lock_hash;
         let lock_hash = script_lock_hash(lock_arg);
         self.get_cells_by_lock(&lock_hash).await
+    }
+
+    async fn get_transactions_by_lock_arg(
+        &self,
+        lock_arg: &[u8; 20],
+    ) -> Result<Vec<IndexerTxRef>, AppError> {
+        Ok(self
+            .wallet_txs
+            .lock()
+            .unwrap()
+            .get(lock_arg)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn get_transaction(&self, tx_hash: &str) -> Result<TransactionInfo, AppError> {

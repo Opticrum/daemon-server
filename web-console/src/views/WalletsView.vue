@@ -2,8 +2,14 @@
 import { ref, onMounted, inject, computed, h } from 'vue'
 import { useApi } from '@/composables/useApi'
 import { useI18n } from '@/composables/useI18n'
-import { truncateAddress, formatCKB } from '@/utils/format'
-import type { WalletResponse, HdStatusResponse, AddressBalanceItem } from '@/types/api'
+import { truncateAddress, formatCKB, explorerTxUrl } from '@/utils/format'
+import DataTable, { type ColumnDef } from '@/components/ui/DataTable.vue'
+import type {
+  WalletResponse,
+  HdStatusResponse,
+  AddressBalanceItem,
+  WalletTxRow,
+} from '@/types/api'
 
 const api = useApi()
 const { t } = useI18n()
@@ -310,6 +316,206 @@ async function copyToClipboard(text: string) {
   }
 }
 
+// ── Transaction history modal ──
+
+function txDirection(row: WalletTxRow) {
+  const { received_shannons: r, sent_shannons: s } = row
+  if (r > 0 && s === 0) {
+    return h('span', { class: 'tx-direction tx-in' }, t('wallets.txIn'))
+  }
+  if (s > 0 && r === 0) {
+    return h('span', { class: 'tx-direction tx-out' }, t('wallets.txOut'))
+  }
+  return h('span', { class: 'tx-direction tx-self' }, t('wallets.txSelf'))
+}
+
+function txAmountCell(row: WalletTxRow) {
+  const { received_shannons: r, sent_shannons: s } = row
+  if (r > 0 && s > 0) {
+    return h(
+      'span',
+      { class: 'tx-amount tx-self' },
+      `↗ ${formatCKB(r)} · ↘ ${formatCKB(s)}`,
+    )
+  }
+  if (s > 0) {
+    return h('span', { class: 'tx-amount tx-out' }, `-${formatCKB(s)}`)
+  }
+  return h('span', { class: 'tx-amount tx-in' }, `+${formatCKB(r)}`)
+}
+
+function txTimeText(ms: number | null): string {
+  return ms ? new Date(ms).toLocaleString() : '—'
+}
+
+async function showTxHistory() {
+  const loading = ref(false)
+  const error = ref('')
+  const rows = ref<WalletTxRow[]>([])
+  const network = ref('testnet')
+  // Address tabs: "全部" (aggregate) + one tab per wallet address.
+  const tabWallets = ref<WalletResponse[]>([])
+  const activeWallet = ref<number | null>(null)
+  try {
+    const info = await api.getServerInfo()
+    network.value = info.network
+  } catch {
+    // Keep the default network for explorer links.
+  }
+
+  async function loadTxs(walletId: number | null) {
+    loading.value = true
+    error.value = ''
+    try {
+      rows.value = await api.getWalletTransactions(walletId ?? undefined)
+    } catch (e: any) {
+      console.error('Failed to load wallet transactions:', e)
+      error.value = e.message || t('wallets.txLoadFailed')
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function selectTab(walletId: number | null) {
+    activeWallet.value = walletId
+    loadTxs(walletId)
+  }
+
+  // Manual refresh: force a chain→DB sync, then re-read the active tab.
+  const refreshing = ref(false)
+  async function refreshTxs() {
+    refreshing.value = true
+    error.value = ''
+    try {
+      await api.syncWalletTransactions()
+      rows.value = await api.getWalletTransactions(activeWallet.value ?? undefined)
+    } catch (e: any) {
+      console.error('Failed to refresh wallet transactions:', e)
+      error.value = e.message || t('wallets.txLoadFailed')
+    } finally {
+      refreshing.value = false
+    }
+  }
+
+  const columns: ColumnDef[] = [
+    { key: 'direction', label: t('wallets.txDirection'), width: '90px', align: 'center' },
+    { key: 'tx_hash', label: t('wallets.txHash') },
+    { key: 'timestamp_ms', label: t('wallets.txTime'), width: '240px' },
+    { key: 'amount', label: t('wallets.txAmount'), width: '200px', align: 'right', sortable: true },
+  ]
+
+  modal.show({
+    title: t('wallets.transactions'),
+    extraWide: true,
+    content: {
+      setup() {
+        return () =>
+          h('div', { class: 'tx-history-modal' }, [
+            h(
+              'div',
+              { class: 'tx-tabs' },
+              [
+                h(
+                  'button',
+                  {
+                    class: ['tx-tab', activeWallet.value === null ? 'active' : ''],
+                    onClick: () => selectTab(null),
+                  },
+                  t('wallets.txAll'),
+                ),
+                ...tabWallets.value.map((w) =>
+                  h(
+                    'button',
+                    {
+                      class: ['tx-tab', activeWallet.value === w.id ? 'active' : ''],
+                      onClick: () => selectTab(w.id),
+                      title: w.label || w.ckb_address,
+                    },
+                    truncateAddress(w.ckb_address, 8, 6),
+                  ),
+                ),
+              ],
+            ),
+            h('div', { class: 'tx-history-header' }, [
+              h(
+                'div',
+                { class: 'tx-history-count' },
+                t('wallets.txCount', { n: rows.value.length }),
+              ),
+              h(
+                'button',
+                {
+                  class: 'tx-refresh-btn',
+                  disabled: loading.value || refreshing.value,
+                  onClick: () => refreshTxs(),
+                  title: t('wallets.refreshTransactions'),
+                },
+                [
+                  h(
+                    'span',
+                    {
+                      class: ['tx-refresh-icon', refreshing.value ? 'spinning' : ''],
+                      'aria-hidden': 'true',
+                    },
+                    '↻',
+                  ),
+                  h(
+                    'span',
+                    {},
+                    refreshing.value
+                      ? t('wallets.txSyncing')
+                      : t('wallets.refreshTransactions'),
+                  ),
+                ],
+              ),
+            ]),
+            error.value
+              ? h('div', { class: 'tx-history-error' }, error.value)
+              : h('div', { class: 'tx-history-table-scroll' }, [
+                  h(
+                    DataTable,
+                    {
+                      columns,
+                      rows: rows.value,
+                      loading: loading.value,
+                      emptyText: t('wallets.noTransactions'),
+                      pageSize: 10,
+                    },
+                    {
+                      'cell-direction': ({ row }: any) => txDirection(row),
+                      'cell-tx_hash': ({ row }: any) =>
+                        h(
+                          'a',
+                          {
+                            href: explorerTxUrl(row.tx_hash, network.value),
+                            target: '_blank',
+                            rel: 'noopener',
+                            class: 'tx-hash-link',
+                          },
+                          truncateAddress(row.tx_hash, 12, 8),
+                        ),
+                      'cell-timestamp_ms': ({ row }: any) => txTimeText(row.timestamp_ms),
+                      'cell-amount': ({ row }: any) => txAmountCell(row),
+                    },
+                  ),
+                ]),
+          ])
+      },
+    },
+    confirmText: null,
+    cancelText: t('common.close'),
+    onCancel: () => modal.hide(),
+  })
+
+  // Populate the address tabs, then load the aggregate "全部" view by default.
+  try {
+    tabWallets.value = await api.listWallets()
+  } catch {
+    // Tabs stay empty — the aggregate view still loads.
+  }
+  await loadTxs(null)
+}
+
 onMounted(async () => {
   await loadAll()
   await tryRestoreSession()
@@ -344,6 +550,12 @@ onMounted(async () => {
       <div class="card-header">
         <h3>{{ t('wallets.hdWallet') }}</h3>
         <div class="card-actions">
+          <button
+            class="btn btn-outline btn-sm"
+            @click="showTxHistory"
+          >
+            {{ t('wallets.transactions') }}
+          </button>
           <!-- No wallet: create / import mnemonic -->
           <template v-if="!hdStatus?.keystore_exists">
             <button
@@ -644,4 +856,78 @@ onMounted(async () => {
 .unlock-input { width: 100%; height: 40px; padding: 0 var(--space-md); border: 1px solid var(--border-dark); border-radius: 6px; font-size: var(--fs-body); color: var(--text-primary); background: var(--bg-card); outline: none; box-sizing: border-box; transition: border-color 0.2s, box-shadow 0.2s; }
 .unlock-input:focus { border-color: var(--primary-500); box-shadow: 0 0 0 2px rgba(24,144,255,0.2); }
 .unlock-error { color: var(--danger); font-size: var(--fs-small); margin: 0; width: 100%; }
+
+/* Wallet transaction history modal (content is teleported to body) */
+.tx-history-modal { display: flex; flex-direction: column; gap: var(--space-sm); }
+.tx-history-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.tx-history-count { font-size: var(--fs-small); color: var(--text-secondary); }
+/* Address tabs (modal content is teleported to body — global styles) */
+.tx-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-sm); }
+.tx-tab {
+  padding: 4px 12px;
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-base);
+}
+.tx-tab:hover { color: var(--primary-500); border-color: var(--primary-500); }
+.tx-tab.active { background: var(--primary-500); border-color: var(--primary-500); color: #fff; }
+/* Constrain the transaction table so all rows/columns stay reachable — the
+   table is taller/wider than the modal body, so scroll instead of clipping. */
+.tx-history-table-scroll { max-height: 55vh; overflow: auto; }
+.tx-history-error { color: var(--danger); font-size: var(--fs-body); padding: var(--space-md); text-align: center; }
+.tx-direction { display: inline-block; padding: 1px 8px; border-radius: var(--radius-sm); font-size: var(--fs-small); font-weight: 500; white-space: nowrap; }
+.tx-direction.tx-in { color: #52c41a; background: #f6ffed; border: 1px solid #b7eb8f; }
+.tx-direction.tx-out { color: #ff4d4f; background: #fff2f0; border: 1px solid #ffccc7; }
+.tx-direction.tx-self { color: var(--text-muted); background: #fafafa; border: 1px solid var(--border-dark); }
+
+/* Manual refresh button (modal content is teleported to body — global styles) */
+.tx-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid rgba(24, 144, 255, 0.5);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--primary-500);
+  font-size: var(--fs-small);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-base);
+}
+.tx-refresh-btn:hover:not(:disabled) {
+  background: var(--primary-500);
+  border-color: var(--primary-500);
+  color: #fff;
+}
+.tx-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tx-refresh-icon {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+}
+.tx-refresh-icon.spinning {
+  animation: tx-refresh-spin 0.8s linear infinite;
+}
+@keyframes tx-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.tx-amount { font-variant-numeric: tabular-nums; font-weight: 500; white-space: nowrap; }
+.tx-amount.tx-in { color: #52c41a; }
+.tx-amount.tx-out { color: #ff4d4f; }
+.tx-amount.tx-self { color: var(--text-muted); }
+.tx-hash-link { font-family: var(--font-mono, monospace); color: var(--primary-500); text-decoration: none; }
+.tx-hash-link:hover { text-decoration: underline; }
 </style>

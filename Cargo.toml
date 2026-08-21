@@ -11,17 +11,17 @@ futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Opticrum (path deps to sibling project)
-# opticrum-calculator = { path = "../opticrum/calculator/opticrum" }
-# opticrum-protocol = { path = "../opticrum/opticrum-protocol" }
-
-opticrum-calculator = { git = "https://github.com/Opticrum/ckb-contract-script", branch = "master" }
-opticrum-protocol = { git = "https://github.com/Opticrum/ckb-contract-script", branch = "master" }
+# Opticrum — path deps (the opticrum workspace pins ckb-cinnabar via local
+# path deps in its [workspace.dependencies], so the git form cannot resolve;
+# see CLAUDE.md "Shared Dependencies" note).
+opticrum-calculator = { path = "../opticrum/calculator/opticrum" }
+opticrum-protocol = { path = "../opticrum/opticrum-protocol" }
+# opticrum-calculator = { git = "https://github.com/Opticrum/ckb-contract-script", branch = "master" }
+# opticrum-protocol = { git = "https://github.com/Opticrum/ckb-contract-script", branch = "master" }
 
 # CKB chain interaction (local path — matches opticrum workspace)
-# ckb-cinnabar-calculator = { path = "../../ckb-cinnabar/cinnabar/calculate" }
-
-ckb-cinnabar-calculator = { git = "https://github.com/ashuralyk/ckb-cinnabar", branch = "master" }
+ckb-cinnabar-calculator = { path = "../../ckb-cinnabar/cinnabar/calculate" }
+# ckb-cinnabar-calculator = { git = "https://github.com/ashuralyk/ckb-cinnabar", branch = "master" }
 
 # Database (Diesel ORM — no raw SQL)
 diesel = { version = "2", features = ["sqlite", "r2d2", "returning_clauses_for_sqlite_3_35"] }
@@ -29,7 +29,7 @@ diesel_migrations = { version = "2", features = ["sqlite"] }
 libsqlite3-sys = { version = "0.28", features = ["bundled"] }
 
 # Crypto (wallet key management)
-secp256k1 = { version = "0.29", features = ["rand", "global-context"] }
+secp256k1 = { version = "0.30", features = ["rand", "global-context"] }
 aes-gcm = "0.10"
 rand = "0.8"
 hex = "0.4"
@@ -74,6 +74,14 @@ tempfile = "3"
 [[test]]
 name = "db_tests"
 path = "tests/db_tests.rs"
+
+[[test]]
+name = "channel_dismiss_tests"
+path = "tests/channel_dismiss_tests.rs"
+
+[[test]]
+name = "wallet_tx_tests"
+path = "tests/wallet_tx_tests.rs"
 
 [[test]]
 name = "wallet_service_tests"

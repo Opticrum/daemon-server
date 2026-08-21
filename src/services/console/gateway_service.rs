@@ -15,6 +15,7 @@ use std::time::Instant;
 use tracing::debug;
 
 use crate::config::Config;
+use crate::db::dismissed_channels as dismissed_db;
 use crate::db::matches as match_db;
 use crate::db::unsigned_txs as unsigned_db;
 use crate::db::wallets as wallet_db;
@@ -865,6 +866,11 @@ impl GatewayService {
             let created_at =
                 Self::estimate_block_timestamp(m.match_current_block, tip_block, tip_timestamp);
 
+            // Hesitation window: while the seller has never extracted, the match
+            // cell's producing block anchors a HESITATION_BLOCKS window during
+            // which the seller cannot extract rent and the buyer may dump all rent.
+            let hesitation = rent_service::hesitation_status(m, tip_block);
+
             results.push(serde_json::json!({
                 "tx_hash": tx_hash,
                 "output_index": output_index,
@@ -874,6 +880,8 @@ impl GatewayService {
                 "shannons_per_block": m.match_data.shannons_per_block,
                 "ckb_capacity": m.ckb_capacity,
                 "last_extraction_block": m.match_data.last_extraction_block,
+                "in_hesitation": hesitation.in_hesitation,
+                "hesitation_remaining_blocks": hesitation.remaining_blocks,
                 "xudt_amount": m.match_data.xudt_amount,
                 "status": if is_destroyed { "destroyed" } else { "live" },
                 "extracted_total": extracted_total,
@@ -942,6 +950,8 @@ impl GatewayService {
                     "shannons_per_block": row.shannons_per_block,
                     "ckb_capacity": row.ckb_capacity,
                     "last_extraction_block": row.last_extraction_block,
+                    "in_hesitation": false,
+                    "hesitation_remaining_blocks": 0,
                     "xudt_amount": row.xudt_amount,
                     "status": "destroyed",
                     "extracted_total": extracted_total,
@@ -1027,6 +1037,8 @@ impl GatewayService {
                 "shannons_per_block": row.shannons_per_block,
                 "ckb_capacity": row.ckb_capacity,
                 "last_extraction_block": row.last_extraction_block,
+                "in_hesitation": false,
+                "hesitation_remaining_blocks": 0,
                 "xudt_amount": row.xudt_amount,
                 "status": "destroyed",
                 "created_at": row.destroyed_at,
@@ -1091,6 +1103,8 @@ impl GatewayService {
             _ => None,
         };
 
+        let hesitation = rent_service::hesitation_status(m, tip_block);
+
         Ok(serde_json::json!({
             "tx_hash": tx_hash,
             "output_index": output_index,
@@ -1100,6 +1114,8 @@ impl GatewayService {
             "shannons_per_block": m.match_data.shannons_per_block,
             "ckb_capacity": m.ckb_capacity,
             "last_extraction_block": m.match_data.last_extraction_block,
+            "in_hesitation": hesitation.in_hesitation,
+            "hesitation_remaining_blocks": hesitation.remaining_blocks,
             "xudt_amount": m.match_data.xudt_amount,
             "status": status,
             "created_at": created_at,
@@ -1149,14 +1165,14 @@ impl GatewayService {
     /// 1. Filter match cells by counterparty fiber pubkey
     /// 2. Among filtered, match by channel outpoint
     pub async fn get_channels_with_matches(
-        _pool: &DbPool,
+        pool: &DbPool,
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
         let (channels_result, matches_result) = tokio::join!(
             provider.scan_fiber_channels(&ANY_LOCK_HASH),
             provider.scan_matches(),
         );
-        let channels = channels_result?;
+        let channels = Self::filter_dismissed(pool, channels_result?);
 
         // Scan on-chain matches — if it fails, still return channels without
         // match info rather than failing the whole request.
@@ -1195,16 +1211,18 @@ impl GatewayService {
     /// render the channel table immediately, then calls `get_channel_matches`
     /// to backfill match status.
     pub async fn get_channels_only(
+        pool: &DbPool,
         provider: &dyn ChainProvider,
     ) -> Result<Vec<FiberChannelInfo>, AppError> {
         let channels = provider.scan_fiber_channels(&ANY_LOCK_HASH).await?;
-        Ok(channels.into_iter().collect())
+        Ok(Self::filter_dismissed(pool, channels).into_iter().collect())
     }
 
     /// Cross-reference all Fiber channels with their on-chain match cells.
     /// Returns a map from channel_id → match_info so the frontend can
     /// progressively enrich an already-rendered channel table.
     pub async fn get_channel_matches(
+        pool: &DbPool,
         provider: &dyn ChainProvider,
     ) -> Result<Vec<ChannelWithMatch>, AppError> {
         let (channels_result, matches_result, orders_result) = tokio::join!(
@@ -1212,7 +1230,7 @@ impl GatewayService {
             provider.scan_matches(),
             provider.scan_orders(),
         );
-        let channels = channels_result?;
+        let channels = Self::filter_dismissed(pool, channels_result?);
         let matches = matches_result.unwrap_or_else(|e| {
             tracing::warn!("Failed to scan on-chain matches for channel-matches: {}", e);
             vec![]
@@ -1265,11 +1283,13 @@ impl GatewayService {
         provider.shutdown_channel(channel_id, force).await
     }
 
-    /// Verify a closed Fiber channel exists and can be dismissed from the console.
-    /// After the chain-first refactor, no DB records are deleted — closed channels
-    /// are filtered out by `get_channels_with_matches` (terminal state check).
+    /// Dismiss a closed Fiber channel from the console.
+    ///
+    /// The channel itself lives on the Fiber node and is only read via
+    /// `scan_fiber_channels`, so "deleting" it persists a tombstone in
+    /// `dismissed_fiber_channels` which hides it from the console list.
     pub async fn delete_channel(
-        _pool: &DbPool,
+        pool: &DbPool,
         provider: &dyn ChainProvider,
         channel_id: &str,
     ) -> Result<(), AppError> {
@@ -1285,8 +1305,34 @@ impl GatewayService {
             ));
         }
 
+        let mut conn = pool.get()?;
+        dismissed_db::dismiss_channel(&mut conn, channel_id)?;
         tracing::info!(channel_id = %channel_id, "Fiber channel dismissed from console");
         Ok(())
+    }
+
+    /// Drop channels the user has dismissed from the console. If the tombstone
+    /// lookup fails, degrade to showing all channels rather than failing the
+    /// whole list request.
+    fn filter_dismissed(pool: &DbPool, channels: Vec<FiberChannelInfo>) -> Vec<FiberChannelInfo> {
+        let mut conn = match pool.get() {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::warn!("Failed to read dismissed channels: {e}");
+                return channels;
+            }
+        };
+        let dismissed = match dismissed_db::list_dismissed_ids(&mut conn) {
+            Ok(ids) => ids.into_iter().collect::<std::collections::HashSet<_>>(),
+            Err(e) => {
+                tracing::warn!("Failed to read dismissed channels: {e}");
+                return channels;
+            }
+        };
+        channels
+            .into_iter()
+            .filter(|ch| !dismissed.contains(&ch.channel_id))
+            .collect()
     }
 
     // ═══════════════════════════════════════════════════════

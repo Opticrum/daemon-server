@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{
   cancelText?: string | null
   danger?: boolean
   wide?: boolean
+  extraWide?: boolean
   loading?: boolean
   extra?: Component
 }>(), {
@@ -20,6 +21,7 @@ const props = withDefaults(defineProps<{
   cancelText: '',
   danger: false,
   wide: false,
+  extraWide: false,
   loading: false,
   extra: undefined,
 })
@@ -34,12 +36,9 @@ watch(() => props.visible, (v) => {
   document.body.style.overflow = v ? 'hidden' : ''
 })
 
-function onOverlayClick(e: MouseEvent) {
-  if ((e.target as HTMLElement).classList.contains('modal-overlay')) {
-    emit('cancel')
-  }
-}
-
+// Clicking the overlay intentionally does NOT dismiss the dialog — confirm
+// dialogs must be closed via Cancel/Confirm (or Escape) so a stray click
+// outside never discards the user's choice.
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     emit('cancel')
@@ -53,12 +52,14 @@ function onKeydown(e: KeyboardEvent) {
       v-if="visible"
       class="modal-overlay"
       data-testid="modal-overlay"
-      @click="onOverlayClick"
       @keydown="onKeydown"
     >
       <div
         class="modal-card"
-        :class="{ 'modal-card--wide': wide }"
+        :class="{
+          'modal-card--wide': wide,
+          'modal-card--extra-wide': extraWide,
+        }"
         role="dialog"
         aria-modal="true"
         :aria-label="title"
@@ -139,6 +140,10 @@ function onKeydown(e: KeyboardEvent) {
   max-width: 680px;
 }
 
+.modal-card--extra-wide {
+  max-width: 960px;
+}
+
 .modal-header {
   padding: var(--space-xl) var(--space-xl) var(--space-sm);
   border-bottom: 1px solid var(--border-light);
@@ -155,6 +160,9 @@ function onKeydown(e: KeyboardEvent) {
   overflow-y: auto;
   overflow-x: hidden;
   flex: 1;
+  /* Allow the body to shrink below its content height so long content
+     (e.g. a full transaction table) scrolls within the max-height card. */
+  min-height: 0;
   min-width: 0;
 }
 

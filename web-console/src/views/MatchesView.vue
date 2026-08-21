@@ -2,7 +2,12 @@
 import { ref, computed, onMounted, inject, h } from "vue";
 import { useApi } from "@/composables/useApi";
 import { useI18n } from "@/composables/useI18n";
-import { truncateAddress, formatCKB, explorerTxUrl } from "@/utils/format";
+import {
+  truncateAddress,
+  formatCKB,
+  explorerTxUrl,
+  formatBlockDuration,
+} from "@/utils/format";
 import DataTable, { type ColumnDef } from "@/components/ui/DataTable.vue";
 import StatusTag from "@/components/ui/StatusTag.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
@@ -80,6 +85,11 @@ const columns = computed<ColumnDef[]>(() => [
     align: "center",
   },
   {
+    key: "hesitation",
+    label: t("matches.hesitation"),
+    align: "center",
+  },
+  {
     key: "extractable",
     label: t("matches.extractable"),
     sortable: true,
@@ -103,8 +113,17 @@ const isExtractableMet = (m: TrackedMatch) =>
 // A live match whose escrow ran out — derived client-side from remaining_days.
 const isTimedOut = (m: TrackedMatch) =>
   m.status === "live" && (m.remaining_days ?? 0) <= 0;
-const displayStatus = (m: TrackedMatch) =>
-  isTimedOut(m) ? "timeout" : m.status;
+// A live match inside its buyer hesitation window — seller cannot extract yet.
+const inHesitation = (m: TrackedMatch) =>
+  m.status === "live" && !!m.in_hesitation;
+// Status shown in the table: hesitation takes precedence while the window is
+// open (the seller cannot extract regardless of escrow), then timeout, then the
+// raw on-chain status.
+const displayStatus = (m: TrackedMatch) => {
+  if (inHesitation(m)) return "hesitation";
+  if (isTimedOut(m)) return "timeout";
+  return m.status;
+};
 
 async function loadSignerLockHashes() {
   try {
@@ -381,6 +400,23 @@ onMounted(async () => {
           {{ Number(value) <= 0 ? "—" : Number(value).toFixed(1) + " d" }}
         </span>
       </template>
+      <template #cell-hesitation="{ row }">
+        <span
+          v-if="inHesitation(row)"
+          class="text-hesitation tooltip-trigger"
+          :data-tooltip="
+            t('matches.hesitationRemaining', {
+              blocks: row.hesitation_remaining_blocks,
+            })
+          "
+        >
+          {{ formatBlockDuration(row.hesitation_remaining_blocks) }}
+        </span>
+        <span
+          v-else
+          class="text-muted"
+        >—</span>
+      </template>
       <template #cell-extractable="{ row }">
         <span
           :class="[
@@ -400,7 +436,22 @@ onMounted(async () => {
         {{ formatCKB(extractedRent(row)) }} / {{ formatCKB(totalRent(row)) }}
       </template>
       <template #cell-status="{ row }">
-        <StatusTag :status="displayStatus(row)" />
+        <span
+          v-if="inHesitation(row)"
+          class="tooltip-trigger tooltip-trigger--wide"
+          :data-tooltip="
+            t('matches.hesitationStatusTooltip', {
+              blocks: row.hesitation_remaining_blocks,
+              time: formatBlockDuration(row.hesitation_remaining_blocks),
+            })
+          "
+        >
+          <StatusTag :status="displayStatus(row)" />
+        </span>
+        <StatusTag
+          v-else
+          :status="displayStatus(row)"
+        />
       </template>
       <template #cell-actions="{ row }">
         <div class="actions-group">
@@ -413,7 +464,11 @@ onMounted(async () => {
             {{ t("matches.extract") }}
           </button>
           <button
-            v-else-if="row.status === 'live' && isExtractableMet(row)"
+            v-else-if="
+              row.status === 'live' &&
+                isExtractableMet(row) &&
+                !inHesitation(row)
+            "
             class="btn btn-sm btn-primary"
             @click.stop="extractRent(row)"
           >
@@ -422,6 +477,14 @@ onMounted(async () => {
           <button
             v-else-if="row.status === 'live'"
             class="btn btn-sm btn-disabled"
+            :class="{ 'tooltip-trigger': inHesitation(row) }"
+            :data-tooltip="
+              inHesitation(row)
+                ? t('matches.hesitationLocked', {
+                  blocks: row.hesitation_remaining_blocks,
+                })
+                : ''
+            "
             disabled
           >
             {{ t("matches.extract") }}
@@ -591,6 +654,11 @@ onMounted(async () => {
   color: #ff4d4f;
   font-weight: 600;
 }
+.text-hesitation {
+  color: #faad14;
+  font-weight: 600;
+  cursor: help;
+}
 .text-extractable-met {
   color: #52c41a;
   font-weight: 600;
@@ -633,6 +701,13 @@ onMounted(async () => {
   opacity: 0;
   transition: opacity 0.2s ease 0.3s;
   z-index: 999;
+}
+/* Multi-line tooltip variant — for longer explanations (e.g. hesitation logic).
+   Must come after the base rule so it wins the cascade. */
+.tooltip-trigger--wide::after {
+  white-space: normal;
+  width: 280px;
+  text-align: left;
 }
 /* Tooltip arrow (downward triangle) */
 .tooltip-trigger::before {

@@ -20,7 +20,7 @@ ckb_rpc_url = "https://testnet.ckb.dev"
 ckb_indexer_url = "https://testnet.ckb.dev"
 
 # ---- Fiber Network ----
-fiber_rpc_url = "http://localhost:8227"
+fiber_rpc_url = "http://localhost:8237"
 
 # ---- Fees ----
 fee_rate = 2000                              # shannons per KB
@@ -36,6 +36,10 @@ auto_match_enabled = false
 auto_match_min_capacity = 100000000000       # 1000 CKB
 auto_match_max_escrow_blocks = 432000        # ~30 days at 6s/block
 auto_match_interval_secs = 300
+
+# ---- Wallet Transaction Sync ----
+wallet_tx_sync_enabled = true                # background sync of wallet tx history to DB
+wallet_tx_sync_interval_secs = 60            # seconds between sync cycles
 
 # ---- Logging ----
 log_level = "info"                           # trace, debug, info, warn, error

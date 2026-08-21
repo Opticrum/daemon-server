@@ -35,6 +35,8 @@ const editForm = ref<RuntimeConfig>({
   automation_signer_address: "",
   chain_cache_enabled: true,
   chain_cache_interval_secs: 30,
+  wallet_tx_sync_enabled: true,
+  wallet_tx_sync_interval_secs: 60,
   ckb_rpc_url: "",
   ckb_indexer_url: "",
   fiber_rpc_url: "",

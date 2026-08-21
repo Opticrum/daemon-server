@@ -11,9 +11,11 @@ use std::path::Path;
 use crate::error::AppError;
 
 pub mod destroyed_matches;
+pub mod dismissed_channels;
 pub mod matches;
 pub mod schema;
 pub mod unsigned_txs;
+pub mod wallet_txs;
 pub mod wallets;
 
 /// Type alias for the r2d2 SQLite connection pool (Diesel-backed).

@@ -461,6 +461,33 @@ pub async fn signer_wallets(
     Ok(HttpResponse::Ok().json(wallets))
 }
 
+/// GET /api/console/wallets/transactions?wallet_id=X
+/// Transaction history read from the synced SQLite DB (no live chain query).
+/// Without `wallet_id`: aggregated across ALL managed wallet addresses.
+/// With `wallet_id`: only that wallet's transactions.
+#[derive(Deserialize)]
+pub struct WalletTxQuery {
+    wallet_id: Option<i64>,
+}
+
+pub async fn wallet_transactions(
+    state: web::Data<AppState>,
+    query: web::Query<WalletTxQuery>,
+) -> Result<HttpResponse, AppError> {
+    let txs = crate::services::wallet_tx::list(&state.db, query.wallet_id).await?;
+    Ok(HttpResponse::Ok().json(txs))
+}
+
+/// POST /api/console/wallets/transactions/sync
+/// Force a one-shot sync (indexer → DB). The frontend refresh button calls this
+/// then re-GETs the list.
+pub async fn wallet_transactions_sync(
+    state: web::Data<AppState>,
+) -> Result<HttpResponse, AppError> {
+    let stats = crate::services::wallet_tx::sync(&state.db, state.chain_provider.as_ref()).await?;
+    Ok(HttpResponse::Ok().json(stats))
+}
+
 // ═══════════════════════════════════════════════════════
 // Orders
 // ═══════════════════════════════════════════════════════
@@ -532,6 +559,18 @@ pub async fn match_order(
         .tx_assembler
         .as_ref()
         .ok_or_else(|| AppError::ChainError("Transaction assembler not configured".into()))?;
+    let order_key = format!("{tx_hash}:{}", body.order_output_index);
+
+    // Guard: reject duplicate match submissions for the same order cell. Until
+    // the match tx confirms, the order still appears on-chain and a second
+    // request would reuse the same channel and rebuild a byte-identical
+    // transaction, which the CKB node rejects as a duplicate broadcast.
+    if !state.match_inflight.begin(&order_key) {
+        return Err(AppError::BadRequest(
+            "Order is already being matched — wait for the pending transaction to confirm".into(),
+        ));
+    }
+
     let result = GatewayService::match_order(
         &state.db,
         state.chain_provider.as_ref(),
@@ -541,9 +580,19 @@ pub async fn match_order(
         &state.signer,
         tx_assembler,
     )
-    .await?;
-    state.cached_chain.spawn_cache_refresh();
-    Ok(HttpResponse::Ok().json(result))
+    .await;
+
+    // Always release the claim on every exit path (success or error) so the
+    // order can be matched again once the current attempt settles.
+    state.match_inflight.end(&order_key);
+
+    match result {
+        Ok(result) => {
+            state.cached_chain.spawn_cache_refresh();
+            Ok(HttpResponse::Ok().json(result))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Check match readiness for an order (peer connected + compatible channel).
@@ -672,14 +721,16 @@ pub async fn scan_channels(state: web::Data<AppState>) -> Result<HttpResponse, A
 /// GET /api/console/channels-only — fast path: channels without match cross-referencing.
 /// The frontend calls this first to render the channel table immediately.
 pub async fn scan_channels_only(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let channels = GatewayService::get_channels_only(state.chain_provider.as_ref()).await?;
+    let channels =
+        GatewayService::get_channels_only(&state.db, state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(channels))
 }
 
 /// GET /api/console/channel-matches — cross-reference channels with on-chain match cells.
 /// The frontend calls this after channels-only to progressively fill in match status.
 pub async fn scan_channel_matches(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
-    let cwms = GatewayService::get_channel_matches(state.chain_provider.as_ref()).await?;
+    let cwms =
+        GatewayService::get_channel_matches(&state.db, state.chain_provider.as_ref()).await?;
     Ok(HttpResponse::Ok().json(cwms))
 }
 

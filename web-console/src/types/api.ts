@@ -54,6 +54,8 @@ export interface RuntimeConfig {
   automation_signer_address: string
   chain_cache_enabled: boolean
   chain_cache_interval_secs: number
+  wallet_tx_sync_enabled: boolean
+  wallet_tx_sync_interval_secs: number
   ckb_rpc_url: string
   ckb_indexer_url: string
   fiber_rpc_url: string
@@ -192,6 +194,24 @@ export interface SignerWalletItem {
   balance_shannons: number
 }
 
+/** On-chain transaction touching one or more managed wallet addresses. */
+export interface WalletTxRow {
+  tx_hash: string
+  block_number: number
+  /** Unix ms (resolved at sync time); null when unavailable. */
+  timestamp_ms: number | null
+  received_shannons: number
+  sent_shannons: number
+  addresses: string[]
+}
+
+/** Result of POST /console/wallets/transactions/sync (force refresh). */
+export interface WalletTxSyncStats {
+  wallets: number
+  rows_synced: number
+  pruned: number
+}
+
 export interface RefreshHdWalletResponse {
   keystore: {
     label: string
@@ -260,6 +280,10 @@ export interface TrackedMatch {
   shannons_per_block: number
   ckb_capacity: number
   last_extraction_block: number
+  /** True while the seller has never extracted and the buyer hesitation window (≈12h) is open. */
+  in_hesitation: boolean
+  /** Blocks remaining until the seller may first extract (0 = window elapsed). */
+  hesitation_remaining_blocks: number
   xudt_amount: number
   status: string
   /** Unix milliseconds timestamp of the block where the match tx was confirmed, or null if unavailable. */
@@ -293,6 +317,10 @@ export interface MatchDetail {
   shannons_per_block: number
   ckb_capacity: number
   last_extraction_block: number
+  /** True while the seller has never extracted and the buyer hesitation window (≈12h) is open. */
+  in_hesitation: boolean
+  /** Blocks remaining until the seller may first extract (0 = window elapsed). */
+  hesitation_remaining_blocks: number
   xudt_amount: number | null
   status: string
   /** Unix milliseconds timestamp of the block where the match tx was confirmed, or null if unavailable. */

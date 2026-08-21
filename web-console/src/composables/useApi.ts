@@ -1,4 +1,4 @@
-import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberChannelInfo, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type PeerConnectionStatus, type SchedulerStatusResponse, type ChainCacheStatusResponse } from '@/types/api'
+import { ApiError, type RuntimeConfig, type WalletResponse, type ImportWalletRequest, type CreateHdWalletRequest, type ImportMnemonicRequest, type CreateHdWalletResponse, type UnlockWalletRequest, type UnlockWalletResponse, type HdStatusResponse, type WalletBalanceResponse, type AddressBalanceItem, type RefreshHdWalletResponse, type RefreshHdWalletRequest, type WalletSessionStatus, type OrderScanItem, type MatchOrderRequest, type MatchOrderResult, type MatchReadiness, type TrackedMatch, type MatchDetail, type ExtractRentResult, type ChannelWithMatch, type FiberChannelInfo, type FiberNodeInfoResponse, type ServerInfo, type SignerWalletItem, type WalletTxRow, type WalletTxSyncStats, type PeerConnectionStatus, type SchedulerStatusResponse, type ChainCacheStatusResponse } from '@/types/api'
 import type { PendingTransactionItem } from '@/types/api'
 
 // ═══════════════════════════════════════════
@@ -90,6 +90,12 @@ export function useApi() {
       request('/console/wallets/refresh-hd', { method: 'POST', body: JSON.stringify(body) }),
     getSignerWallets: (): Promise<SignerWalletItem[]> =>
       request('/console/signer/wallets'),
+    getWalletTransactions: (walletId?: number): Promise<WalletTxRow[]> =>
+      request(
+        `/console/wallets/transactions${walletId !== undefined ? `?wallet_id=${walletId}` : ''}`,
+      ),
+    syncWalletTransactions: (): Promise<WalletTxSyncStats> =>
+      request('/console/wallets/transactions/sync', { method: 'POST' }),
     importMnemonic: (body: ImportMnemonicRequest): Promise<CreateHdWalletResponse> =>
       request('/console/wallets/import-mnemonic', { method: 'POST', body: JSON.stringify(body) }),
     deleteHdWallet: (): Promise<{ deleted: boolean }> =>

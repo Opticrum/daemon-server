@@ -83,3 +83,22 @@ diesel::table! {
         destroyed_at -> Text,
     }
 }
+
+diesel::table! {
+    dismissed_fiber_channels (channel_id) {
+        channel_id -> Text,
+        dismissed_at -> Text,
+    }
+}
+
+diesel::table! {
+    wallet_transactions (id) {
+        id -> BigInt,
+        tx_hash -> Text,
+        wallet_id -> BigInt,
+        block_number -> BigInt,
+        timestamp_ms -> Nullable<BigInt>,
+        received_shannons -> BigInt,
+        sent_shannons -> BigInt,
+    }
+}

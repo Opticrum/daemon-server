@@ -27,6 +27,8 @@ pub struct RuntimeConfig {
     pub automation_signer_address: String,
     pub chain_cache_enabled: bool,
     pub chain_cache_interval_secs: u64,
+    pub wallet_tx_sync_enabled: bool,
+    pub wallet_tx_sync_interval_secs: u64,
     /// CKB RPC URL (requires restart to take effect).
     pub ckb_rpc_url: String,
     /// CKB Indexer URL (requires restart to take effect).
@@ -51,6 +53,8 @@ impl RuntimeConfig {
             automation_signer_address: String::new(),
             chain_cache_enabled: config.chain_cache_enabled,
             chain_cache_interval_secs: config.chain_cache_interval_secs,
+            wallet_tx_sync_enabled: config.wallet_tx_sync_enabled,
+            wallet_tx_sync_interval_secs: config.wallet_tx_sync_interval_secs,
             ckb_rpc_url: config.ckb_rpc_url.clone(),
             ckb_indexer_url: config.ckb_indexer_url.clone(),
             fiber_rpc_url: config.fiber_rpc_url.clone(),
@@ -100,6 +104,12 @@ impl RuntimeConfig {
         if let Some(v) = partial.chain_cache_interval_secs {
             self.chain_cache_interval_secs = v;
         }
+        if let Some(v) = partial.wallet_tx_sync_enabled {
+            self.wallet_tx_sync_enabled = v;
+        }
+        if let Some(v) = partial.wallet_tx_sync_interval_secs {
+            self.wallet_tx_sync_interval_secs = v;
+        }
         if let Some(v) = &partial.ckb_rpc_url {
             self.ckb_rpc_url = v.clone();
         }
@@ -128,6 +138,8 @@ pub struct RuntimeConfigPartial {
     pub automation_signer_address: Option<String>,
     pub chain_cache_enabled: Option<bool>,
     pub chain_cache_interval_secs: Option<u64>,
+    pub wallet_tx_sync_enabled: Option<bool>,
+    pub wallet_tx_sync_interval_secs: Option<u64>,
     /// CKB RPC URL (requires restart to take effect).
     pub ckb_rpc_url: Option<String>,
     /// CKB Indexer URL (requires restart to take effect).

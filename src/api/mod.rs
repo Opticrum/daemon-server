@@ -66,6 +66,9 @@ pub struct AppState {
     /// In-memory pending tx registry — shared with `TransactionAssembler`
     /// so the web console can poll for unconfirmed tx hashes.
     pub pending_txs: Arc<crate::services::PendingTxRegistry>,
+    /// In-memory in-flight match guard — rejects duplicate match submissions
+    /// for the same order until the first match transaction confirms.
+    pub match_inflight: Arc<crate::services::MatchInflight>,
 }
 
 /// Mount all API routes on the given `ServiceConfig`.
@@ -154,6 +157,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route(
                 "/console/signer/wallets",
                 web::get().to(console::signer_wallets),
+            )
+            .route(
+                "/console/wallets/transactions",
+                web::get().to(console::wallet_transactions),
+            )
+            .route(
+                "/console/wallets/transactions/sync",
+                web::post().to(console::wallet_transactions_sync),
             )
             // Catch-all: delete individual wallet by id
             .route(
